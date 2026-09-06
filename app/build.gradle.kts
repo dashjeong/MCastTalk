@@ -22,7 +22,6 @@ val generatedThirdPartyLicenseAssets = layout.buildDirectory.dir("generated/thir
 val staticThirdPartyLicenseAssets = layout.projectDirectory.dir("src/main/assets/licenses")
 val requiredStaticLicenseAssetNames = setOf(
     "APACHE-2.0.txt",
-    "POLYFORM-NONCOMMERCIAL-1.0.0.txt",
     "KISSFFT-BSD-3-CLAUSE.txt",
     "MIT.txt",
     "MODEL-AND-VOICE-NOTICES.txt",
@@ -133,7 +132,7 @@ android {
         applicationId = "app.guidecast.transmitter"
         minSdk = 30
         targetSdk = 36
-        versionCode = 43
+        versionCode = 44
         versionName = "0.2.38"
 
         // Galaxy Note9/S23 and newer targets are ARM64. Keeping only the required ABI
