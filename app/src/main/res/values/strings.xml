@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">MCastTalk</string>
+    <string name="app_subtitle">실시간 다국어 통역방송(feat. DMZ peace walk)</string>
+    <string name="notification_channel_name">MCastTalk 실시간 다국어 통역방송</string>
+    <string name="notification_running_title">MCastTalk 실행 중</string>
+</resources>

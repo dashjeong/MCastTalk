@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">MCastTalk Client</string>
+    <string name="notification_channel_name">클라이언트 통역 청취</string>
+</resources>

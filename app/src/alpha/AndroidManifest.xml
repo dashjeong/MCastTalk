@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <!-- Alpha-only harness used by device tests to grant MediaProjection capture. -->
+        <activity
+            android:name=".MediaProjectionTestActivity"
+            android:exported="false" />
+    </application>
+</manifest>

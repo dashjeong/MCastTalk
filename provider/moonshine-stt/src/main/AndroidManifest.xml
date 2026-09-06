@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application>
+        <!--
+          Moonshine loads and streams through native ONNX/JNI code. Keep that code out of the
+          microphone, web-server, and operator-UI process so a native abort is reported as one
+          failed recognition Flow instead of terminating GuideCast.
+        -->
+        <service
+            android:name=".MoonshineSttInferenceService"
+            android:exported="false"
+            android:process=":stt_inference"
+            android:stopWithTask="false" />
+    </application>
+</manifest>

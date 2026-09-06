@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>보안 마이크 인증서 안내 · MCastTalk</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card-bg: #1e293b;
+      --card-border: #334155;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --primary: #3b82f6;
+      --primary-hover: #2563eb;
+      --success: #10b981;
+      --accent: #f59e0b;
+      --radius: 12px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg);
+      color: var(--text-main);
+      line-height: 1.6;
+      padding: 20px 16px;
+      max-width: 540px;
+      margin: 0 auto;
+    }
+    header {
+      text-align: center;
+      margin-bottom: 24px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      background: rgba(59, 130, 246, 0.15);
+      color: var(--primary);
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    h1 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .subtitle {
+      font-size: 0.9rem;
+      color: var(--text-muted);
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius);
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .tab-nav {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+      border-bottom: 1px solid var(--card-border);
+      padding-bottom: 12px;
+    }
+    .tab-btn {
+      flex: 1;
+      padding: 10px;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 0.95rem;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .tab-btn.active {
+      background: var(--primary);
+      color: #fff;
+    }
+    .step-list {
+      list-style: none;
+      counter-reset: step;
+    }
+    .step-item {
+      position: relative;
+      padding-left: 36px;
+      margin-bottom: 16px;
+    }
+    .step-item:last-child {
+      margin-bottom: 0;
+    }
+    .step-item::before {
+      counter-increment: step;
+      content: counter(step);
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 24px;
+      height: 24px;
+      background: rgba(59, 130, 246, 0.2);
+      color: var(--primary);
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+    .step-title {
+      font-weight: 600;
+      font-size: 0.95rem;
+      margin-bottom: 4px;
+    }
+    .step-desc {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      padding: 12px 16px;
+      background: var(--primary);
+      color: #fff;
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.95rem;
+      border-radius: 8px;
+      border: none;
+      cursor: pointer;
+      margin-top: 12px;
+      transition: background 0.2s;
+    }
+    .btn:hover {
+      background: var(--primary-hover);
+    }
+    .btn.success {
+      background: var(--success);
+    }
+    .btn.success:hover {
+      background: #059669;
+    }
+    .tip-box {
+      background: rgba(245, 158, 11, 0.1);
+      border-left: 3px solid var(--accent);
+      padding: 12px;
+      border-radius: 4px;
+      font-size: 0.85rem;
+      color: #fbbf24;
+      margin-top: 16px;
+    }
+  </style>
+</head>
+<body data-https-port="__GUIDECAST_HTTPS_PORT__">
+  <header>
+    <div class="badge">현장 핫스팟 마이크 보안</div>
+    <h1>보안 마이크 인증서 등록</h1>
+    <p class="subtitle">인터넷 없는 현장 핫스팟에서 모바일 브라우저로 마이크를 방송하려면 1회성 인증서 등록이 필요합니다.</p>
+  </header>
+
+  <div class="card">
+    <div class="tab-nav">
+      <button class="tab-btn active" id="tabAndroid" type="button">Android (갤럭시)</button>
+      <button class="tab-btn" id="tabIos" type="button">iOS (아이폰)</button>
+    </div>
+
+    <!-- Android Instructions -->
+    <div id="panelAndroid">
+      <ol class="step-list">
+        <li class="step-item">
+          <div class="step-title">CA 인증서 다운로드</div>
+          <div class="step-desc">아래 버튼을 눌러 송출기의 로컬 Root CA 인증서를 다운로드합니다.</div>
+          <a class="btn" href="/ca.crt" download="guidecast-root-ca.crt">인증서 다운로드 (ca.crt)</a>
+        </li>
+        <li class="step-item">
+          <div class="step-title">기기 보안 설정에서 CA 인증서 설치</div>
+          <div class="step-desc">
+            기기 <strong>[설정]</strong> &gt; <strong>[보안 및 개인정보 보호]</strong> (또는 생체 인식 및 보안) &gt; <strong>[기타 보안 설정]</strong> &gt; <strong>[인증서 설치]</strong> &gt; <strong>[CA 인증서]</strong>를 차례로 선택합니다.
+          </div>
+        </li>
+        <li class="step-item">
+          <div class="step-title">다운로드 파일 선택</div>
+          <div class="step-desc">
+            경고 팝업이 뜨면 <strong>[그래도 설치]</strong>를 누른 후, 다운로드 폴더의 <strong>guidecast-root-ca.crt</strong> 파일을 선택하여 설치를 마칩니다.
+          </div>
+        </li>
+      </ol>
+      <div class="tip-box">
+        💡 인증서 설치는 최초 1회만 진행하면 되며, 등록 후에는 바로 안전하게 마이크를 사용할 수 있습니다.
+      </div>
+    </div>
+
+    <!-- iOS Instructions -->
+    <div id="panelIos" hidden>
+      <ol class="step-list">
+        <li class="step-item">
+          <div class="step-title">보안 프로파일 다운로드 (Safari)</div>
+          <div class="step-desc">반드시 <strong>Safari 브라우저</strong>에서 아래 버튼을 눌러 프로파일을 다운로드합니다.</div>
+          <a class="btn" href="/guidecast.mobileconfig">프로파일 다운로드 (.mobileconfig)</a>
+        </li>
+        <li class="step-item">
+          <div class="step-title">프로파일 설치</div>
+          <div class="step-desc">
+            다운로드 안내 창에서 <strong>[허용]</strong>을 누른 뒤, 기기 <strong>[설정]</strong> &gt; 상단의 <strong>[프로파일이 다운로드됨]</strong>으로 이동하여 우측 상단의 <strong>[설치]</strong>를 누릅니다.
+          </div>
+        </li>
+        <li class="step-item">
+          <div class="step-title">루트 인증서 완전 신뢰 활성화</div>
+          <div class="step-desc">
+            기기 <strong>[설정]</strong> &gt; <strong>[일반]</strong> &gt; <strong>[정보]</strong> &gt; 맨 아래 <strong>[인증서 신뢰 설정]</strong>으로 이동한 뒤, <strong>GuideCast Local Root CA</strong> 스위치를 <strong>[켬]</strong>으로 켭니다.
+          </div>
+        </li>
+      </ol>
+      <div class="tip-box">
+        💡 [인증서 신뢰 설정]에서 스위치를 켜야만 Safari가 안전한 HTTPS 연결로 인식하여 마이크를 켭니다.
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="text-align: center;">
+    <h2 style="font-size: 1.1rem; margin-bottom: 8px;">인증서 등록을 완료하셨나요?</h2>
+    <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px;">
+      아래 버튼을 눌러 보안 마이크 페이지(HTTPS)로 이동하세요.
+    </p>
+    <a class="btn success" id="launchSpeakerBtn" href="#">보안 강사 마이크 시작 (HTTPS)</a>
+  </div>
+
+  <script src="/setup-trust.js"></script>
+</body>
+</html>

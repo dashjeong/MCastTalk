@@ -1,0 +1,9 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <service
+            android:name=".GemmaInferenceService"
+            android:exported="false"
+            android:process=":gemma_inference"
+            android:stopWithTask="false" />
+    </application>
+</manifest>

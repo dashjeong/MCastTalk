@@ -1,0 +1,3 @@
+-keep class ai.moonshine.voice.** { *; }
+-keep class com.google.mlkit.** { *; }
+-keep class app.guidecast.provider.moonshine.tts.** { *; }

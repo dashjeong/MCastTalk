@@ -1,0 +1,13 @@
+This Moonshine AI Model is licensed under the Moonshine AI Community License,
+Copyright © Moonshine AI Ltd. All Rights Reserved
+
+GuideCast integration note
+--------------------------
+The application downloads and invokes the Korean legacy non-streaming TINY
+speech-to-text model through Moonshine Voice 0.1.5. GuideCast does not modify
+the model weights. Application-side changes are limited to Android lifecycle,
+download verification, audio chunking, recovery, and local broadcast routing.
+
+Required product attribution: Powered by Moonshine AI
+Official versioned license:
+https://github.com/moonshine-ai/moonshine/blob/v0.1.5/LICENSE

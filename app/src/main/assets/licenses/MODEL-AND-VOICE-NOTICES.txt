@@ -1,0 +1,78 @@
+GuideCast downloaded model and voice notices
+=============================================
+
+This file records the model/data-specific notices known for the pinned assets.
+It supplements, and does not replace, the complete upstream license texts.
+
+Moonshine Korean TINY speech recognition
+----------------------------------------
+Runtime catalog: Moonshine Voice 0.1.5
+Architecture used by GuideCast: TINY, legacy non-streaming, Korean
+License: Moonshine AI Community License (not the SDK's default MIT license)
+Full agreement: MOONSHINE-0.1.5-LICENSE.txt in this directory
+Required notice: MOONSHINE-NOTICE.txt in this directory
+Source: https://github.com/moonshine-ai/moonshine/blob/v0.1.5/LICENSE
+
+Kokoro 82M voices (English, Japanese, Chinese)
+------------------------------------------------
+Pinned by: Moonshine Voice 0.1.5 manifest
+Kokoro model, voice tensor and ONNX assets: Apache License 2.0
+English pronunciation data: CMUdict notice/license applies
+Japanese G2P model: CC BY-SA 4.0
+Japanese EDICT and ipa-dict data: CC BY-SA 3.0
+Chinese G2P model: Apache License 2.0
+Chinese dictionary source data: Unicode License and CC BY 3.0 components
+Moonshine's pinned data inventory:
+https://github.com/moonshine-ai/moonshine/tree/v0.1.5/core/moonshine-tts/data
+Kokoro model source: https://huggingface.co/hexgrad/Kokoro-82M
+
+Piper Dutch MLS Medium voice
+-----------------------------
+GuideCast asset id: piper_nl_NL-mls-medium
+Pinned by: Moonshine Voice 0.1.5 manifest
+piper-voices repository metadata: MIT
+MLS training dataset identified by the model card: CC BY 4.0
+Dutch INT ipa-dict: CC BY (the upstream entry does not identify a version)
+Voice/model card:
+https://huggingface.co/rhasspy/piper-voices/tree/main/nl/nl_NL/mls/medium
+
+Piper Spanish ALD Medium voice
+-------------------------------
+GuideCast asset id: piper_es_MX-ald-medium
+Pinned by: Moonshine Voice 0.1.5 native streaming manifest
+Output locale/sample rate: es_MX / 22,050 Hz
+piper-voices repository metadata: MIT
+ALD Mexican Spanish speech dataset identified by the model card: Unlicense
+Base davefx voice dataset identified by its model card: CC0
+Pinned voice/model card source:
+https://huggingface.co/rhasspy/piper-voices/tree/39ab474be869e9181350af6a65e4953eef67aaa0/es/es_MX/ald/medium
+
+Piper Arabic Kareem Medium voice and Arabic G2P assets
+------------------------------------------------------
+GuideCast asset id: piper_ar_JO-kareem-medium
+Pinned by: Moonshine Voice 0.1.5 native streaming manifest
+Output locale/sample rate: ar_JO / 22,050 Hz
+piper-voices repository metadata: MIT
+The Kareem model card delegates its dataset license to
+https://github.com/AliMokhammad/arabicttstrain/ . That source repository does not
+publish a detected license. The required Arabic diacritizer checkpoint
+AbderrahmanSkiredj1/arabertv02_tashkeel_fadel also has no license metadata.
+Moonshine's ar_msa README attributes dict.tsv generation to CAMeL Tools and its
+MSA data. CAMeL Tools code is MIT, but that does not by itself license every
+downloaded data package or the generated dictionary. Commercial redistribution
+of this Arabic voice/G2P bundle therefore requires a separate rights review.
+Pinned voice/model card source:
+https://huggingface.co/rhasspy/piper-voices/tree/39ab474be869e9181350af6a65e4953eef67aaa0/ar/ar_JO/kareem/medium
+Moonshine 0.1.5 Arabic provenance:
+https://github.com/moonshine-ai/moonshine/blob/v0.1.5/core/moonshine-tts/data/ar_msa/README.md
+Arabic diacritizer source:
+https://huggingface.co/AbderrahmanSkiredj1/arabertv02_tashkeel_fadel
+
+Gemma 4 E2B IT LiteRT-LM
+------------------------
+GuideCast asset: gemma-4-E2B-it.litertlm
+Download repository: litert-community/gemma-4-E2B-it-litert-lm
+License: Apache License 2.0 (Gemma 4)
+Official license: https://ai.google.dev/gemma/apache_2
+Pinned model page:
+https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/blob/6e5c4f1e395deb959c494953478fa5cec4b8008f/gemma-4-E2B-it.litertlm

@@ -1,0 +1,62 @@
+MCastTalk — 실시간 다국어 통역방송(feat. DMZ peace walk)
+Copyright 2026 dash.jeong <dash.jeong@gmail.com>
+
+This product includes first-party software developed for MCastTalk.
+Powered by Codex, Gemini with dash.jeong (Developed via AI-assisted Vibe Coding).
+
+===============================================================================
+First-Party License
+===============================================================================
+
+First-party MCastTalk code is source-available under the PolyForm Noncommercial
+License 1.0.0 in the root LICENSE file. The license permits use, modification,
+and redistribution for permitted noncommercial purposes. Commercial use requires
+a separate prior written license from the copyright holder. Contact:
+dash.jeong@gmail.com.
+
+Copies or versions already lawfully provided under Apache License 2.0 retain those
+previously granted rights. The current license does not revoke them.
+
+===============================================================================
+Third-Party Software and Model Attributions
+===============================================================================
+
+1. Moonshine AI (Speech-to-Text & Neural Audio Synthesis)
+   Copyright Useful Sensors Inc.
+   - SDK Runtime: MIT License
+   - Korean Legacy TINY Model: Moonshine AI Community License
+   - Kokoro TTS / Kaldi-fbank: Apache License 2.0
+   Notice: "Powered by Moonshine AI"
+
+2. LiteRT-LM & Gemma (On-Device Neural Machine Translation)
+   - Runtime: LiteRT-LM is developed by Google AI Edge and licensed under the Apache License, Version 2.0.
+   - Models: The pinned Gemma 4 E2B IT artifacts use Apache License 2.0: https://ai.google.dev/gemma/apache_2.
+   Notice: Gemma weights are not bundled in this repository or APK. Older Gemma releases and future replacement artifacts may have different terms; verify each exact artifact before use or redistribution.
+
+3. RNNoise (Recurrent Neural Network for Audio Noise Reduction)
+   Copyright (c) 2018 Jean-Marc Valin, Xiph.Org Foundation
+   Licensed under the BSD 3-Clause License
+
+4. National Institute of Korean Language (NIKL) Public Terminology Integration
+   The bundled terminology database was transformed from NIKL public-terminology
+   source files. The integrated provider is NIKL; row-level sources also include Seoul
+   Metropolitan Government, Korea Tourism Organization, Ministry of Foreign Affairs,
+   and Ministry of the Interior and Safety.
+   Official links:
+   - NIKL Public Terminology Data: https://www.korean.go.kr/front/pubWord/pubWordDataIntro.do?mn_id=164
+   - NIKL Copyright Policy: https://www.korean.go.kr/front/nuri/pageView.do?mkn=3&page_id=P000189
+   - Public Data Portal: https://www.data.go.kr
+   NIKL's policy distinguishes material for which NIKL owns all economic copyright
+   from material carrying separate Korea Open Government License markings. The
+   source files do not state one bulk redistribution license for the complete
+   multi-agency dataset. Attribution and transformation into a database do not by
+   themselves establish public-source or APK redistribution permission. Each source's
+   applicable terms must be verified before release.
+
+Complete third-party licenses, notices, and offline legal documents are accessible
+directly within the application under: Settings -> Licenses (앱 라이선스 고지).
+
+The first-party license does not relicense third-party SDKs, models, voices,
+datasets, dictionaries, or test fixtures. Inclusion of an attribution does not
+establish commercial clearance or redistribution permission. See
+docs/THIRD_PARTY_LICENSES.md for component-specific terms and unresolved rights.
