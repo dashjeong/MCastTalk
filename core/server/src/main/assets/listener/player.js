@@ -26,6 +26,7 @@ const transcriptSelect = document.querySelector("#transcript-language");
 const transcriptRefreshButton = document.querySelector("#transcript-refresh");
 const transcriptFollow = document.querySelector("#transcript-follow");
 const transcriptList = document.querySelector("#transcript-list");
+const transcriptStatus = document.querySelector("#transcript-status");
 const pageDescription = document.querySelector("#page-description");
 const pinnedChannelBanner = document.querySelector("#pinned-channel");
 const pinnedChannelName = document.querySelector("#pinned-channel-name");
@@ -88,6 +89,26 @@ let transcriptRequestScope = null;
 let transcriptEtag = "";
 let transcriptEtagScope = null;
 let cachedTranscript = null;
+let transcriptBackoffUntil = 0;
+let transcriptBackoffScope = null;
+let transientTranscriptFailureCount = 0;
+let renderedTranscriptScope = null;
+let isDocumentVisible = true;
+
+function parseRetryAfterHeader(headerValue) {
+  if (!headerValue) return 3000;
+  const trimmed = String(headerValue).trim();
+  const seconds = parseInt(trimmed, 10);
+  if (/^\d+$/.test(trimmed) && Number.isFinite(seconds)) {
+    return Math.min(60_000, Math.max(1000, seconds * 1000));
+  }
+  const parsedDate = Date.parse(trimmed);
+  if (!Number.isNaN(parsedDate)) {
+    const delta = parsedDate - Date.now();
+    return Math.min(60_000, Math.max(1000, delta));
+  }
+  return 3000;
+}
 
 function authHeaders(token = accessToken) {
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -192,7 +213,28 @@ function setDiagnostics() {
   liveEdgeButton.disabled = desiredState !== "playing" || bufferedSeconds < 0.35;
 }
 
+function setTranscriptStale(isStale, message = "스크립트 갱신 지연 · 이전 내용 유지") {
+  if (transcriptStatus) {
+    if (isStale) {
+      transcriptStatus.textContent = uiText(message);
+      transcriptStatus.hidden = false;
+    } else {
+      transcriptStatus.textContent = "";
+      transcriptStatus.hidden = true;
+    }
+  }
+  if (transcriptList) {
+    if (isStale) {
+      transcriptList.classList.add("is-stale");
+    } else {
+      transcriptList.classList.remove("is-stale");
+    }
+  }
+}
+
 function renderNoTranscript(message) {
+  renderedTranscriptScope = null;
+  setTranscriptStale(false);
   const line = document.createElement("p");
   line.className = "transcript-empty";
   line.textContent = uiText(message);
@@ -328,24 +370,54 @@ function isSameTranscriptScope(left, right) {
 
 function renderCachedTranscript(scope) {
   if (!cachedTranscript || !isSameTranscriptScope(cachedTranscript.scope, scope)) return false;
-  return renderTranscripts(cachedTranscript.payload);
+  const rendered = renderTranscripts(cachedTranscript.payload);
+  if (rendered) {
+    renderedTranscriptScope = scope;
+  }
+  return rendered;
 }
 
 function clearTranscriptSnapshot() {
   transcriptEtag = "";
   transcriptEtagScope = null;
   cachedTranscript = null;
+  renderedTranscriptScope = null;
+  setTranscriptStale(false);
 }
 
 function loadTranscripts(forceRefresh = false) {
   const scope = currentTranscriptScope();
+
+  if (transcriptBackoffScope && !isSameTranscriptScope(transcriptBackoffScope, scope)) {
+    transcriptBackoffUntil = 0;
+    transcriptBackoffScope = null;
+    transientTranscriptFailureCount = 0;
+  }
+
+  if (renderedTranscriptScope && !isSameTranscriptScope(renderedTranscriptScope, scope)) {
+    clearTranscriptSnapshot();
+    renderNoTranscript("아직 수신한 스크립트가 없습니다.");
+  } else if (cachedTranscript && !isSameTranscriptScope(cachedTranscript.scope, scope)) {
+    clearTranscriptSnapshot();
+  }
+
   if (forceRefresh) renderCachedTranscript(scope);
   if (transcriptRequestInFlight) {
     if (isSameTranscriptScope(transcriptRequestScope, scope)) return transcriptRequestInFlight;
     return transcriptRequestInFlight.then(() => loadTranscripts(forceRefresh));
   }
   const now = Date.now();
-  if (!forceRefresh && now - lastTranscriptPoll < 900) return Promise.resolve();
+  if (now < transcriptBackoffUntil) {
+    return Promise.resolve();
+  }
+  if (!forceRefresh) {
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+      return Promise.resolve();
+    }
+    if (now - lastTranscriptPoll < 900) {
+      return Promise.resolve();
+    }
+  }
   lastTranscriptPoll = now;
 
   const request = (async () => {
@@ -359,12 +431,43 @@ function loadTranscripts(forceRefresh = false) {
         headers,
       });
       if (!isSameTranscriptScope(currentTranscriptScope(), scope)) return;
-      if (response.status === 401) {
+      if (response.status === 401 || response.status === 403) {
+        transcriptBackoffUntil = 0;
+        transcriptBackoffScope = null;
+        transientTranscriptFailureCount = 0;
         clearTranscriptSnapshot();
+        renderNoTranscript("아직 수신한 스크립트가 없습니다.");
         return;
+      }
+      if (response.status === 429) {
+        const retryHeader = response.headers?.get("Retry-After");
+        const backoffMs = parseRetryAfterHeader(retryHeader);
+        transcriptBackoffUntil = Date.now() + backoffMs;
+        transcriptBackoffScope = scope;
+        if (cachedTranscript && isSameTranscriptScope(cachedTranscript.scope, scope)) {
+          setTranscriptStale(true);
+          return;
+        }
+        clearTranscriptSnapshot();
+        renderNoTranscript("스크립트를 읽지 못했습니다.");
+        return;
+      }
+      if (response.status === 304) {
+        transcriptBackoffUntil = 0;
+        transcriptBackoffScope = null;
+        transientTranscriptFailureCount = 0;
+        setTranscriptStale(false);
       }
       if (response.status === 304) return;
       if (!response.ok) {
+        transientTranscriptFailureCount += 1;
+        const backoffMs = Math.min(10_000, 1000 * (2 ** Math.min(transientTranscriptFailureCount - 1, 3)));
+        transcriptBackoffUntil = Date.now() + backoffMs;
+        transcriptBackoffScope = scope;
+        if (cachedTranscript && isSameTranscriptScope(cachedTranscript.scope, scope)) {
+          setTranscriptStale(true);
+          return;
+        }
         clearTranscriptSnapshot();
         renderNoTranscript("스크립트를 읽지 못했습니다.");
         return;
@@ -375,11 +478,24 @@ function loadTranscripts(forceRefresh = false) {
         cachedTranscript = { payload, scope };
         transcriptEtag = response.headers?.get("ETag") || "";
         transcriptEtagScope = scope;
+        renderedTranscriptScope = scope;
+        transcriptBackoffUntil = 0;
+        transcriptBackoffScope = null;
+        transientTranscriptFailureCount = 0;
+        setTranscriptStale(false);
       } else {
         clearTranscriptSnapshot();
       }
     } catch (error) {
       if (!isSameTranscriptScope(currentTranscriptScope(), scope)) return;
+      transientTranscriptFailureCount += 1;
+      const backoffMs = Math.min(10_000, 1000 * (2 ** Math.min(transientTranscriptFailureCount - 1, 3)));
+      transcriptBackoffUntil = Date.now() + backoffMs;
+      transcriptBackoffScope = scope;
+      if (cachedTranscript && isSameTranscriptScope(cachedTranscript.scope, scope)) {
+        setTranscriptStale(true);
+        return;
+      }
       clearTranscriptSnapshot();
       renderNoTranscript(error.message || "스크립트 수신 오류");
     }
@@ -438,6 +554,14 @@ function setupTabEvents() {
         startTranscriptPolling();
       } else {
         stopTranscriptPolling();
+      }
+    });
+  }
+  if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
+    document.addEventListener("visibilitychange", () => {
+      isDocumentVisible = document.visibilityState !== "hidden";
+      if (isDocumentVisible && panelTranscript && !panelTranscript.hidden) {
+        loadTranscripts(true);
       }
     });
   }

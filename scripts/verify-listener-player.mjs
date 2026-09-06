@@ -90,6 +90,26 @@ assert.match(
 );
 assert.match(
   source,
+  /response\.status === 429/,
+  "listener must handle 429 rate limits",
+);
+assert.match(
+  source,
+  /Retry-After/,
+  "listener must parse Retry-After backoff header",
+);
+assert.match(
+  source,
+  /#transcript-status/,
+  "listener must bind transcript status element",
+);
+assert.match(
+  source,
+  /visibilitychange/,
+  "listener must observe tab visibility changes",
+);
+assert.match(
+  source,
   /const MAX_BUFFERED_AUDIO_SECONDS = 4;/,
   "the browser audio queue needs a finite live-listening bound",
 );
@@ -140,9 +160,17 @@ class MockElement {
     this.tabIndex = 0;
     this.textContent = "";
     this.value = "";
+    const classes = new Set();
     this.classList = {
-      add: () => {},
-      remove: () => {},
+      add: (...tokens) => {
+        for (const token of tokens) classes.add(token);
+        this.className = [...classes].join(" ");
+      },
+      remove: (...tokens) => {
+        for (const token of tokens) classes.delete(token);
+        this.className = [...classes].join(" ");
+      },
+      contains: (token) => classes.has(token),
     };
   }
 
@@ -210,6 +238,7 @@ function createListenerHarness({
   };
   element("#playback-rate").value = "1";
   element("#transcript-follow").checked = true;
+  element("#transcript-status").hidden = true;
 
   const contexts = [];
   class MockAudioContext {
@@ -325,9 +354,43 @@ function createListenerHarness({
     { id: "ja", name: "일본어", languageTag: "ja-JP" },
   ];
   const sessionValues = new Map();
+  const documentListeners = new Map();
+  const mockDocument = {
+    querySelector: element,
+    createElement: (tag) => new MockElement(tag),
+    createDocumentFragment: () => new MockElement("fragment"),
+    title: "",
+    visibilityState: "visible",
+    addEventListener: (type, listener) => {
+      const list = documentListeners.get(type) || [];
+      list.push(listener);
+      documentListeners.set(type, list);
+    },
+    dispatch: (type, event = {}) => {
+      return (documentListeners.get(type) || []).map((listener) => listener(event));
+    },
+  };
+  let currentTimeMs = 1_700_000_000_000;
+  class MockDate extends Date {
+    constructor(...args) {
+      if (args.length === 0) {
+        super(currentTimeMs);
+      } else {
+        super(...args);
+      }
+    }
+    static now() {
+      return currentTimeMs;
+    }
+    static parse(str) {
+      return Date.parse(str);
+    }
+  }
+
   const sandbox = {
     ArrayBuffer,
     DataView,
+    Date: MockDate,
     Float32Array,
     Math,
     Number,
@@ -336,12 +399,7 @@ function createListenerHarness({
     clearInterval: () => {},
     clearTimeout,
     console,
-    document: {
-      querySelector: element,
-      createElement: (tag) => new MockElement(tag),
-      createDocumentFragment: () => new MockElement("fragment"),
-      title: "",
-    },
+    document: mockDocument,
     fetch: (url, options = {}) => {
       if (fetchImpl) return fetchImpl(url, options);
       const payload = url === "/api/session"
@@ -373,13 +431,16 @@ function createListenerHarness({
   vm.runInContext(source, context, { filename: playerUrl.pathname });
 
   return {
+    advanceTime: (ms) => { currentTimeMs += ms; },
     contexts,
     diagnostics: () => sandbox.window.__guideCastDiagnostics(),
+    document: mockDocument,
     element,
     flush: async () => {
       for (let index = 0; index < 12; index += 1) await Promise.resolve();
     },
     loadTranscripts: (forceRefresh) => context.loadTranscripts(forceRefresh),
+    location: sandbox.location,
     pendingTimeouts: () => timeouts.filter((timer) => timer.active),
     runNextTimeout: () => {
       const timer = timeouts.find((candidate) => candidate.active);
@@ -785,6 +846,566 @@ async function verifyPinnedLanguageCanSwitchToOriginal() {
   assert.equal(harness.sockets[0].closed, true, "old translation socket must close on source switch");
 }
 
+async function verifyTranscriptRetainsOn429WithRetryAfterBackoff() {
+  const transcriptRequests = [];
+  let responseMode = "initial";
+  const payload = {
+    transcripts: [{
+      sequence: 1,
+      sourceText: "도착 안내 방송입니다.",
+      isFinal: true,
+      translations: { en: "This is an arrival announcement." },
+    }],
+    count: 1,
+  };
+
+  const harness = createListenerHarness({
+    fetchImpl: (url, options) => {
+      if (url === "/api/session") return Promise.resolve(mockJsonResponse({ access: "public" }));
+      if (url.startsWith("/api/status")) return Promise.resolve(mockJsonResponse({ channels: [{ id: "en", name: "영어", languageTag: "en-US" }] }));
+      if (!url.startsWith("/api/transcripts")) return Promise.reject(new Error(`Unexpected request: ${url}`));
+      transcriptRequests.push({ options, url });
+      if (responseMode === "initial") {
+        return Promise.resolve(mockJsonResponse(payload, { etag: '"gc-429-test"' }));
+      }
+      if (responseMode === "rateLimited") {
+        return Promise.resolve({
+          ok: false,
+          status: 429,
+          headers: {
+            get: (name) => name.toLowerCase() === "retry-after" ? "5" : null,
+          },
+          json: async () => null,
+          text: async () => "Rate limit exceeded",
+        });
+      }
+      if (responseMode === "recovered") {
+        return Promise.resolve({
+          ok: false,
+          status: 304,
+          headers: { get: () => '"gc-429-test"' },
+          json: async () => null,
+          text: async () => { throw new Error("304 has no body"); },
+        });
+      }
+      throw new Error(`Unknown mode: ${responseMode}`);
+    },
+  });
+  await harness.flush();
+
+  const transcriptList = harness.element("#transcript-list");
+  const transcriptStatus = harness.element("#transcript-status");
+
+  // Step 1: initial 200 load
+  await harness.loadTranscripts(true);
+  assert.equal(transcriptRequests.length, 1);
+  assert.match(collectText(transcriptList), /도착 안내 방송입니다\./);
+  assert.equal(transcriptStatus.hidden, true);
+  assert.equal(transcriptList.classList.contains("is-stale"), false);
+
+  // Step 2: second poll receives 429 with Retry-After: 5 seconds
+  harness.advanceTime(1000);
+  responseMode = "rateLimited";
+  await harness.loadTranscripts(true);
+  assert.equal(transcriptRequests.length, 2);
+  // Transcript text must be RETAINED! Not cleared!
+  assert.match(collectText(transcriptList), /도착 안내 방송입니다\./);
+  // Status indicator must be visible and warn about delay
+  assert.equal(transcriptStatus.hidden, false);
+  assert.match(transcriptStatus.textContent, /스크립트 갱신 지연/);
+  assert.equal(transcriptList.classList.contains("is-stale"), true);
+
+  // Step 3: manual refresh (forceRefresh) during backoff window must ALSO be blocked
+  harness.advanceTime(2000); // 2s into 5s backoff
+  await harness.loadTranscripts(true);
+  assert.equal(transcriptRequests.length, 2, "forceRefresh during active backoff must not flood the server");
+
+  // Step 4: after backoff window expires, subsequent poll executes and clears stale status
+  harness.advanceTime(4000); // Now 6s since 429, backoff expired
+  responseMode = "recovered";
+  await harness.loadTranscripts(true);
+  assert.equal(transcriptRequests.length, 3);
+  assert.match(collectText(transcriptList), /도착 안내 방송입니다\./);
+  assert.equal(transcriptStatus.hidden, true, "stale status must hide upon recovery");
+  assert.equal(transcriptList.classList.contains("is-stale"), false, "is-stale class must be removed upon recovery");
+}
+
+async function verifyTranscript429ParsesHttpDateHeader() {
+  const transcriptRequests = [];
+  let responseMode = "initial";
+  const httpDateString = new Date(1_700_000_000_000 + 10_000).toUTCString();
+
+  const harness = createListenerHarness({
+    fetchImpl: (url, options) => {
+      if (url === "/api/session") return Promise.resolve(mockJsonResponse({ access: "public" }));
+      if (url.startsWith("/api/status")) return Promise.resolve(mockJsonResponse({ channels: [{ id: "en", name: "영어", languageTag: "en-US" }] }));
+      if (!url.startsWith("/api/transcripts")) return Promise.reject(new Error(`Unexpected: ${url}`));
+      transcriptRequests.push({ options, url });
+      if (responseMode === "initial") {
+        return Promise.resolve(mockJsonResponse({ transcripts: [{ sequence: 1, sourceText: "테스트", isFinal: true }], count: 1 }));
+      }
+      if (responseMode === "rateLimited") {
+        return Promise.resolve({
+          ok: false,
+          status: 429,
+          headers: { get: (name) => name.toLowerCase() === "retry-after" ? httpDateString : null },
+          json: async () => null,
+          text: async () => "Rate limited",
+        });
+      }
+      return Promise.resolve(mockJsonResponse({ transcripts: [{ sequence: 1, sourceText: "테스트", isFinal: true }], count: 1 }));
+    },
+  });
+  await harness.flush();
+
+  await harness.loadTranscripts(true);
+  assert.equal(transcriptRequests.length, 1);
+
+  // Receive 429 with HTTP-date header (+10 seconds)
+  responseMode = "rateLimited";
+  harness.advanceTime(1000);
+  await harness.loadTranscripts(true);
+  assert.equal(transcriptRequests.length, 2);
+
+  // At +5 seconds, backoff is still active
+  harness.advanceTime(4000);
+  await harness.loadTranscripts(true);
+  assert.equal(transcriptRequests.length, 2, "HTTP-date backoff must block requests during window");
+
+  // At +11 seconds, backoff expired
+  harness.advanceTime(6000);
+  responseMode = "recovered";
+  await harness.loadTranscripts(true);
+  assert.equal(transcriptRequests.length, 3, "HTTP-date backoff must allow requests once expired");
+}
+
+async function verifyTranscriptClearsOnAuthLoss() {
+  let statusToReturn = 200;
+  const payload = {
+    transcripts: [{
+      sequence: 1,
+      sourceText: "인증 테스트입니다.",
+      isFinal: true,
+      translations: { en: "Auth test." },
+    }],
+    count: 1,
+  };
+  const harness = createListenerHarness({
+    fetchImpl: (url) => {
+      if (url === "/api/session") return Promise.resolve(mockJsonResponse({ access: "pin" }));
+      if (url.startsWith("/api/status")) return Promise.resolve(mockJsonResponse({ channels: [{ id: "en", name: "영어", languageTag: "en-US" }] }));
+      if (!url.startsWith("/api/transcripts")) return Promise.reject(new Error(`Unexpected: ${url}`));
+      if (statusToReturn === 200) {
+        return Promise.resolve(mockJsonResponse(payload, { etag: '"gc-auth-1"' }));
+      }
+      return Promise.resolve({
+        ok: false,
+        status: statusToReturn,
+        headers: { get: () => null },
+        json: async () => null,
+        text: async () => "Auth failure",
+      });
+    },
+  });
+  await harness.flush();
+
+  const transcriptList = harness.element("#transcript-list");
+  const transcriptStatus = harness.element("#transcript-status");
+  await harness.loadTranscripts(true);
+  assert.match(collectText(transcriptList), /인증 테스트입니다\./);
+
+  // Auth lost (401)
+  statusToReturn = 401;
+  await harness.loadTranscripts(true);
+  assert.doesNotMatch(collectText(transcriptList), /인증 테스트입니다\./);
+  assert.match(collectText(transcriptList), /아직 수신한 스크립트가 없습니다\./);
+  assert.equal(transcriptStatus.hidden, true);
+  assert.equal(transcriptList.classList.contains("is-stale"), false);
+
+  // Recover 200
+  statusToReturn = 200;
+  await harness.loadTranscripts(true);
+  assert.match(collectText(transcriptList), /인증 테스트입니다\./);
+
+  // Access denied (403 Forbidden) must also clear prior transcript!
+  statusToReturn = 403;
+  await harness.loadTranscripts(true);
+  assert.doesNotMatch(collectText(transcriptList), /인증 테스트입니다\./, "403 Forbidden must clear prior transcript");
+  assert.match(collectText(transcriptList), /아직 수신한 스크립트가 없습니다\./);
+  assert.equal(transcriptStatus.hidden, true);
+  assert.equal(transcriptList.classList.contains("is-stale"), false);
+}
+
+async function verifyTranscriptClearsOnSessionChange() {
+  let joinToken = "token-session-1";
+  const session1Payload = {
+    transcripts: [{
+      sequence: 1,
+      sourceText: "세션 1 스크립트",
+      isFinal: true,
+      translations: { en: "Session 1 script" },
+    }],
+    count: 1,
+  };
+  const session2Payload = {
+    transcripts: [{
+      sequence: 2,
+      sourceText: "세션 2 스크립트",
+      isFinal: true,
+      translations: { en: "Session 2 script" },
+    }],
+    count: 1,
+  };
+
+  const harness = createListenerHarness({
+    fetchImpl: (url, options = {}) => {
+      if (url === "/api/session") return Promise.resolve(mockJsonResponse({ access: "pin" }));
+      if (url === "/api/join") {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: { get: () => null },
+          json: async () => null,
+          text: async () => joinToken,
+        });
+      }
+      if (url.startsWith("/api/status")) return Promise.resolve(mockJsonResponse({ channels: [{ id: "en", name: "영어", languageTag: "en-US" }] }));
+      if (url.startsWith("/api/transcripts")) {
+        const auth = options.headers?.Authorization || "";
+        if (auth.includes("token-session-1")) {
+          return Promise.resolve(mockJsonResponse(session1Payload));
+        }
+        if (auth.includes("token-session-2")) {
+          return Promise.resolve(mockJsonResponse(session2Payload));
+        }
+        return Promise.resolve({
+          ok: false,
+          status: 401,
+          headers: { get: () => null },
+          json: async () => null,
+          text: async () => "Unauthorized",
+        });
+      }
+      return Promise.reject(new Error(`Unexpected: ${url}`));
+    },
+  });
+  await harness.flush();
+
+  // Join session 1
+  harness.element("#pin").value = "1234";
+  const [join1] = harness.element("#pin-form").dispatch("submit");
+  await join1;
+  await harness.flush();
+
+  const transcriptList = harness.element("#transcript-list");
+  await harness.loadTranscripts(true);
+  assert.match(collectText(transcriptList), /세션 1 스크립트/);
+
+  // Switch to session 2 by joining with new credentials
+  joinToken = "token-session-2";
+  harness.element("#pin").value = "5678";
+  const [join2] = harness.element("#pin-form").dispatch("submit");
+  await join2;
+  await harness.flush();
+
+  // Loading transcripts under new session must clear old session text
+  await harness.loadTranscripts(true);
+  assert.doesNotMatch(collectText(transcriptList), /세션 1 스크립트/);
+  assert.match(collectText(transcriptList), /세션 2 스크립트/);
+}
+
+async function verifyTranscriptScopeChangeResetsBackoff() {
+  let joinToken = "token-backoff-1";
+  const requests = [];
+
+  const harness = createListenerHarness({
+    fetchImpl: (url, options = {}) => {
+      if (url === "/api/session") return Promise.resolve(mockJsonResponse({ access: "pin" }));
+      if (url === "/api/join") {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: { get: () => null },
+          json: async () => null,
+          text: async () => joinToken,
+        });
+      }
+      if (url.startsWith("/api/status")) return Promise.resolve(mockJsonResponse({ channels: [{ id: "en", name: "영어", languageTag: "en-US" }] }));
+      if (url.startsWith("/api/transcripts")) {
+        requests.push({ url, auth: options.headers?.Authorization });
+        if (options.headers?.Authorization?.includes("token-backoff-1")) {
+          return Promise.resolve({
+            ok: false,
+            status: 429,
+            headers: { get: (name) => name.toLowerCase() === "retry-after" ? "60" : null },
+            json: async () => null,
+            text: async () => "Rate limited for 60s",
+          });
+        }
+        return Promise.resolve(mockJsonResponse({
+          transcripts: [{ sequence: 1, sourceText: "새 세션", isFinal: true }],
+          count: 1,
+        }));
+      }
+      return Promise.reject(new Error(`Unexpected: ${url}`));
+    },
+  });
+  await harness.flush();
+
+  // Join session 1
+  harness.element("#pin").value = "1111";
+  const [j1] = harness.element("#pin-form").dispatch("submit");
+  await j1;
+  await harness.flush();
+
+  // Load triggers 429 with 60s backoff
+  await harness.loadTranscripts(true);
+  assert.equal(requests.length, 1);
+
+  // Switch to session 2
+  joinToken = "token-backoff-2";
+  harness.element("#pin").value = "2222";
+  const [j2] = harness.element("#pin-form").dispatch("submit");
+  await j2;
+  await harness.flush();
+
+  // Scope change must have cleared old 60s backoff so new request goes through immediately!
+  await harness.loadTranscripts(true);
+  assert.equal(requests.length, 2, "scope change must reset old scope backoff immediately");
+  assert.ok(requests[1].auth.includes("token-backoff-2"));
+}
+
+async function verifyTransient5xxAppliesBackoff() {
+  const requests = [];
+  let statusToReturn = 200;
+  const harness = createListenerHarness({
+    fetchImpl: (url) => {
+      if (url === "/api/session") return Promise.resolve(mockJsonResponse({ access: "public" }));
+      if (url.startsWith("/api/status")) return Promise.resolve(mockJsonResponse({ channels: [{ id: "en", name: "영어", languageTag: "en-US" }] }));
+      if (url.startsWith("/api/transcripts")) {
+        requests.push(url);
+        if (statusToReturn === 200) {
+          return Promise.resolve(mockJsonResponse({ transcripts: [{ sequence: 1, sourceText: "정상", isFinal: true }], count: 1 }));
+        }
+        return Promise.resolve({
+          ok: false,
+          status: statusToReturn,
+          headers: { get: () => null },
+          json: async () => null,
+          text: async () => "Server Error",
+        });
+      }
+      return Promise.reject(new Error(`Unexpected: ${url}`));
+    },
+  });
+  await harness.flush();
+
+  await harness.loadTranscripts(true);
+  assert.equal(requests.length, 1);
+
+  // Next poll hits 500
+  statusToReturn = 500;
+  harness.advanceTime(1000);
+  await harness.loadTranscripts(true);
+  assert.equal(requests.length, 2);
+
+  const transcriptList = harness.element("#transcript-list");
+  const transcriptStatus = harness.element("#transcript-status");
+  // Stale content retained
+  assert.match(collectText(transcriptList), /정상/);
+  assert.equal(transcriptStatus.hidden, false);
+
+  // Immediate poll before backoff window is blocked
+  await harness.loadTranscripts(false);
+  assert.equal(requests.length, 2, "transient failure backoff must delay next poll");
+
+  // Advance time past transient backoff (1s)
+  harness.advanceTime(1500);
+  statusToReturn = 200;
+  await harness.loadTranscripts(true);
+  assert.equal(requests.length, 3, "poll must proceed after transient backoff window");
+  assert.equal(transcriptStatus.hidden, true);
+}
+
+async function verifyBackgroundTabSkipsRegularPolling() {
+  let fetchCount = 0;
+  const harness = createListenerHarness({
+    fetchImpl: (url) => {
+      if (url === "/api/session") return Promise.resolve(mockJsonResponse({ access: "public" }));
+      if (url.startsWith("/api/status")) return Promise.resolve(mockJsonResponse({ channels: [{ id: "en", name: "영어", languageTag: "en-US" }] }));
+      if (url.startsWith("/api/transcripts")) {
+        fetchCount += 1;
+        return Promise.resolve(mockJsonResponse({ transcripts: [], count: 0 }));
+      }
+      return Promise.reject(new Error(`Unexpected: ${url}`));
+    },
+  });
+  await harness.flush();
+
+  // Tab visible: initial refresh works
+  await harness.loadTranscripts(true);
+  assert.equal(fetchCount, 1);
+
+  // Tab hidden
+  harness.document.visibilityState = "hidden";
+  // Regular interval poll must be skipped
+  await harness.loadTranscripts(false);
+  assert.equal(fetchCount, 1, "hidden tab must not poll regular transcript intervals");
+
+  // Tab becomes visible again
+  harness.document.visibilityState = "visible";
+  // Refresh on visibility change works
+  harness.advanceTime(1500);
+  await harness.loadTranscripts(true);
+  assert.equal(fetchCount, 2);
+}
+
+async function verifyEmptyCache429WithRepeatedManualClicks() {
+  const requests = [];
+  const harness = createListenerHarness({
+    fetchImpl: (url) => {
+      if (url === "/api/session") return Promise.resolve(mockJsonResponse({ access: "public" }));
+      if (url.startsWith("/api/status")) return Promise.resolve(mockJsonResponse({ channels: [{ id: "en", name: "영어", languageTag: "en-US" }] }));
+      if (url.startsWith("/api/transcripts")) {
+        requests.push(url);
+        return Promise.resolve({
+          ok: false,
+          status: 429,
+          headers: { get: (name) => name.toLowerCase() === "retry-after" ? "4" : null },
+          json: async () => null,
+          text: async () => "Too Many Requests",
+        });
+      }
+      return Promise.reject(new Error(`Unexpected: ${url}`));
+    },
+  });
+  await harness.flush();
+
+  // Initial load on empty cache -> receives 429 with Retry-After: 4
+  await harness.loadTranscripts(true);
+  assert.equal(requests.length, 1);
+  const transcriptList = harness.element("#transcript-list");
+  assert.match(collectText(transcriptList), /스크립트를 읽지 못했습니다\./);
+
+  // User spam-clicks refresh button 5 times over the next 2 seconds (during backoff window)
+  for (let click = 0; click < 5; click += 1) {
+    harness.advanceTime(400);
+    await harness.loadTranscripts(true);
+  }
+  assert.equal(requests.length, 1, "repeated manual clicks during initial 429 backoff must not flood the server");
+
+  // Advance time past 4 seconds
+  harness.advanceTime(3000);
+  await harness.loadTranscripts(true);
+  assert.equal(requests.length, 2, "manual click after backoff expires must be allowed");
+}
+
+async function verifyInitialNetworkFailureAppliesBackoff() {
+  const requests = [];
+  let shouldFail = true;
+  const harness = createListenerHarness({
+    fetchImpl: (url) => {
+      if (url === "/api/session") return Promise.resolve(mockJsonResponse({ access: "public" }));
+      if (url.startsWith("/api/status")) return Promise.resolve(mockJsonResponse({ channels: [{ id: "en", name: "영어", languageTag: "en-US" }] }));
+      if (url.startsWith("/api/transcripts")) {
+        requests.push(url);
+        if (shouldFail) {
+          return Promise.reject(new Error("Network connection dropped"));
+        }
+        return Promise.resolve(mockJsonResponse({
+          transcripts: [{ sequence: 1, sourceText: "복구 완료", isFinal: true }],
+          count: 1,
+        }));
+      }
+      return Promise.reject(new Error(`Unexpected: ${url}`));
+    },
+  });
+  await harness.flush();
+
+  // Initial load fails with network error
+  await harness.loadTranscripts(true);
+  assert.equal(requests.length, 1);
+  assert.match(collectText(harness.element("#transcript-list")), /Network connection dropped/);
+
+  // Immediate refresh must be blocked by transient failure backoff
+  await harness.loadTranscripts(false);
+  assert.equal(requests.length, 1, "immediate poll after network failure must be delayed");
+
+  // Advance time past transient backoff (1s) and recover network
+  harness.advanceTime(1500);
+  shouldFail = false;
+  await harness.loadTranscripts(true);
+  assert.equal(requests.length, 2);
+  assert.match(collectText(harness.element("#transcript-list")), /복구 완료/);
+}
+
+async function verifyEmptyCacheScopeChangeClearsBackoffEvenWithoutSnapshot() {
+  let joinToken = "token-empty-1";
+  const requests = [];
+
+  const harness = createListenerHarness({
+    fetchImpl: (url, options = {}) => {
+      if (url === "/api/session") return Promise.resolve(mockJsonResponse({ access: "pin" }));
+      if (url === "/api/join") {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: { get: () => null },
+          json: async () => null,
+          text: async () => joinToken,
+        });
+      }
+      if (url.startsWith("/api/status")) return Promise.resolve(mockJsonResponse({ channels: [{ id: "en", name: "영어", languageTag: "en-US" }] }));
+      if (url.startsWith("/api/transcripts")) {
+        requests.push({ url, auth: options.headers?.Authorization });
+        if (options.headers?.Authorization?.includes("token-empty-1")) {
+          return Promise.resolve({
+            ok: false,
+            status: 429,
+            headers: { get: (name) => name.toLowerCase() === "retry-after" ? "60" : null },
+            json: async () => null,
+            text: async () => "Rate limit",
+          });
+        }
+        return Promise.resolve(mockJsonResponse({
+          transcripts: [{ sequence: 1, sourceText: "새 토큰 성공", isFinal: true }],
+          count: 1,
+        }));
+      }
+      return Promise.reject(new Error(`Unexpected: ${url}`));
+    },
+  });
+  await harness.flush();
+
+  // Join session 1
+  harness.element("#pin").value = "1000";
+  const [j1] = harness.element("#pin-form").dispatch("submit");
+  await j1;
+  await harness.flush();
+
+  // Initial fetch fails with 429 (no snapshot is ever created)
+  await harness.loadTranscripts(true);
+  assert.equal(requests.length, 1);
+
+  // Manual click on session 1 is suppressed
+  harness.advanceTime(1000);
+  await harness.loadTranscripts(true);
+  assert.equal(requests.length, 1);
+
+  // Switch to session 2 (scope changes, even though no cached transcript snapshot ever existed!)
+  joinToken = "token-empty-2";
+  harness.element("#pin").value = "2000";
+  const [j2] = harness.element("#pin-form").dispatch("submit");
+  await j2;
+  await harness.flush();
+
+  // Request under new session must proceed immediately despite session 1's active 60s backoff!
+  await harness.loadTranscripts(true);
+  assert.equal(requests.length, 2, "scope change without snapshot must reset backoff immediately");
+  assert.ok(requests[1].auth.includes("token-empty-2"));
+  assert.match(collectText(harness.element("#transcript-list")), /새 토큰 성공/);
+}
+
 await verifyPinnedLanguageCanSwitchToOriginal();
 await verifyDelayedResumeCannotUndoPause();
 await verifyRapidLanguageSwitchKeepsOnlyNewestGeneration();
@@ -792,5 +1413,15 @@ await verifyTranscriptPollingCoalescesAndRevalidates();
 await verifyTranscriptLanguageChangeRepaintsDuringNotModifiedRequest();
 await verifySlowPlaybackQueueStaysBoundedForFiveMinutes();
 await verifyClosedSocketReconnectsAndStopCancelsRetry();
+await verifyTranscriptRetainsOn429WithRetryAfterBackoff();
+await verifyTranscript429ParsesHttpDateHeader();
+await verifyTranscriptClearsOnAuthLoss();
+await verifyTranscriptClearsOnSessionChange();
+await verifyTranscriptScopeChangeResetsBackoff();
+await verifyTransient5xxAppliesBackoff();
+await verifyBackgroundTabSkipsRegularPolling();
+await verifyEmptyCache429WithRepeatedManualClicks();
+await verifyInitialNetworkFailureAppliesBackoff();
+await verifyEmptyCacheScopeChangeClearsBackoffEvenWithoutSnapshot();
 
 console.log("GuideCast listener scheduling regression checks passed");

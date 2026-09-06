@@ -2,15 +2,17 @@
 
 **실시간 다국어 통역방송(feat. DMZ peace walk)**
 
-**0.2.38-alpha — 공개용 시험판**
+**0.2.39-alpha — 공개용 시험판**
 
-[Apache 2.0 고지 정정판 APK 및 검증 보고서](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.38-alpha-apache2)
-(`versionCode 44`). 앞서 공개한 code43과 같은 서명키를 사용하는 업데이트입니다.
+[APK 다운로드](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.39-alpha) ·
+[검증 결과와 미검증 환경](docs/TEST_REPORT.md)
+(`versionCode 45`). 기존 공개 APK와 같은 서명키를 사용하는 업데이트입니다.
 
 Android 스마트폰에서 음성을 입력받아 원음과 통역 음성을 로컬 Wi-Fi/핫스팟으로
 송출합니다. 청취자는 별도 앱 없이 웹브라우저로 음성과 자막을 확인합니다.
 
-📖 **[상세 사용 설명서 (User Guide: 한국어 / English)](docs/USER_GUIDE.md)**
+📖 **[상세 사용 설명서 포털 (User Guide Hub)](docs/USER_GUIDE.md)**
+└ [🇰🇷 한국어 설명서](docs/USER_GUIDE_KO.md) · [🇺🇸 English Guide](docs/USER_GUIDE_EN.md) · [🛠️ 현장 문제 해결](docs/TROUBLESHOOTING_KO.md)
 
 Powered by Codex, Gemini with dash.jeong — AI-assisted development.
 
@@ -40,9 +42,8 @@ MCastTalk가 언어의 장벽을 낮추고, 사회적 약자를 포함한 누구
 위 내용은 사용자 보고이며 시험 APK 해시·버전, OS 버전, 지연 측정값과 시험 시간은
 제출되지 않았습니다. 이 소스의 최종 APK와 동일한 파일을 검증했다는 뜻은 아니며,
 Note9 시험 보고가 현재 빌드의 Android 11 이상 요구사항을 변경하지 않습니다.
-공식 배포 서명과 설치 검증이 완료되기 전에는 연구·개발 목적으로 전용 시험폰에서
-사용하는 것을 권장합니다. **완전히 미서명인 APK는 그대로 설치할 수 없습니다.**
-소스에서 만든 debug 빌드의 시험 서명과 정식 배포자 서명은 구분해야 합니다.
+시험판은 전용 시험폰에서 먼저 확인하세요. 소스에서 만든 debug 빌드의 시험 서명과
+공개 APK의 배포자 서명은 다릅니다.
 
 ## 시작하기
 

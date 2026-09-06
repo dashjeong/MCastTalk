@@ -145,6 +145,17 @@ progress { width: 100%; height: 12px; accent-color: #14a06f; }
   margin: 0;
 }
 
+.transcript-status {
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: #8a5300;
+  background: #fff8eb;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  font-weight: 600;
+}
+
 .transcript-scroll {
   margin-top: 8px;
   min-height: 280px;
@@ -154,6 +165,10 @@ progress { width: 100%; height: 12px; accent-color: #14a06f; }
   border-radius: 14px;
   padding: 10px;
   background: #f8fbf9;
+}
+
+.transcript-scroll.is-stale {
+  border-color: #f59e0b;
 }
 
 .transcript-row {

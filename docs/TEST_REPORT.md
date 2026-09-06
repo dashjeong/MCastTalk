@@ -1,125 +1,51 @@
-# Public candidate validation — 2026-09-06
+# Public Alpha validation
 
-## Apache 2.0 notice correction (versionCode 44)
+## Scope — 2026-09-07
 
-The owner authorized Apache-2.0 for first-party code, including commercial use,
-with a separate branding/official-endorsement policy and no permission requirement
-for independent service implementation. Antigravity independently read the diff
-and BRANDING.md and confirmed the scope, third-party terms and removal of the
-previous noncommercial restriction from the current notices.
+This update improves transcript recovery after rate limiting or network failures
+and preserves sentence completion across partial recognition updates.
+Transient transcript failures retain the same-session text and show a delay notice.
+Retries respect both Retry-After formats; manual refreshes share the same backoff.
+Authentication failures clear cached text, and changing channel/credentials resets
+the retry scope. Existing authentication, Host checks and server limits remain.
 
-Local validation: 1,017 unit tests (0 failures/errors/skips), Alpha lint,
-assembleAlpha and verifyPackagedThirdPartyLicenseAssets passed. Nine public
-snapshot tests and the branding/listener/i18n/speaker-microphone Node gates passed.
-The APK contains 40 license assets, the Apache text matches the repository,
-the former first-party license asset is absent, and the glossary digest is unchanged.
+## Source regression evidence
 
-The exact signed APK SHA-256 is
-`e7c4f5d7e86743d05676b37968dbca1345e961a5eca94eaf752097d6077e1b63`.
-The public signer certificate remains
-`afd9d964c7161f0052d16b0065e6dec14861900cfb876b18df639734ccf29ff3`.
-apksigner v3 verification and zipalign 4-byte/16-KiB checks passed. On the existing
-API35 arm64 emulator, code44 installed over the signed code43 without uninstalling.
-Cold activity launch reported 681 ms; this is not a speech latency measurement.
-The MCastTalk license search/result/detail displayed Apache License 2.0,
-commercial use permission and the separate branding scope.
-
-An emulator System UI not-responding dialog appeared during this run. After
-selecting Wait, UI inspection continued successfully; this run does not establish
-system or app long-duration stability. Physical-device audio, inference, hotspot
-load, browser PCM and two-hour stability were not retested on this APK.
-The earlier GitHub CI dependency-verification failure is not represented as fixed
-by this license change. Earlier reports below refer to their original artifacts.
-
-Status: local source/build checks completed. Source-only publication is authorized;
-APK distribution requires separate artifact validation. See the source-only check
-below, `PUBLIC_RELEASE_CHECKLIST.md` and `THIRD_PARTY_LICENSES.md`.
-
-## Executed checks
-
-- Public-boundary synthetic regression: 8 tests passed. Fixtures cover plaintext
-  credentials, compressed credentials, excluded artifacts, archive links,
-  logcat files and unreviewed or modified databases.
-- Web checks: listener scheduling, 8-language localization/transcript safety,
-  remote microphone state machines, and public branding all passed.
-- JVM/Android host tests: 1,016 tests, zero failures/errors/skips. This includes
-  68 server tests and 188 stream/translation JVM tests.
-- Alpha lint: zero errors, 26 warnings, one hint. Warnings are not a clean-lint
-  or security-certification claim.
-- Unsigned Alpha build and exact packaged license/glossary checks passed using
-  the generated output metadata. No private signing key was used.
-- Bundled terminology SQLite integrity check passed; its only table is `terms`
-  with 97,371 rows. Integrity is not proof of redistribution rights or the absence
-  of every kind of personal data.
-
-Commands used:
+JDK 17; Android SDK/build tools 36; local unit tests and Alpha lint:
 
 ```sh
-python3 scripts/test-public-snapshot.py
-python3 scripts/verify-public-snapshot.py
-node scripts/verify-public-branding.mjs
+./gradlew --offline --no-parallel --max-workers=2 \
+  testDebugUnitTest :core:stream:test :core:translation:test \
+  :app:testAlphaUnitTest :app:lintAlpha
 node scripts/verify-listener-player.mjs
 node scripts/verify-listener-i18n.mjs
 node scripts/verify-speaker-mic.mjs
-./gradlew testDebugUnitTest :core:stream:test :core:translation:test \
-  :app:lintAlpha :app:verifyPackagedThirdPartyLicenseAssets \
-  --offline --no-parallel --max-workers=2
+node scripts/verify-public-branding.mjs
+python3 scripts/test-public-snapshot.py
+python3 scripts/verify-public-snapshot.py
 ```
 
-## Fixes verified
+The runtime revision passed 1,344 test executions across 194 XML suites, with no
+failures, errors or skipped tests. This includes Debug and Alpha executions of
+shared cases. Alpha lint: 0 errors, 26 warnings and 1 hint. All four web/public
+regression scripts and nine snapshot-checker unit tests passed.
 
-The packaging check previously required `app-alpha.apk` and failed for an unsigned
-public build. It now selects the one output identified by the Alpha metadata,
-validates the variant, output filename and directory, and checks the packaged
-license/glossary assets. CI now runs this check and the two JVM modules' tests.
-CI has read-only repository permissions, pinned actions, no persisted checkout
-credentials, no Gradle cache upload, and no APK/log artifact-upload step.
+Coverage includes empty-cache 429/network failures, repeated manual refresh,
+HTTP-date Retry-After, channel/credential isolation, stale transcript retention,
+401/403 clearing, bounded PCM queues and monotonically scheduled audio frames.
+Sentence tests cover measured silence, incomplete Korean clauses, earlier usable
+boundaries, retained context and exactly-once finalization.
 
-## Not established
+## Final APK
 
-### User-reported physical testing (2026-09-06)
+Artifact identity, signing checks and device results are recorded with the
+versioned GitHub prerelease. Source tests alone do not qualify an APK for handoff.
 
-The user reported physical testing on Galaxy Note9, S21 Ultra, S23+ and S26 Ultra.
-They specifically reported five translated languages in addition to original audio
-on S21 Ultra and S26 Ultra, and latency on Note9. They recommend Galaxy S20 or newer
-and research/development use on a dedicated test phone until publisher signing and
-installation verification are complete.
+## Limits
 
-This is attributed user evidence, not a test executed by Codex. The tested APK
-hash/version, OS versions, timing measurements and test durations were not supplied.
-It does not establish that this exact final APK passed, nor change the current
-Android 11/API 30 minimum. A fully unsigned APK is not directly installable; a
-locally signed debug build is distinct from a verified publisher release.
-
-### Remaining unverified release gates
-
-- Individual redistribution rights still listed as unresolved in the license
-  inventory, including terminology sources and some model/voice data.
-- Signed release APK, signature continuity, exact-artifact emulator installation,
-  physical Galaxy/One UI behavior, Android/iPhone browser listening, outdoor
-  noise, hotspot load, voice naturalness, S23 first-audio p95, or two-hour stability.
-- Complete absence of unknown vulnerabilities, personal data, third-party SDK
-  logging, or outbound network activity. See `SECURITY.md` for access defaults,
-  plaintext transport and locally retained transcripts.
-
-No public upload was performed as part of this validation. Raw diagnostic logs
-and private incident evidence are intentionally excluded from this source tree.
-# GitHub source-only verification — 2026-09-06
-
-The public Git snapshot excludes the original terminology spreadsheets and the
-converted database. Source/download notices remain, and the reviewed database is
-retained only as ignored local input for complete app builds.
-
-On macOS with JDK 17, Gradle 8.13 and the configured Android SDK, an isolated copy
-without the database passed `testDebugUnitTest`, `:core:stream:test`,
-`:core:translation:test`, `:app:lintAlpha`, `:app:assembleAlpha` and
-`:app:assembleRelease`: 1,016 tests, zero failures/errors/skips; build successful.
-The public-snapshot regression suite passed 9 tests, including database and
-spreadsheet exclusion. Branding, listener scheduling, listener i18n and speaker
-microphone Node regression gates also passed.
-
-These source-only APKs are not distributed and do not include the base glossary.
-This check does not replace full local `:app:verifyPackagedThirdPartyLicenseAssets`
-with the reviewed glossary, nor signature, installation or physical-device tests
-for an eventual distributable APK. Earlier measurements below refer to their
-stated test artifacts and environments.
+API35 arm64 emulator checks establish behavior only in that environment. Physical
+Galaxy/One UI, Android/iPhone browser playback, outdoor noise, hotspot load,
+human-rated voice naturalness, four-language end-to-end STT pipelines and a
+two-hour stability run have not been verified for this release. The Galaxy S23
+prepared-model first-audio p95 ≤2,000 ms gate has not been measured or passed.
+This is an experimental Alpha prerelease, not a field-stability certification.
