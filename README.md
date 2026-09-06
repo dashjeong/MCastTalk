@@ -10,6 +10,8 @@
 Android 스마트폰에서 음성을 입력받아 원음과 통역 음성을 로컬 Wi-Fi/핫스팟으로
 송출합니다. 청취자는 별도 앱 없이 웹브라우저로 음성과 자막을 확인합니다.
 
+📖 **[상세 사용 설명서 (User Guide: 한국어 / English)](docs/USER_GUIDE.md)**
+
 Powered by Codex, Gemini with dash.jeong — AI-assisted development.
 
 ## 개발 배경
