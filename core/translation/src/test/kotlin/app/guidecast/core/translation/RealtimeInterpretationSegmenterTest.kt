@@ -140,7 +140,7 @@ class RealtimeInterpretationSegmenterTest {
     }
 
     @Test
-    fun `three seconds of verified silence finalizes one usable English partial`() {
+    fun `two seconds of verified silence finalizes one usable English partial`() {
         val segmenter = RealtimeInterpretationSegmenter(sentenceCompletionInterpretationPolicy())
         segmenter.observeSpeechActivity(isSpeech = true, capturedAtNanos = 0)
         val hypothesis = RecognizedUtterance(
@@ -156,10 +156,12 @@ class RealtimeInterpretationSegmenterTest {
         segmenter.observeSpeechActivity(isSpeech = false, capturedAtNanos = 300L.ms)
 
         assertFalse(segmenter.tick(3_199L.ms).any(RecognizedUtterance::isFinal))
-        segmenter.observeContinuousQuiet(fromMillis = 3_200, throughMillis = 6_200)
+        segmenter.observeContinuousQuiet(fromMillis = 3_200, throughMillis = 5_199)
+        assertFalse(segmenter.tick(5_199L.ms).any(RecognizedUtterance::isFinal))
+        segmenter.observeSpeechActivity(false, 5_200L.ms)
         assertEquals(
             "Daddy looks at this.",
-            segmenter.tick(6_200L.ms).single(RecognizedUtterance::isFinal).text,
+            segmenter.tick(5_200L.ms).single(RecognizedUtterance::isFinal).text,
         )
     }
 
@@ -622,6 +624,33 @@ class RealtimeInterpretationSegmenterTest {
             "그리고 다음 장소로 천천히 이동합니다",
             output.single { !it.isFinal }.text,
         )
+    }
+
+    @Test
+    fun `later stable ending cannot hide earlier sentence during continuous speech`() {
+        val segmenter = RealtimeInterpretationSegmenter(sentenceCompletionInterpretationPolicy())
+        segmenter.observeSpeechActivity(true, 0)
+        val text = "첫 장소에 도착했습니다 다음 장소로 함께 이동합니다"
+        segmenter.accept(partial(91, text, 100))
+        val output = segmenter.accept(partial(91, text, 300))
+        assertEquals("첫 장소에 도착했습니다", output.single { it.isFinal }.text)
+        assertEquals("다음 장소로 함께 이동합니다", output.single { !it.isFinal }.text)
+        assertFalse(segmenter.tick(10_000.ms).any { it.isFinal })
+        assertEquals("다음 장소로 함께 이동합니다", segmenter.finish(10_100.ms).single { it.isFinal }.text)
+        assertTrue(segmenter.finish(10_200.ms).isEmpty())
+    }
+
+    @Test
+    fun `two second hesitation retains known incomplete tail until three seconds`() {
+        val segmenter = RealtimeInterpretationSegmenter(sentenceCompletionInterpretationPolicy())
+        segmenter.observeSpeechActivity(true, 0)
+        segmenter.accept(partial(92, "다음 장소에서는 우리가", 100))
+        segmenter.observeContinuousQuiet(fromMillis = 200, throughMillis = 2_200)
+        assertFalse(segmenter.tick(2_200.ms).any { it.isFinal })
+        segmenter.observeContinuousQuiet(fromMillis = 2_450, throughMillis = 3_199)
+        assertFalse(segmenter.tick(3_199.ms).any { it.isFinal })
+        segmenter.observeSpeechActivity(false, 3_200.ms)
+        assertEquals("다음 장소에서는 우리가", segmenter.tick(3_200.ms).single { it.isFinal }.text)
     }
 
     @Test

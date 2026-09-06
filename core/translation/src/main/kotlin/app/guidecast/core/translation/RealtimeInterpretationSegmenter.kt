@@ -218,8 +218,16 @@ class RealtimeInterpretationSegmenter(
         // A sustained measured pause is an utterance boundary even when the provider emitted only
         // one revisable hypothesis. This is deliberately separate from the wall-clock decision
         // budget: ongoing speech keeps quietMillis at zero and is never hard-cut by this path.
+        val tail = residual.last()
+        val incompleteTail = isLikelyIncompleteBoundaryToken(tail) ||
+            (requiresPositiveKoreanCompletion() && !isPositiveKoreanSentenceEnding(tail))
+        val utterancePauseMillis = if (incompleteTail) {
+            maxOf(policy.utteranceEndSilenceMillis, 3_000L)
+        } else {
+            policy.utteranceEndSilenceMillis
+        }
         if (
-            quietMillis >= policy.utteranceEndSilenceMillis &&
+            quietMillis >= utterancePauseMillis &&
             textSettled &&
             residual.hasUsefulText()
         ) {
@@ -227,19 +235,19 @@ class RealtimeInterpretationSegmenter(
         }
 
         val requirePositiveKoreanCompletion = requiresPositiveKoreanCompletion()
-        val strongBoundary = stable.indexOfLast { token ->
+        // Select the last eligible boundary, not simply the last ending. A later sentence
+        // without right context must not hide an earlier, already confirmed sentence.
+        val strongBoundary = stable.indices.lastOrNull { index ->
+            val token = stable[index]
             isStrongBoundary(token) &&
-                (!requirePositiveKoreanCompletion || isPositiveKoreanSentenceEnding(token))
-        }
-        val stableContinuationTokens = stable.size - (strongBoundary + 1)
-        val sentenceConfirmedByContinuation =
-            policy.allowStableSentenceContinuationCommit &&
-                stableContinuationTokens >= policy.semanticContinuationTailTokens
+                (!requirePositiveKoreanCompletion || isPositiveKoreanSentenceEnding(token)) &&
+                (!policy.requireAcousticPauseForBoundary ||
+                    (quietMillis >= policy.sentencePauseMillis && textSettled) ||
+                    (policy.allowStableSentenceContinuationCommit &&
+                        stable.size - index - 1 >= policy.semanticContinuationTailTokens))
+        } ?: -1
         if (
             strongBoundary >= 0 &&
-            (!policy.requireAcousticPauseForBoundary ||
-                (quietMillis >= policy.sentencePauseMillis && textSettled) ||
-                sentenceConfirmedByContinuation) &&
             stable.take(strongBoundary + 1).hasUsefulText()
         ) {
             return strongBoundary + 1
@@ -647,7 +655,7 @@ data class RealtimeInterpretationPolicy(
         require(phrasePauseMillis in 200..1_000)
         require(sentencePauseMillis in phrasePauseMillis..1_500)
         require(unpunctuatedPauseMillis in sentencePauseMillis..3_000)
-        require(utteranceEndSilenceMillis in 3_000..5_000)
+        require(utteranceEndSilenceMillis in 2_000..5_000)
         require(utteranceEndTextStabilityMillis in 300..1_000)
         require(undetectedSpeechUtteranceEndSilenceMillis in 5_000..8_000)
         require(maximumQuietObservationGapMillis in 100..1_000)
@@ -679,7 +687,7 @@ fun sentenceCompletionInterpretationPolicy(): RealtimeInterpretationPolicy =
         phrasePauseMillis = 900,
         sentencePauseMillis = 1_200,
         unpunctuatedPauseMillis = 1_800,
-        utteranceEndSilenceMillis = 3_000,
+        utteranceEndSilenceMillis = 2_000,
         utteranceEndTextStabilityMillis = 500,
         undetectedSpeechUtteranceEndSilenceMillis = 5_000,
         maximumQuietObservationGapMillis = 500,

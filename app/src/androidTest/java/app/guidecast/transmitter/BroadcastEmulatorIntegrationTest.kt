@@ -110,15 +110,15 @@ class BroadcastEmulatorIntegrationTest {
     }
 
     @Test
-    fun installedAppAndOperatorScreenUseDmzPeaceWalkName() {
+    fun installedAppAndOperatorScreenUseMCastTalkName() {
         val installedLabel = targetContext.applicationInfo
             .loadLabel(targetContext.packageManager)
             .toString()
-        assertEquals("DMZ 평화걷기 안내 방송", installedLabel)
+        assertEquals("MCastTalk", installedLabel)
         assertTrue(
             "운영 화면에 새 앱 이름이 표시되지 않습니다.",
             UiDevice.getInstance(instrumentation)
-                .wait(Until.hasObject(By.text("DMZ 평화걷기 안내 방송")), 5_000),
+                .wait(Until.hasObject(By.text("MCastTalk")), 5_000),
         )
     }
 
@@ -160,7 +160,7 @@ class BroadcastEmulatorIntegrationTest {
         assertTrue(page.startsWith("HTTP/1.1 200"))
         assertTrue(page.contains("Content-Security-Policy:", ignoreCase = true))
         assertTrue(page.contains("Cache-Control: no-store", ignoreCase = true))
-        assertTrue(page.contains("DMZ 평화걷기 안내 방송"))
+        assertTrue(page.contains("MCastTalk"))
 
         val unauthorized = rawHttpGet(listenerUri, "/api/status")
         assertTrue(unauthorized.startsWith("HTTP/1.1 401"))
@@ -364,7 +364,11 @@ class BroadcastEmulatorIntegrationTest {
         // Use the production singleton. A second client binds the same native Service and its
         // close() shuts down the worker still held by the application's prepared-model lease.
         val provider = app.speechSynthesisProvider
+        val previousVoicePreference = provider.voicePreference("en")
         try {
+            // AUTO may select an installed system voice on a clean device. This gate explicitly
+            // requires Moonshine, so select it rather than mistaking system fallback for failure.
+            provider.setVoicePreference("en", SpeechVoicePreference.MOONSHINE)
             withTimeout(10 * 60 * 1_000L) { provider.prepare(listOf("en")) }
             assertTrue("This gate requires the real Moonshine primary voice", provider.isReady("en"))
             val uri = URI(server.listenerUrl)
@@ -396,6 +400,7 @@ class BroadcastEmulatorIntegrationTest {
             }
         } finally {
             server.close()
+            provider.setVoicePreference("en", previousVoicePreference)
             backendLease.close()
         }
     }

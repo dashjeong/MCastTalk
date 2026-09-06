@@ -10,7 +10,8 @@ import java.util.TreeMap
  * before a Korean particle/connective. Those provider finals are useful stability evidence, but
  * they are not translation finals. This assembler retains the bounded, ordered provider lines and
  * lets [RealtimeInterpretationSegmenter] decide the semantic boundary. A continuously observed
- * 3-5 second acoustic pause may close usable text; otherwise only real input EOF (or an explicit
+ * 2-second acoustic pause may close usable text (3 seconds for known incomplete tails,
+ * 5 seconds when no voice was detected); otherwise only real input EOF (or an explicit
  * owner finish using [finish]) flushes an incomplete tail.
  */
 class ProviderTranscriptSemanticAssembler(

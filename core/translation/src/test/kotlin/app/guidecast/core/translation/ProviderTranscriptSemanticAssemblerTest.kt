@@ -8,6 +8,35 @@ import org.junit.Test
 
 class ProviderTranscriptSemanticAssemblerTest {
     @Test
+    fun `speech resumed before two seconds stays together and commits once after final pause`() {
+        val assembler = ProviderTranscriptSemanticAssembler()
+        assembler.observeSpeechActivity(true, 0)
+        assembler.accept(partial(90, "Welcome", 100).copy(sourceLanguageTag = "en-US"))
+        assembler.observeContinuousQuiet(200, 2_100)
+        assertFalse(assembler.tick(2_100L.ms).any { it.isFinal })
+        assembler.observeSpeechActivity(true, 2_150L.ms)
+        assembler.accept(partial(90, "Welcome everyone", 2_200).copy(sourceLanguageTag = "en-US"))
+        assembler.observeContinuousQuiet(2_300, 4_299)
+        assertFalse(assembler.tick(4_299L.ms).any { it.isFinal })
+        assembler.observeSpeechActivity(false, 4_300L.ms)
+        assertEquals("Welcome everyone", assembler.tick(4_300L.ms).single { it.isFinal }.text)
+        assertTrue(assembler.finish(4_400L.ms).isEmpty())
+    }
+
+    @Test
+    fun `provider final with two complete sentences releases earlier one without silence`() {
+        val assembler = ProviderTranscriptSemanticAssembler()
+        assembler.observeSpeechActivity(true, 0)
+        val output = assembler.accept(providerFinal(91,
+            "첫 장소에 도착했습니다 다음 장소로 함께 이동합니다", 100))
+        assertEquals("첫 장소에 도착했습니다", output.single { it.isFinal }.text)
+        val tail = assembler.finish(200L.ms).single { it.isFinal }
+        assertEquals("다음 장소로 함께 이동합니다", tail.text)
+        assertEquals("첫 장소에 도착했습니다", tail.contextBefore)
+        assertTrue(assembler.finish(300L.ms).isEmpty())
+    }
+
+    @Test
     fun `speech with no provider result requests one endpoint after verified silence`() {
         val assembler = ProviderTranscriptSemanticAssembler()
         assembler.observeSpeechActivity(isSpeech = true, capturedAtNanos = 0)
@@ -42,10 +71,10 @@ class ProviderTranscriptSemanticAssemblerTest {
                 .copy(sourceLanguageTag = "en-US"),
         )
         assembler.observeSpeechActivity(isSpeech = false, capturedAtNanos = 6_700L.ms)
-        assembler.observeContinuousQuiet(fromMillis = 6_950, throughMillis = 9_450)
-        assertFalse(assembler.tick(9_699L.ms).any(RecognizedUtterance::isFinal))
-        assembler.observeSpeechActivity(isSpeech = false, capturedAtNanos = 9_700L.ms)
-        val secondFinal = assembler.tick(9_700L.ms).single(RecognizedUtterance::isFinal)
+        assembler.observeContinuousQuiet(fromMillis = 6_950, throughMillis = 8_699)
+        assertFalse(assembler.tick(8_699L.ms).any(RecognizedUtterance::isFinal))
+        assembler.observeSpeechActivity(isSpeech = false, capturedAtNanos = 8_700L.ms)
+        val secondFinal = assembler.tick(8_700L.ms).single(RecognizedUtterance::isFinal)
 
         assertEquals("that is the next point", secondFinal.text)
         assertEquals("Daddy looks at this.", secondFinal.contextBefore)
