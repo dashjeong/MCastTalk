@@ -1,0 +1,39 @@
+DMZ 평화걷기 안내 방송 — third-party notices
+================================================
+
+This APK uses third-party software and supports separately downloaded model
+and voice files. Package names, resolved versions, license identifiers and
+official source links are available in Settings > 라이선스.
+
+Moonshine required attribution
+------------------------------
+This Moonshine AI Model is licensed under the Moonshine AI Community License,
+Copyright © Moonshine AI Ltd. All Rights Reserved
+
+Powered by Moonshine AI
+
+The complete versioned Moonshine agreement and model/voice notice inventory
+are packaged next to this file for offline review.
+
+License families packaged for offline review
+--------------------------------------------
+- Apache License 2.0: APACHE-2.0.txt
+- MIT License: MIT.txt
+- ONNX Runtime 1.23.2 third-party notices:
+  ONNXRUNTIME-1.23.2-THIRD-PARTY-NOTICES.txt
+- Moonshine Voice 0.1.5 and model terms: MOONSHINE-0.1.5-LICENSE.txt
+- Model and voice component notices: MODEL-AND-VOICE-NOTICES.txt
+- Moonshine native runtime texts: MOONSHINE-EIGEN-MPL-2.0.txt,
+  MOONSHINE-KALDI-NATIVE-FBANK-APACHE-2.0.txt,
+  KISSFFT-BSD-3-CLAUSE.txt, MOONSHINE-NLOHMANN-MIT.txt,
+  MOONSHINE-UTF8CPP-BSL-1.0.txt, MOONSHINE-UTF8PROC-MIT-UNICODE.txt,
+  MOONSHINE-CPP-ANNOTE-MIT.txt, MOONSHINE-CPP-ANNOTE-README.txt, and
+  SILERO-VAD-PINNED-MIT.txt
+- Upstream version/provenance readmes for the pinned Moonshine 0.1.5 runtime
+  and the exact TTS language data used by GuideCast
+- Open Chinese Convert (OpenCC): OPENCC-APACHE-2.0.txt, OPENCC-README.txt
+
+Some proprietary service terms, including Google ML Kit Terms and the Google
+APIs Terms they incorporate, are linked to their official current pages and
+summarized in the app. Those current terms are not re-published as if they were
+open-source license text.

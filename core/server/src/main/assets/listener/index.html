@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>MCastTalk — 실시간 다국어 통역방송(feat. DMZ peace walk)</title>
+  <link rel="stylesheet" href="/player.css">
+  <script src="/player.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <span class="brand">MCastTalk</span>
+      <h1>실시간 다국어 통역방송</h1>
+      <p id="page-description">가이드가 송출 중인 언어를 고르고 재생을 누르세요. (feat. DMZ peace walk)</p>
+    </header>
+
+    <section class="card" aria-labelledby="channel-label">
+      <div id="pinned-channel" class="pinned-channel" role="status" hidden>
+        <div>
+          <span class="pinned-channel-label">현재 통역 채널</span>
+          <strong id="pinned-channel-name"></strong>
+        </div>
+        <a href="/">다른 언어 보기</a>
+      </div>
+
+      <div class="tabs" role="tablist" aria-label="재생/스크립트 탭">
+        <button id="tab-player" class="tab active" type="button" role="tab" aria-selected="true"
+                aria-controls="panel-player">방송 듣기</button>
+        <button id="tab-transcript" class="tab" type="button" role="tab" aria-selected="false"
+                aria-controls="panel-transcript" tabindex="-1">통역 스크립트</button>
+      </div>
+
+      <section id="panel-player" class="tab-panel" role="tabpanel" aria-labelledby="tab-player" tabindex="0">
+        <label id="channel-label" for="channel">청취 언어</label>
+        <select id="channel" disabled></select>
+        <div class="status-row" role="status" aria-live="polite">
+          <span id="status-dot" class="dot"></span>
+          <span id="status">연결 준비 중</span>
+        </div>
+
+        <label class="meter-label" for="audio-level">수신 음량</label>
+        <progress id="audio-level" max="100" value="0"></progress>
+        <p id="diagnostics" class="diagnostics">오디오 준비 전 · 0 프레임 · 0 bytes</p>
+
+        <div class="speed-row">
+          <label for="playback-rate">청취 배속</label>
+          <select id="playback-rate" aria-label="청취 배속">
+            <option value="0.75">0.75×</option>
+            <option value="0.9">0.9×</option>
+            <option value="1" selected>1.0×</option>
+            <option value="1.1">1.1×</option>
+            <option value="1.25">1.25×</option>
+            <option value="1.5">1.5×</option>
+          </select>
+          <button id="live-edge" type="button" disabled>실시간 복귀</button>
+        </div>
+
+        <div class="controls">
+          <button id="play" class="primary" type="button">재생</button>
+          <button id="pause" type="button" disabled>일시정지</button>
+          <button id="stop" type="button" disabled>중지</button>
+        </div>
+        <p class="hint">느린 배속의 누적 지연은 최대 4초입니다. 상한을 넘으면 현재 방송으로 자동 복귀하며, ‘실시간 복귀’로 바로 이동할 수도 있습니다.</p>
+      </section>
+
+      <section id="panel-transcript" class="tab-panel" role="tabpanel" aria-labelledby="tab-transcript" tabindex="0" hidden>
+        <div class="transcript-toolbar">
+          <label for="transcript-language">번역본 보기</label>
+          <select id="transcript-language">
+            <option value="source">원문</option>
+          </select>
+          <button id="transcript-refresh" type="button">새로고침</button>
+          <label class="follow-latest" for="transcript-follow">
+            <input id="transcript-follow" type="checkbox" checked>
+            최신 내용 자동 따라가기
+          </label>
+        </div>
+        <div id="transcript-list" class="transcript-scroll" aria-live="polite" aria-label="통역 스크립트"></div>
+        <p class="hint">최신 100개 이내를 표시합니다. 이전 내용을 읽을 때 자동 따라가기를 끄면 스크롤 위치가 유지됩니다.</p>
+      </section>
+
+      <dialog id="pin-dialog">
+        <form id="pin-form" method="dialog">
+          <h2>방송 PIN 입력</h2>
+          <p>가이드가 안내한 숫자를 입력하세요.</p>
+          <input id="pin" inputmode="numeric" autocomplete="one-time-code"
+                 pattern="[0-9]{4,8}" minlength="4" maxlength="8" required>
+          <p id="pin-error" class="error" aria-live="polite"></p>
+          <button class="primary" type="submit">입장</button>
+        </form>
+      </dialog>
+    </section>
+    <footer class="legal-notice">
+      <strong>Powered by Codex, Gemini with dash.jeong</strong>
+      <span> · <strong>Powered by Moonshine AI</strong><span> · 소프트웨어와 모델의 라이선스 및 이용조건이 적용됩니다.</span></span>
+    </footer>
+  </main>
+</body>
+</html>

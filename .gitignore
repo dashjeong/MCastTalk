@@ -1,0 +1,64 @@
+# Android Studio / IntelliJ
+.idea/
+*.iml
+local.properties
+
+# Gradle
+.gradle/
+.kotlin/
+build/
+**/build/
+
+# Android outputs and signing material
+*.apk
+*.aab
+*.ap_
+*.jks
+*.keystore
+keystore.properties
+
+# Native / model artifacts
+.cxx/
+*.tflite
+*.task
+*.bin
+*.gguf
+models/
+
+# Terminology data stays local for APK builds; never publish it to GitHub.
+*.xls
+*.xlsx
+*.db
+*.db.gz
+*.sqlite
+*.sqlite3
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+secrets.properties
+
+# OS files
+.DS_Store
+
+# Public export only: private engineering evidence belongs in the private repo.
+# Ignore rules do not erase already tracked files or their Git history.
+docs/evidence/
+evidence/
+diagnostics/
+*.log
+*.logcat
+*.jfr
+*.hprof
+*.dmp
+*.litertlm
+guidecast-diagnostics-*.zip
+docs/ANTIGRAVITY_*
+docs/CODEX_*
+docs/INCIDENT_*
+docs/HANDOFF_*
+docs/PUBLIC_RELEASE_AUDIT_*
+artifacts/*.png
+artifacts/*.jpg
+artifacts/*.xml

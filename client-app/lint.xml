@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!-- GuideCast Client intentionally targets ARM64 Galaxy devices. -->
+    <issue id="ChromeOsAbiSupport" severity="ignore" />
+    <!-- The broadcast server is a private hotspot address and currently serves local HTTP. -->
+    <issue id="InsecureBaseConfiguration" severity="ignore" />
+</lint>

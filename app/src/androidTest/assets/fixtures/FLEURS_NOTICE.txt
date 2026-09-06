@@ -1,0 +1,32 @@
+Google FLEURS Dataset Audio Fixture Notice
+==========================================
+
+Dataset: google/fleurs
+Config: ko_kr
+Split: test
+Row Index: 7
+Sample ID: 1959
+Revision: 70bb2e84b976b7e960aa89f1c648e09c59f894dd
+Source URL: https://huggingface.co/datasets/google/fleurs
+Source API: https://datasets-server.huggingface.co/first-rows?dataset=google%2Ffleurs&config=ko_kr&split=test
+License: Creative Commons Attribution 4.0 International (CC-BY-4.0)
+License Confirmation: https://huggingface.co/datasets/google/fleurs/discussions/2
+
+Transcript:
+그래도 관계자의 조언을 듣고 모든 표지판을 지키고, 안전 경고에 세심한 주의를 기울여야 합니다.
+
+Original WAV Asset:
+- File: fixtures/fleurs-ko-1959.wav
+- Format: RIFF WAVE, mono, 16000 Hz, IEEE Float (32-bit float), 112320 samples, 7.02s
+- Byte Size: 449338 bytes
+- SHA-256: 61ed57382352c83a8a0f1799854237e00204df6c3e1c37f93d8231d0a07738d4
+
+Converted S16LE PCM Asset:
+- File: fixtures/fleurs-ko-1959.pcm
+- Conversion & Extraction Commands:
+  1) afconvert -f WAVE -d LEI16@16000 -c 1 fleurs-ko-1959.wav fleurs-ko-1959-s16le.wav
+  2) dd if=fleurs-ko-1959-s16le.wav of=fleurs-ko-1959.pcm bs=4096 skip=1
+  (Removes 4096-byte WAVE header, leaving raw little-endian 16-bit mono PCM)
+- Format: Raw signed 16-bit little-endian mono PCM, 16000 Hz, 112320 samples, 7.02s
+- Byte Size: 224640 bytes
+- SHA-256: b35aa5acf7ff72a4ec1b68415957ac9e7fe89268312cc8f5e5325a88acea841f

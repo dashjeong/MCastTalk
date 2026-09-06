@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#1b3b2b">
+  <title>MCastTalk 강사 원격 마이크</title>
+  <link rel="stylesheet" href="/speaker.css">
+</head>
+<body
+  data-https-port="__GUIDECAST_HTTPS_PORT__"
+  data-ca-fingerprint="__GUIDECAST_CA_FINGERPRINT__"
+>
+  <div class="speaker-container">
+    <header class="speaker-header">
+      <div class="brand">
+        <span class="brand-icon">🎙️</span>
+        <h1 class="brand-title">MCastTalk 강사 마이크</h1>
+      </div>
+      <div id="connectionStatus" class="status-badge status-disconnected">
+        <span class="dot"></span>
+        <span id="statusText">서버 연결 대기 중</span>
+      </div>
+    </header>
+
+    <main class="speaker-main">
+      <section id="securitySetupCard" class="setup-card" hidden>
+        <div class="setup-badge">최초 1회</div>
+        <h2>브라우저 마이크 보안 준비</h2>
+        <p>
+          모바일 브라우저는 사설 IP의 평문 HTTP에서 마이크를 허용하지 않습니다.
+          이 송출기에서만 생성한 로컬 CA를 등록한 뒤 같은 <strong>/mic</strong> 주소의 HTTPS 화면을 여세요.
+        </p>
+        <a class="setup-action" href="/ca.crt" download="guidecast-local-root-ca.crt">
+          Android용 CA 인증서 받기 (PEM)
+        </a>
+        <a class="setup-secondary" href="/ca.der" download="guidecast-local-root-ca.der">
+          Android 대체 형식 받기 (DER)
+        </a>
+        <a class="setup-secondary" href="/guidecast.mobileconfig">
+          iPhone용 보안 프로파일 받기
+        </a>
+        <div class="fingerprint-box">
+          <span>다운로드 인증서의 SHA-256 지문 (DER 기준)</span>
+          <code id="caFingerprint"></code>
+        </div>
+        <p id="caMismatchWarning" class="setup-note" role="alert">
+          이 인증서는 이 송출기 설치가 만든 사설 로컬 CA이며 공식·공개 신뢰 인증서가 아닙니다.
+          설치 전에 방송 폰 앱 화면의 SHA-256 지문과 위 다운로드 인증서 지문을 한 글자씩 비교하세요.
+          다르면 변조되었거나 다른 송출기용일 수 있으므로 설치하지 마세요.
+        </p>
+        <a id="launchSecureMicBtn" class="setup-action setup-success" href="#">
+          인증서 설치 완료 · 보안 /mic 열기
+        </a>
+      </section>
+
+      <form id="micPinCard" class="pin-card" hidden>
+        <label for="micPin">강사 마이크 PIN</label>
+        <p>방송 운영자가 설정한 4~8자리 PIN을 입력하세요.</p>
+        <div class="pin-row">
+          <input
+            id="micPin"
+            name="micPin"
+            type="password"
+            inputmode="numeric"
+            pattern="[0-9]{4,8}"
+            minlength="4"
+            maxlength="8"
+            autocomplete="one-time-code"
+            required
+          >
+          <button id="micPinSubmit" type="submit">접속</button>
+        </div>
+        <p id="micPinMessage" class="pin-message" role="status" aria-live="polite"></p>
+      </form>
+
+      <div id="micCard" class="mic-card">
+        <div class="vu-meter-container">
+          <div class="vu-meter-label">실시간 음성 레벨</div>
+          <div class="vu-meter-bar-bg">
+            <div id="vuMeterBar" class="vu-meter-bar"></div>
+          </div>
+        </div>
+
+        <button id="micButton" class="mic-toggle-btn" disabled>
+          <div class="mic-icon-circle">
+            <svg id="micIcon" viewBox="0 0 24 24" width="48" height="48" fill="currentColor">
+              <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+              <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+            </svg>
+          </div>
+          <span id="micButtonText" class="mic-btn-text">마이크 송출 시작</span>
+        </button>
+
+        <p id="micDescription" class="mic-guide-text">
+          버튼을 누르면 마이크가 켜지고 음성이 실시간 통역 방송으로 전달됩니다.
+        </p>
+        <div id="noticeCard" class="notice-card" hidden>
+          <div class="notice-header">
+            <span id="noticeIcon" class="notice-icon">⚠️</span>
+            <strong id="noticeTitle" class="notice-title">안내</strong>
+          </div>
+          <p id="noticeMessage" class="notice-message"></p>
+          <button id="noticeRetryBtn" class="notice-retry-btn" type="button" hidden>다시 시도</button>
+        </div>
+      </div>
+
+      <div class="info-card">
+        <div class="info-item">
+          <span class="info-icon">📡</span>
+          <div class="info-text">
+            <strong>실시간 온디바이스 AI 방송 파이프라인</strong>
+            <p>원격 음성 입력 ➔ STT ➔ Gemma 다중 언어 번역 ➔ 오프라인 TTS ➔ 관광객 스트리밍</p>
+          </div>
+        </div>
+        <div class="info-item">
+          <span id="networkSecurityIcon" class="info-icon">⚠️</span>
+          <div class="info-text">
+            <strong id="networkSecurityTitle">로컬 네트워크 연결 (비암호화 HTTP)</strong>
+            <p id="networkSecurityDesc">외부 인터넷 없는 현장 핫스팟 직접 전송이며, 현재 HTTP 연결은 암호화되지 않은 로컬 통신입니다.</p>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <footer class="speaker-footer">
+      <span>MCastTalk · 실시간 다국어 통역방송(feat. DMZ peace walk)</span>
+    </footer>
+  </div>
+
+  <script src="/speaker.js"></script>
+</body>
+</html>

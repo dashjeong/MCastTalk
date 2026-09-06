@@ -1,0 +1,62 @@
+{
+  "source": "국립국어원 공공용어 번역 통합 데이터",
+  "languages": {
+    "en": {
+      "file": "public-terms-en.xls",
+      "sha256": "7934420800424adce52f0d9038638ce6715a0ed0b9ce41212a496de794513db0",
+      "rows": 51320,
+      "uniqueTerms": 48524,
+      "ambiguousTerms": 1255,
+      "maxLengths": [
+        6,
+        44,
+        134,
+        17
+      ],
+      "origins": {
+        "국립국어원": 5893,
+        "서울시": 33533,
+        "한국관광공사": 11639,
+        "외교부": 162,
+        "행정안전부": 93
+      }
+    },
+    "zh": {
+      "file": "public-terms-zh.xls",
+      "sha256": "69f81d18bea7e1c8343ee49cebec5624d66d3230774ef65e15ff4082adc465d2",
+      "rows": 24675,
+      "uniqueTerms": 24486,
+      "ambiguousTerms": 128,
+      "maxLengths": [
+        5,
+        24,
+        81,
+        17
+      ],
+      "origins": {
+        "국립국어원": 5171,
+        "서울시": 19504
+      }
+    },
+    "ja": {
+      "file": "public-terms-ja.xls",
+      "sha256": "61671201c49d478838c9d17931a8f0543da9f8a7ccdf7f1b3335a4eef860c41e",
+      "rows": 24565,
+      "uniqueTerms": 24361,
+      "ambiguousTerms": 142,
+      "maxLengths": [
+        5,
+        44,
+        62,
+        17
+      ],
+      "origins": {
+        "국립국어원": 5440,
+        "서울시": 19125
+      }
+    }
+  },
+  "databaseBytes": 29405184,
+  "assetBytes": 4771982,
+  "databaseSha256": "5f39f27faf0c68b305d06e67c09eb929398e0242dd0278eb8430c49070d2ccb3"
+}
