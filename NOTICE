@@ -8,14 +8,16 @@ Powered by Codex, Gemini with dash.jeong (Developed via AI-assisted Vibe Coding)
 First-Party License
 ===============================================================================
 
-First-party MCastTalk code is source-available under the PolyForm Noncommercial
-License 1.0.0 in the root LICENSE file. The license permits use, modification,
-and redistribution for permitted noncommercial purposes. Commercial use requires
-a separate prior written license from the copyright holder. Contact:
-dash.jeong@gmail.com.
+First-party MCastTalk code is licensed under the Apache License, Version 2.0,
+in the root LICENSE file. Use, modification, redistribution and commercial use
+are permitted subject to that license. Copyright ownership is retained.
+This notice adds no restriction to the rights granted by Apache License 2.0.
 
-Copies or versions already lawfully provided under Apache License 2.0 retain those
-previously granted rights. The current license does not revoke them.
+The code license does not grant permission to use MCastTalk trademarks or logos
+as another product's branding or to claim official affiliation or endorsement.
+For that permission, contact dash.jeong@gmail.com. Truthful attribution,
+descriptive references and independent implementation of service ideas do not
+require separate permission under this policy. See BRANDING.md.
 
 ===============================================================================
 Third-Party Software and Model Attributions
@@ -43,15 +45,13 @@ Third-Party Software and Model Attributions
    Metropolitan Government, Korea Tourism Organization, Ministry of Foreign Affairs,
    and Ministry of the Interior and Safety.
    Official links:
-   - NIKL Public Terminology Data: https://www.korean.go.kr/front/pubWord/pubWordDataIntro.do?mn_id=164
+   - NIKL source/download: https://www.korean.go.kr/front/pubWord/pubWordDataList.do?cateLarge=ALL&flag=1&langGubun=ALL&originGubun=ALL
    - NIKL Copyright Policy: https://www.korean.go.kr/front/nuri/pageView.do?mkn=3&page_id=P000189
    - Public Data Portal: https://www.data.go.kr
-   NIKL's policy distinguishes material for which NIKL owns all economic copyright
-   from material carrying separate Korea Open Government License markings. The
-   source files do not state one bulk redistribution license for the complete
-   multi-agency dataset. Attribution and transformation into a database do not by
-   themselves establish public-source or APK redistribution permission. Each source's
-   applicable terms must be verified before release.
+   The original spreadsheets and converted database are excluded from GitHub source
+   and standalone release assets. The app uses locally prepared data with source
+   and download notices. Provider terms remain applicable; MCastTalk's code license
+   does not relicense the data. See docs/TERMINOLOGY_DATA.md.
 
 Complete third-party licenses, notices, and offline legal documents are accessible
 directly within the application under: Settings -> Licenses (앱 라이선스 고지).

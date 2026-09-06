@@ -9,6 +9,16 @@ import org.junit.Test
 
 class ThirdPartyLicenseCatalogTest {
     @Test
+    fun firstPartyUsesApacheWithoutServicePermissionRequirement() {
+        val entry = GUIDECAST_LICENSE_CATALOG.single { it.id == "mcasttalk-first-party-license" }
+        assertEquals("Apache License 2.0", entry.licenseName)
+        assertEquals("licenses/APACHE-2.0.txt", entry.offlineDocumentAsset)
+        assertTrue(entry.notice.contains("상업적 이용을 포함"))
+        assertTrue(entry.notice.contains("독립적인 서비스 구현에는 별도 협의를 요구하지 않습니다"))
+        assertFalse(File("src/main/assets/licenses/POLYFORM-NONCOMMERCIAL-1.0.0.txt").exists())
+    }
+
+    @Test
     fun catalogHasUniqueCompleteOfflineMetadata() {
         assertEquals(47, GUIDECAST_LICENSE_CATALOG.size)
         assertEquals(

@@ -4,6 +4,9 @@
 
 **0.2.38-alpha — 공개용 시험판**
 
+[Apache 2.0 고지 정정판 APK 및 검증 보고서](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.38-alpha-apache2)
+(`versionCode 44`). 앞서 공개한 code43과 같은 서명키를 사용하는 업데이트입니다.
+
 Android 스마트폰에서 음성을 입력받아 원음과 통역 음성을 로컬 Wi-Fi/핫스팟으로
 송출합니다. 청취자는 별도 앱 없이 웹브라우저로 음성과 자막을 확인합니다.
 
@@ -71,16 +74,18 @@ node scripts/verify-speaker-mic.mjs
 
 ## 라이선스와 제3자 권리
 
-MCastTalk 자체 작성 소스는 [PolyForm Noncommercial 1.0.0](LICENSE)에 따라
-source-available로 제공합니다. 해당 라이선스가 허용하는 비상업 목적에는 사용, 수정과
-재배포가 포함됩니다. 상업적 이용에는 저작권자의 별도 사전 서면 허가가 필요합니다.
-문의: `dash.jeong@gmail.com`.
+Copyright 2026 dash.jeong. MCastTalk 자체 작성 소스는 [Apache License 2.0](LICENSE)에
+따라 사용·수정·재배포 및 상업적 이용을 허용합니다. 해당 이용에 개발자의 별도 허가는
+필요하지 않으며 저작권·라이선스·필요한 고지와 변경 표시 의무를 준수해야 합니다.
+MCastTalk 상표·로고의 제품 브랜드 사용이나 공식 제휴·보증 표시의 허가는
+`dash.jeong@gmail.com`으로 문의하세요. 정당한 출처 표시·사실 설명과 독립적인
+서비스 구현에는 별도 협의를 요구하지 않습니다. [브랜드 이용 안내](BRANDING.md)
 
-이미 Apache License 2.0으로 적법하게 제공된 사본·버전에 부여된 권리는 철회되지 않습니다.
 제3자 코드·SDK·모델·음성·데이터는 각자의 조건을 따르며, MCastTalk 자체 소스
 라이선스로 함께 허가되는 것은 아닙니다.
 
 - [NOTICE](NOTICE): 필수 저작권·제3자 고지
+- [BRANDING.md](BRANDING.md): 소스 이용 허락과 구분되는 브랜드·공식 제휴 안내
 - [제3자 구성과 이용조건](docs/THIRD_PARTY_LICENSES.md)
 - 앱의 **라이선스** 메뉴: 포함된 고지 전문과 구성별 안내
 

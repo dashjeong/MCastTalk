@@ -1,5 +1,36 @@
 # Public candidate validation — 2026-09-06
 
+## Apache 2.0 notice correction (versionCode 44)
+
+The owner authorized Apache-2.0 for first-party code, including commercial use,
+with a separate branding/official-endorsement policy and no permission requirement
+for independent service implementation. Antigravity independently read the diff
+and BRANDING.md and confirmed the scope, third-party terms and removal of the
+previous noncommercial restriction from the current notices.
+
+Local validation: 1,017 unit tests (0 failures/errors/skips), Alpha lint,
+assembleAlpha and verifyPackagedThirdPartyLicenseAssets passed. Nine public
+snapshot tests and the branding/listener/i18n/speaker-microphone Node gates passed.
+The APK contains 40 license assets, the Apache text matches the repository,
+the former first-party license asset is absent, and the glossary digest is unchanged.
+
+The exact signed APK SHA-256 is
+`e7c4f5d7e86743d05676b37968dbca1345e961a5eca94eaf752097d6077e1b63`.
+The public signer certificate remains
+`afd9d964c7161f0052d16b0065e6dec14861900cfb876b18df639734ccf29ff3`.
+apksigner v3 verification and zipalign 4-byte/16-KiB checks passed. On the existing
+API35 arm64 emulator, code44 installed over the signed code43 without uninstalling.
+Cold activity launch reported 681 ms; this is not a speech latency measurement.
+The MCastTalk license search/result/detail displayed Apache License 2.0,
+commercial use permission and the separate branding scope.
+
+An emulator System UI not-responding dialog appeared during this run. After
+selecting Wait, UI inspection continued successfully; this run does not establish
+system or app long-duration stability. Physical-device audio, inference, hotspot
+load, browser PCM and two-hour stability were not retested on this APK.
+The earlier GitHub CI dependency-verification failure is not represented as fixed
+by this license change. Earlier reports below refer to their original artifacts.
+
 Status: local source/build checks completed. Source-only publication is authorized;
 APK distribution requires separate artifact validation. See the source-only check
 below, `PUBLIC_RELEASE_CHECKLIST.md` and `THIRD_PARTY_LICENSES.md`.
