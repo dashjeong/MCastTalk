@@ -12,6 +12,14 @@ const statusLabel = document.querySelector("#status");
 const statusDot = document.querySelector("#status-dot");
 const levelMeter = document.querySelector("#audio-level");
 const diagnosticsLabel = document.querySelector("#diagnostics");
+const developerInformationToggle = document.querySelector("#developer-information");
+const DEVELOPER_INFORMATION_PREFERENCE = "mcasttalk-developer-information";
+let developerInformationEnabled = false;
+try {
+  developerInformationEnabled = localStorage.getItem(DEVELOPER_INFORMATION_PREFERENCE) === "true";
+} catch (_) { /* Private browsing can disable storage; listening still works. */ }
+developerInformationToggle.checked = developerInformationEnabled;
+diagnosticsLabel.hidden = !developerInformationEnabled;
 const pinDialog = document.querySelector("#pin-dialog");
 const pinForm = document.querySelector("#pin-form");
 const pinInput = document.querySelector("#pin");
@@ -209,7 +217,10 @@ function setDiagnostics() {
   const recovery = automaticLiveEdgeDrops > 0
     ? ` · 자동 실시간 복귀 ${automaticLiveEdgeDrops}회`
     : "";
-  diagnosticsLabel.textContent = uiText(`오디오 ${audioState} · ${receivedFrames} 프레임 · 지연 ${bufferedSeconds.toFixed(1)}초 · ${playbackRate.toFixed(2)}×${recovery}`);
+  diagnosticsLabel.hidden = !developerInformationEnabled;
+  diagnosticsLabel.textContent = developerInformationEnabled
+    ? uiText(`오디오 ${audioState} · ${receivedFrames} 프레임 · 지연 ${bufferedSeconds.toFixed(1)}초 · ${playbackRate.toFixed(2)}×${recovery}`)
+    : "";
   liveEdgeButton.disabled = desiredState !== "playing" || bufferedSeconds < 0.35;
 }
 
@@ -308,11 +319,11 @@ function renderTranscripts(responseText) {
           const translateMs = formatLatency(translationLatencies[key]);
           const firstAudioMs = formatFirstAudioLatency(firstAudioLatencies[key]);
           const speechMs = formatLatency(synthesisLatencies[key]);
-          const latency = [
+          const latency = developerInformationEnabled ? [
             translateMs && `${uiText("번역")} ${translateMs}`,
             firstAudioMs,
             speechMs && `${uiText("합성")} ${speechMs}`,
-          ].filter(Boolean).join(" · ");
+          ].filter(Boolean).join(" · ") : "";
           translated.textContent = `${channelLabel(key)}: ${translations[key]}${latency ? ` (${latency})` : ""}`;
           translationBlock.append(translated);
         }
@@ -326,11 +337,11 @@ function renderTranscripts(responseText) {
         const translateMs = formatLatency(translationLatencies[selectedLanguage]);
         const firstAudioMs = formatFirstAudioLatency(firstAudioLatencies[selectedLanguage]);
         const speechMs = formatLatency(synthesisLatencies[selectedLanguage]);
-        const latency = [
+        const latency = developerInformationEnabled ? [
           translateMs && `${uiText("번역")} ${translateMs}`,
           firstAudioMs,
           speechMs && `${uiText("합성")} ${speechMs}`,
-        ].filter(Boolean).join(" · ");
+        ].filter(Boolean).join(" · ") : "";
         translated.textContent = `${channelLabel(selectedLanguage)}: ${translatedText}${latency ? ` (${latency})` : ""}`;
       } else {
         translated.textContent = `${channelLabel(selectedLanguage)}: ${uiText("아직 번역이 없습니다.")}`;
@@ -1111,6 +1122,15 @@ window.__guideCastDiagnostics = () => ({
   maxBufferedAudioSeconds: MAX_BUFFERED_AUDIO_SECONDS,
   reconnectAttempt,
   reconnectPending: reconnectTimer !== null,
+});
+
+developerInformationToggle.addEventListener("change", () => {
+  developerInformationEnabled = developerInformationToggle.checked;
+  try {
+    localStorage.setItem(DEVELOPER_INFORMATION_PREFERENCE, String(developerInformationEnabled));
+  } catch (_) { /* The current page can use the selection without persistent storage. */ }
+  setDiagnostics();
+  renderCachedTranscript(currentTranscriptScope());
 });
 
 switchTabs("player");

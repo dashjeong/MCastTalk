@@ -13,21 +13,18 @@ import app.guidecast.core.stream.PcmAudioFrame
 import app.guidecast.core.translation.ExecutionAwareSpeechSynthesisEngine
 import app.guidecast.core.translation.SpeechSynthesisEngine
 import app.guidecast.core.translation.SpeechSynthesisEngineProvider
+import app.guidecast.core.translation.SpeechExpressionContext
+import app.guidecast.core.translation.SpeechExpressionProfile
 import java.io.Closeable
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.Locale
 import java.util.UUID
-import java.util.concurrent.ArrayBlockingQueue
-import java.util.concurrent.Callable
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executor
 import java.util.concurrent.FutureTask
 import java.util.concurrent.RejectedExecutionException
-import java.util.concurrent.ThreadFactory
-import java.util.concurrent.ThreadPoolExecutor
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.resumeWithException
@@ -37,7 +34,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
@@ -143,7 +139,9 @@ internal class AndroidOfflineSpeechSynthesisEngine internal constructor(
     private val onDisposed: () -> Unit,
     private val candidateEngineResolver: (PackageManager?, String?) -> List<String?> = ::resolveCandidateTtsEngines,
     private val ttsClientFactory: suspend (Context, String?, (Int) -> Unit) -> AndroidTtsClient = ::createDefaultTtsClient,
-    private val binderExecutor: ExecutorService = defaultBinderExecutor,
+    private val binderExecutor: Executor? = null,
+    private val vendorBinderLanes: AndroidTtsVendorBinderLanes = defaultVendorBinderLanes,
+    private val vendorCleanupLanes: AndroidTtsVendorBinderLanes = defaultVendorCleanupLanes,
     private val synthesisAdmission: Semaphore = Semaphore(1),
 ) : ExecutionAwareSpeechSynthesisEngine, Closeable {
 
@@ -155,7 +153,7 @@ internal class AndroidOfflineSpeechSynthesisEngine internal constructor(
         onDisposed: () -> Unit,
         candidateEngineResolver: (PackageManager?, String?) -> List<String?> = ::resolveCandidateTtsEngines,
         ttsClientFactory: suspend (Context, String?, (Int) -> Unit) -> AndroidTtsClient = ::createDefaultTtsClient,
-        binderExecutor: ExecutorService = defaultBinderExecutor,
+        binderExecutor: Executor? = null,
         synthesisAdmission: Semaphore = Semaphore(1),
     ) : this(
         context = context,
@@ -209,6 +207,8 @@ internal class AndroidOfflineSpeechSynthesisEngine internal constructor(
         languageTag: String,
         onExecutionStarted: () -> Unit,
     ): Flow<PcmAudioFrame> = flow {
+        val expression = currentCoroutineContext()[SpeechExpressionContext]?.profile
+            ?: SpeechExpressionProfile.BASELINE
         operationLifecycle.acquire().use {
             require(text.length <= 2_000) { "TTS utterance is too long" }
             require(languageTag == this@AndroidOfflineSpeechSynthesisEngine.languageTag) {
@@ -248,14 +248,22 @@ internal class AndroidOfflineSpeechSynthesisEngine internal constructor(
 
                     try {
                         val executionResult = runCatching {
-                            check(
-                                engine.synthesizeToFile(
-                                    text,
-                                    Bundle(),
-                                    outputFile,
-                                    utteranceId,
-                                ) == TextToSpeech.SUCCESS,
+                            val submitted = awaitAndroidTtsBinderCall(
+                                executor = binderExecutorFor(engine),
+                                timeoutMillis = BINDER_CALL_TIMEOUT_MILLIS,
+                                operationName = "synthesis submission",
+                                onAbandonedCompletion = { outputFile.delete() },
                             ) {
+                                // These client settings are global to its queued utterances. Apply
+                                // them under the same admission as synthesis, including the baseline
+                                // on every request, so an experiment cannot affect a later sentence.
+                                check(engine.setPitch(expression.pitch) == TextToSpeech.SUCCESS &&
+                                    engine.setSpeechRate(expression.rate) == TextToSpeech.SUCCESS) {
+                                    "Android TTS did not accept the requested voice expression"
+                                }
+                                engine.synthesizeToFile(text, Bundle(), outputFile, utteranceId)
+                            }
+                            check(submitted == TextToSpeech.SUCCESS) {
                                 "Android TTS rejected the synthesis request"
                             }
 
@@ -300,8 +308,9 @@ internal class AndroidOfflineSpeechSynthesisEngine internal constructor(
                             ?: IllegalStateException("Unknown Android TTS synthesis error")
 
                         error.findCancellation()?.let { cancelled ->
-                            // Explicit cancellation after submit stops only this language engine.
-                            runCatching { engine.stop() }
+                            // A late vendor stop must never cancel a newer utterance on the same
+                            // client. Detach this generation before scheduling bounded cleanup.
+                            retireCancelledClient(engine)
                             throw cancelled
                         }
 
@@ -430,7 +439,6 @@ internal class AndroidOfflineSpeechSynthesisEngine internal constructor(
                 }.also { initializedClient = it }
 
                 configureOfflineVoice(client)
-                client.setOnUtteranceProgressListener(listener)
                 val installed = synchronized(lifecycleLock) {
                     if (!closed && pendingInitialization === attempt && textToSpeech == null) {
                         pendingInitialization = null
@@ -497,14 +505,17 @@ internal class AndroidOfflineSpeechSynthesisEngine internal constructor(
         val availableVoices = queryVoices(client, VOICE_QUERY_TIMEOUT_MILLIS)
         val voice = selectOfflineVoice(availableVoices, languageTag)
             ?: error("오프라인 TTS 음성을 찾지 못했습니다 (target=$languageTag, engine=${client.defaultEngine})")
-        check(client.setVoice(voice) == TextToSpeech.SUCCESS) {
-            "오프라인 TTS 음성을 선택하지 못했습니다: $languageTag"
-        }
-        check(client.setPitch(1.0f) == TextToSpeech.SUCCESS) {
-            "오프라인 TTS 음성 피치를 고정하지 못했습니다: $languageTag"
-        }
-        check(client.setSpeechRate(NATURAL_SPEECH_RATE) == TextToSpeech.SUCCESS) {
-            "오프라인 TTS 재생 속도를 고정하지 못했습니다: $languageTag"
+        awaitAndroidTtsBinderCall(binderExecutorFor(client), BINDER_CALL_TIMEOUT_MILLIS, "voice configuration") {
+            check(client.setVoice(voice) == TextToSpeech.SUCCESS) {
+                "오프라인 TTS 음성을 선택하지 못했습니다: $languageTag"
+            }
+            check(client.setPitch(1.0f) == TextToSpeech.SUCCESS) {
+                "오프라인 TTS 음성 피치를 고정하지 못했습니다: $languageTag"
+            }
+            check(client.setSpeechRate(NATURAL_SPEECH_RATE) == TextToSpeech.SUCCESS) {
+                "오프라인 TTS 재생 속도를 고정하지 못했습니다: $languageTag"
+            }
+            client.setOnUtteranceProgressListener(listener)
         }
     }
 
@@ -514,7 +525,8 @@ internal class AndroidOfflineSpeechSynthesisEngine internal constructor(
      * NOTE: The underlying Android [TextToSpeech.getVoices] is a synchronous Binder IPC call.
      * If the vendor TTS service freezes inside kernel Binder ioctl, coroutine cancellation cannot
      * terminate the blocked OS thread. Therefore, this call is executed via [FutureTask] on an
-     * independent, fixed-size daemon [ThreadPoolExecutor] (2 threads, bounded queue of 14).
+     * independent, fixed-size vendor lane (2 threads, bounded queue of 14). At most 8 vendor
+     * lanes are retained process-wide, so one vendor's blocked calls do not consume another's lane.
      *
      * The caller coroutine is decoupled using [suspendCancellableCoroutine] with [withTimeout].
      * If the timeout expires or the calling job is cancelled, the caller resumes immediately without
@@ -525,45 +537,13 @@ internal class AndroidOfflineSpeechSynthesisEngine internal constructor(
      */
     private suspend fun queryVoices(client: AndroidTtsClient, timeoutMillis: Long): Set<android.speech.tts.Voice> {
         return try {
-            withTimeout(timeoutMillis) {
-                suspendCancellableCoroutine { continuation ->
-                    val futureTask = object : FutureTask<Set<android.speech.tts.Voice>>(Callable {
-                        runCatching { client.getVoices() }.getOrNull().orEmpty()
-                    }) {
-                        override fun done() {
-                            if (!isCancelled && continuation.isActive) {
-                                try {
-                                    val voices = get()
-                                    continuation.resumeWith(Result.success(voices))
-                                } catch (_: Throwable) {
-                                    continuation.resumeWith(Result.success(emptySet()))
-                                }
-                            }
-                        }
-                    }
-
-                    continuation.invokeOnCancellation {
-                        futureTask.cancel(true)
-                    }
-
-                    try {
-                        binderExecutor.execute(futureTask)
-                    } catch (rejected: RejectedExecutionException) {
-                        Log.w(LOG_TAG, "Voice query rejected (queue full/hung): ${rejected.message}")
-                        if (continuation.isActive) {
-                            continuation.resumeWith(Result.success(emptySet()))
-                        }
-                    }
-                }
+            awaitAndroidTtsBinderCall(binderExecutorFor(client), timeoutMillis, "voice query") {
+                client.getVoices()
             }
-        } catch (timeout: TimeoutCancellationException) {
-            currentCoroutineContext().ensureActive()
-            Log.w(LOG_TAG, "Timed out querying voices from TTS engine (package=${client.defaultEngine})")
-            emptySet()
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
-            Log.w(LOG_TAG, "Failed querying voices from TTS engine: ${error.message}")
+            Log.w(LOG_TAG, "Failed querying voices from TTS engine: ${error.javaClass.simpleName}")
             emptySet()
         }
     }
@@ -633,6 +613,9 @@ internal class AndroidOfflineSpeechSynthesisEngine internal constructor(
         }
     }
 
+    private fun binderExecutorFor(client: AndroidTtsClient): Executor =
+        binderExecutor ?: vendorBinderLanes.executorFor(client.defaultEngine)
+
     override fun close() {
         operationLifecycle.closeNow()
     }
@@ -657,16 +640,28 @@ internal class AndroidOfflineSpeechSynthesisEngine internal constructor(
         active?.let(::shutdownClient)
     }
 
-    private fun shutdownClient(client: AndroidTtsClient) {
-        val mainLooper = android.os.Looper.getMainLooper()
-        if (mainLooper != null && android.os.Looper.myLooper() === mainLooper) {
-            try {
-                defaultBinderExecutor.execute { runCatching { client.shutdown() } }
-            } catch (rejected: RejectedExecutionException) {
-                Log.w(LOG_TAG, "TTS cleanup queue is saturated; no blocking cleanup on main thread")
+    private fun retireCancelledClient(client: AndroidTtsClient) {
+        synchronized(lifecycleLock) {
+            if (textToSpeech === client) {
+                generation.incrementAndGet()
+                textToSpeech = null
+                activeEnginePackage = null
             }
-        } else {
-            runCatching { client.shutdown() }
+        }
+        enqueueClientCleanup(client, stopFirst = true)
+    }
+
+    private fun shutdownClient(client: AndroidTtsClient) = enqueueClientCleanup(client, stopFirst = false)
+
+    private fun enqueueClientCleanup(client: AndroidTtsClient, stopFirst: Boolean) {
+        try {
+            // A hung stop/shutdown must not occupy a synthesis thread or delay coroutine teardown.
+            vendorCleanupLanes.executorFor(client.defaultEngine).execute {
+                if (stopFirst) runCatching { client.stop() }
+                runCatching { client.shutdown() }
+            }
+        } catch (_: RejectedExecutionException) {
+            Log.w(LOG_TAG, "TTS cleanup was not confirmed: bounded vendor cleanup queue is saturated")
         }
     }
 
@@ -678,21 +673,14 @@ internal class AndroidOfflineSpeechSynthesisEngine internal constructor(
         const val TTS_LIVE_BUFFER_FRAMES = 25
         const val INIT_TIMEOUT_MILLIS = 5_000L
         const val VOICE_QUERY_TIMEOUT_MILLIS = 3_000L
+        const val BINDER_CALL_TIMEOUT_MILLIS = 3_000L
         const val EXECUTION_START_WAIT_MILLIS = 10_000L
 
-        internal val defaultBinderExecutor: ExecutorService by lazy {
-            ThreadPoolExecutor(
-                2,
-                2,
-                0L,
-                TimeUnit.MILLISECONDS,
-                ArrayBlockingQueue(14),
-                ThreadFactory { runnable ->
-                    Thread(runnable, "guidecast-tts-binder").apply { isDaemon = true }
-                },
-                ThreadPoolExecutor.AbortPolicy(),
-            )
-        }
+        internal val defaultVendorBinderLanes = AndroidTtsVendorBinderLanes()
+
+        // Separate vendor lanes also isolate stop/shutdown: two frozen cleanup calls must not
+        // prevent a healthy vendor from releasing its Android service connections.
+        private val defaultVendorCleanupLanes = AndroidTtsVendorBinderLanes()
     }
 }
 
@@ -754,8 +742,12 @@ internal interface AndroidTtsClient {
     fun shutdown()
 }
 
-private class DefaultAndroidTtsClient(private val tts: TextToSpeech) : AndroidTtsClient {
-    override val defaultEngine: String? get() = runCatching { tts.defaultEngine }.getOrNull()
+private class DefaultAndroidTtsClient(
+    private val tts: TextToSpeech,
+    private val requestedEnginePackage: String?,
+) : AndroidTtsClient {
+    override val defaultEngine: String?
+        get() = requestedEnginePackage ?: runCatching { tts.defaultEngine }.getOrNull()
     override fun getVoices(): Set<android.speech.tts.Voice> = runCatching { tts.voices }.getOrNull().orEmpty()
     override fun setVoice(voice: android.speech.tts.Voice): Int = tts.setVoice(voice)
     override fun setPitch(pitch: Float): Int = tts.setPitch(pitch)
@@ -778,7 +770,7 @@ internal suspend fun createDefaultTtsClient(
     } else {
         TextToSpeech(context, onInit)
     }
-    DefaultAndroidTtsClient(tts)
+    DefaultAndroidTtsClient(tts, enginePackage)
 }
 
 private fun Throwable.findCancellation(): CancellationException? {

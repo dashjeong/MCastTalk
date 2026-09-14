@@ -41,7 +41,7 @@
 
         <label class="meter-label" for="audio-level">수신 음량</label>
         <progress id="audio-level" max="100" value="0"></progress>
-        <p id="diagnostics" class="diagnostics">오디오 준비 전 · 0 프레임 · 0 bytes</p>
+        <p id="diagnostics" class="diagnostics" hidden></p>
 
         <div class="speed-row">
           <label for="playback-rate">청취 배속</label>
@@ -80,6 +80,11 @@
         <div id="transcript-list" class="transcript-scroll" aria-live="polite" aria-label="통역 스크립트"></div>
         <p class="hint">최신 100개 이내를 표시합니다. 이전 내용을 읽을 때 자동 따라가기를 끄면 스크롤 위치가 유지됩니다.</p>
       </section>
+
+      <label class="follow-latest developer-information-toggle" for="developer-information">
+        <input id="developer-information" type="checkbox">
+        개발자 정보 표시
+      </label>
 
       <dialog id="pin-dialog">
         <form id="pin-form" method="dialog">

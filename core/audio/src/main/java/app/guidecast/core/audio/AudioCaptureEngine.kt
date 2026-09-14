@@ -353,11 +353,11 @@ class AudioCaptureEngine(
             "Internal playback AudioRecord failed to initialize"
         }
 
-        recorder.startRecording()
-        if (recorder.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
-            recorder.release()
-            error("Android did not start internal playback recording")
-        }
+        startAudioRecordingOrRelease(
+            start = recorder::startRecording,
+            isRecording = { recorder.recordingState == AudioRecord.RECORDSTATE_RECORDING },
+            release = recorder::release,
+        )
         val playbackStatus = AudioProcessingStatus(
             mode = AudioProcessingMode.PLAYBACK_PASSTHROUGH,
         )
@@ -408,6 +408,21 @@ class AudioCaptureEngine(
 
     private companion object {
         const val CAPTURE_HANDOFF_FRAMES = 2
+    }
+}
+
+/** Startup can race projection revocation before callbackFlow installs its teardown handler. */
+internal fun startAudioRecordingOrRelease(
+    start: () -> Unit,
+    isRecording: () -> Boolean,
+    release: () -> Unit,
+) {
+    try {
+        start()
+        check(isRecording()) { "Android did not start internal playback recording" }
+    } catch (failure: Throwable) {
+        runCatching(release)
+        throw failure
     }
 }
 

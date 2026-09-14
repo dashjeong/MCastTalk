@@ -40,6 +40,7 @@ class GemmaInferenceService : Service() {
             targetLanguageTag: String,
             glossaryHints: String,
             reviewDraft: String,
+            translationStyle: String,
             callback: IGuideCastGemmaInferenceCallback?,
         ) {
             if (requestId < 0L || callback == null) return
@@ -59,6 +60,7 @@ class GemmaInferenceService : Service() {
                         targetLanguageTag,
                         glossaryHints,
                         reviewDraft,
+                        translationStyle,
                     )
                     currentCoroutineContext().ensureActive()
                     runCatching { callback.onSuccess(requestId, translated) }

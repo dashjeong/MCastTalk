@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
@@ -268,7 +269,9 @@ class TranslationBroadcastPipeline(
                             // Take one snapshot: edits affect the next utterance, never a subtitle
                             // that has already committed its exact TTS input.
                             val terms = glossaryTerms(utterance.text, utterance.sourceLanguageTag, target.languageTag)
-                            val rawTranslation = withContext(TranslationGlossaryContext(GlossaryTerms.hints(terms))) {
+                            val translationContext = TranslationGlossaryContext(GlossaryTerms.hints(terms)) +
+                                (utterance.translationStyle?.let(::TranslationStyleContext) ?: kotlin.coroutines.EmptyCoroutineContext)
+                            val rawTranslation = withContext(translationContext) {
                               withTimeout(targetTimeoutMillis) {
                                 if (translator is ContextualTextTranslationEngine) {
                                     translator.translateWithContext(
@@ -396,6 +399,7 @@ class TranslationBroadcastPipeline(
                             frameIdleTimeoutMillis = synthesisFrameIdleTimeoutMillis,
                             totalTimeoutMillis = synthesisTotalTimeoutMillis,
                             currentElapsedRealtimeNanos = currentElapsedRealtimeNanos,
+                            expression = utterance.speechExpression,
                         ) { frame ->
                             val frameIsAudible = pcmAccumulator.add(frame)
                             if (!firstAudibleFrameReported && frameIsAudible) {
@@ -645,6 +649,9 @@ private sealed interface SpeechStreamEvent {
     data class Frame(val value: PcmAudioFrame) : SpeechStreamEvent
 }
 
+private fun Flow<PcmAudioFrame>.withSpeechExpression(expression: SpeechExpressionProfile?): Flow<PcmAudioFrame> =
+    if (expression == null) this else flowOn(SpeechExpressionContext(expression))
+
 private suspend fun collectSpeechPcmWithTimeout(
     speech: SpeechSynthesisEngine,
     text: String,
@@ -653,11 +660,12 @@ private suspend fun collectSpeechPcmWithTimeout(
     frameIdleTimeoutMillis: Long,
     totalTimeoutMillis: Long,
     currentElapsedRealtimeNanos: () -> Long,
+    expression: SpeechExpressionProfile? = null,
     consume: suspend (PcmAudioFrame) -> Boolean,
 ) {
     if (speech !is ExecutionAwareSpeechSynthesisEngine) {
         collectPcmWithTimeout(
-            frames = speech.synthesize(text, languageTag),
+            frames = speech.synthesize(text, languageTag).withSpeechExpression(expression),
             firstFrameTimeoutMillis = firstFrameTimeoutMillis,
             frameIdleTimeoutMillis = frameIdleTimeoutMillis,
             totalTimeoutMillis = totalTimeoutMillis,
@@ -673,6 +681,7 @@ private suspend fun collectSpeechPcmWithTimeout(
         frameIdleTimeoutMillis = frameIdleTimeoutMillis,
         totalTimeoutMillis = totalTimeoutMillis,
         currentElapsedRealtimeNanos = currentElapsedRealtimeNanos,
+        expression = expression,
         consume = consume,
     )
 }
@@ -690,6 +699,7 @@ private suspend fun collectExecutionAwarePcmWithTimeout(
     frameIdleTimeoutMillis: Long,
     totalTimeoutMillis: Long,
     currentElapsedRealtimeNanos: () -> Long,
+    expression: SpeechExpressionProfile?,
     consume: suspend (PcmAudioFrame) -> Boolean,
 ) = supervisorScope {
     val maximumWaitCount = speech.maximumExecutionStartWaitCount(text, languageTag)
@@ -720,7 +730,7 @@ private suspend fun collectExecutionAwarePcmWithTimeout(
                 onExecutionStarted = {
                     reportControlEvent(SpeechStreamEvent.ExecutionStarted)
                 },
-            ).collect { frame ->
+            ).withSpeechExpression(expression).collect { frame ->
                 var ownsPcmSlot = false
                 try {
                     pcmSlot.acquire()

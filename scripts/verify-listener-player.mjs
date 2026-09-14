@@ -12,6 +12,9 @@ const listenerIndexUrl = new URL(
   import.meta.url,
 );
 const listenerIndex = await readFile(listenerIndexUrl, "utf8");
+assert.match(listenerIndex, /id="diagnostics"[^>]*\bhidden\b/, "technical audio details must be hidden before JavaScript loads");
+assert.doesNotMatch(listenerIndex.match(/<input id="developer-information"[^>]*>/)?.[0] || "", /\bchecked\b/,
+  "developer information must be opt-in");
 const scheduleStart = source.indexOf("function scheduleSamples(samples, request)");
 const scheduleEnd = source.indexOf("function jumpToLiveEdge()", scheduleStart);
 assert.notEqual(scheduleStart, -1, "scheduleSamples must exist");
@@ -230,6 +233,8 @@ function createListenerHarness({
   fetchImpl = null,
   locationHash = "",
   locationPath = "/",
+  localValues = new Map(),
+  storageThrows = false,
 } = {}) {
   const elements = new Map();
   const element = (selector) => {
@@ -422,6 +427,16 @@ function createListenerHarness({
       removeItem: (key) => sessionValues.delete(key),
       setItem: (key, value) => sessionValues.set(key, value),
     },
+    localStorage: {
+      getItem: (key) => {
+        if (storageThrows) throw new Error("Storage unavailable");
+        return localValues.get(key) ?? null;
+      },
+      setItem: (key, value) => {
+        if (storageThrows) throw new Error("Storage unavailable");
+        localValues.set(key, value);
+      },
+    },
     setInterval: () => 1,
     setTimeout,
   };
@@ -441,6 +456,7 @@ function createListenerHarness({
     },
     loadTranscripts: (forceRefresh) => context.loadTranscripts(forceRefresh),
     location: sandbox.location,
+    localValues,
     pendingTimeouts: () => timeouts.filter((timer) => timer.active),
     runNextTimeout: () => {
       const timer = timeouts.find((candidate) => candidate.active);
@@ -451,6 +467,62 @@ function createListenerHarness({
     },
     sockets,
   };
+}
+
+async function verifyDeveloperInformationIsOptInAndDoesNotRefetchOrHideErrors() {
+  let transcriptRequests = 0;
+  const harness = createListenerHarness({ fetchImpl: (url) => {
+    if (url === "/api/session") return Promise.resolve(mockJsonResponse({access: "public"}));
+    if (url.startsWith("/api/status")) return Promise.resolve(mockJsonResponse({ channels: [
+      {id: "en", name: "영어", languageTag: "en-US"}, {id: "ja", name: "일본어", languageTag: "ja-JP"},
+    ] }));
+    transcriptRequests++;
+    return Promise.resolve(mockJsonResponse({transcripts: [{sourceText: "synthetic source", isFinal: true,
+      translations: {en: "synthetic translation", ja: "synthetic Japanese"},
+      translationLatencyMillis: {en: 120, ja: 140}, firstAudioLatencyMillis: {en: 800, ja: 900},
+      synthesisLatencyMillis: {en: 1000, ja: 1100}}]}));
+  }});
+  await harness.flush();
+  const toggle = harness.element("#developer-information");
+  const transcript = harness.element("#transcript-list");
+  harness.element("#transcript-language").value = "en";
+  await harness.loadTranscripts(true);
+  assert.equal(toggle.checked, false);
+  assert.equal(harness.element("#diagnostics").hidden, true);
+  assert.equal(harness.element("#diagnostics").textContent, "");
+  assert.match(collectText(transcript), /synthetic translation/);
+  assert.doesNotMatch(collectText(transcript), /120ms|800ms|1000ms/);
+  harness.element("#transcript-status").textContent = "스크립트 갱신 지연 · 이전 내용 유지";
+  harness.element("#transcript-status").hidden = false;
+  harness.element("#transcript-follow").checked = false;
+  transcript.scrollTop = 150;
+  toggle.checked = true;
+  toggle.dispatch("change");
+  assert.equal(harness.element("#diagnostics").hidden, false);
+  assert.match(harness.element("#diagnostics").textContent, /프레임/);
+  assert.match(collectText(transcript), /120ms/);
+  assert.match(collectText(transcript), /800ms/);
+  assert.equal(transcript.scrollTop, 150);
+  assert.equal(transcriptRequests, 1, "presentation toggles must reuse the scoped cache without another request");
+  assert.equal(harness.element("#transcript-status").hidden, false, "actionable stale status remains visible");
+  assert.equal(harness.localValues.get("mcasttalk-developer-information"), "true");
+  const restored = createListenerHarness({localValues: harness.localValues});
+  await restored.flush();
+  assert.equal(restored.element("#developer-information").checked, true);
+  harness.element("#transcript-language").value = "all";
+  toggle.checked = false;
+  toggle.dispatch("change");
+  assert.match(collectText(transcript), /synthetic Japanese/);
+  assert.doesNotMatch(collectText(transcript), /\d+ms/);
+  assert.equal(harness.localValues.get("mcasttalk-developer-information"), "false");
+  assert.equal(harness.element("#transcript-status").hidden, false);
+  const unavailable = createListenerHarness({storageThrows: true});
+  await unavailable.flush();
+  assert.equal(unavailable.element("#developer-information").checked, false);
+  unavailable.element("#developer-information").checked = true;
+  unavailable.element("#developer-information").dispatch("change");
+  assert.equal(unavailable.element("#diagnostics").hidden, false);
+  assert.equal(unavailable.element("#play").disabled, false, "blocked preference storage must not prevent listening");
 }
 
 async function verifyDelayedResumeCannotUndoPause() {
@@ -1406,6 +1478,7 @@ async function verifyEmptyCacheScopeChangeClearsBackoffEvenWithoutSnapshot() {
   assert.match(collectText(harness.element("#transcript-list")), /새 토큰 성공/);
 }
 
+await verifyDeveloperInformationIsOptInAndDoesNotRefetchOrHideErrors();
 await verifyPinnedLanguageCanSwitchToOriginal();
 await verifyDelayedResumeCannotUndoPause();
 await verifyRapidLanguageSwitchKeepsOnlyNewestGeneration();

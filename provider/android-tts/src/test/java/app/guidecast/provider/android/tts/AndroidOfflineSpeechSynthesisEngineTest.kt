@@ -8,6 +8,8 @@ import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import app.guidecast.core.stream.MAX_SIMULTANEOUS_TRANSLATED_CHANNELS
+import app.guidecast.core.translation.SpeechExpressionContext
+import app.guidecast.core.translation.SpeechExpressionProfile
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.ArrayBlockingQueue
@@ -30,6 +32,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertFalse
@@ -42,6 +45,36 @@ import org.junit.rules.TemporaryFolder
 import org.junit.rules.Timeout
 
 class AndroidOfflineSpeechSynthesisEngineTest {
+
+    @Test fun `expression is scoped to one unchanged utterance and baseline is restored next`() = runBlocking {
+        val observed = mutableListOf<Triple<String, Float, Float>>()
+        lateinit var client: FakeTtsClient
+        client = FakeTtsClient("pkg.local", setOf(TestVoice("en", Locale.US)), synthesizeImpl = { text, _, id, listener ->
+            observed += Triple(text.toString(), client.appliedRate, client.appliedPitch)
+            listener?.onStart(id)
+            listener?.onBeginSynthesis(id, 16_000, AudioFormat.ENCODING_PCM_16BIT, 1)
+            listener?.onAudioAvailable(id, ByteArray(640) { 3 })
+            listener?.onDone(id)
+            TextToSpeech.SUCCESS
+        })
+        val engine = AndroidOfflineSpeechSynthesisEngine(
+            context = FakeContext(tempFolder.newFolder()), languageTag = "en", outputSampleRateHz = 16_000,
+            onDisposed = {}, candidateEngineResolver = { _, _ -> listOf("pkg.local") },
+            ttsClientFactory = { _, _, ready -> ready(TextToSpeech.SUCCESS); client },
+        )
+        try {
+            withContext(SpeechExpressionContext(SpeechExpressionProfile(1.04f, 1.05f))) {
+                assertTrue(engine.synthesize("Unchanged question?", "en").toList().isNotEmpty())
+            }
+            assertTrue(engine.synthesize("Unchanged baseline.", "en").toList().isNotEmpty())
+            assertEquals(listOf(Triple("Unchanged question?", 1.04f, 1.05f),
+                Triple("Unchanged baseline.", 0.95f, 1.0f)), observed)
+        } finally { engine.close() }
+    }
+
+    private suspend fun awaitCondition(condition: () -> Boolean) = withTimeout(1_000L) {
+        while (!condition()) delay(1L)
+    }
 
     @get:Rule
     val testDeadline: Timeout = Timeout.seconds(30)
@@ -116,10 +149,12 @@ class AndroidOfflineSpeechSynthesisEngineTest {
             { _, _, _, _ -> TextToSpeech.SUCCESS },
         val voiceQueryDelayMillis: Long = 0L,
     ) : AndroidTtsClient {
-        var isShutdown = false
-        var stopCount = 0
+        @Volatile var isShutdown = false
+        @Volatile var stopCount = 0
         var selectedVoice: android.speech.tts.Voice? = null
         var listener: UtteranceProgressListener? = null
+        var appliedPitch = 1.0f
+        var appliedRate = 0.95f
 
         override fun getVoices(): Set<android.speech.tts.Voice> {
             if (voiceQueryDelayMillis > 0L) {
@@ -133,8 +168,8 @@ class AndroidOfflineSpeechSynthesisEngineTest {
             return TextToSpeech.SUCCESS
         }
 
-        override fun setPitch(pitch: Float): Int = TextToSpeech.SUCCESS
-        override fun setSpeechRate(speechRate: Float): Int = TextToSpeech.SUCCESS
+        override fun setPitch(pitch: Float): Int { appliedPitch = pitch; return TextToSpeech.SUCCESS }
+        override fun setSpeechRate(speechRate: Float): Int { appliedRate = speechRate; return TextToSpeech.SUCCESS }
 
         override fun setOnUtteranceProgressListener(listener: UtteranceProgressListener): Int {
             this.listener = listener
@@ -211,7 +246,7 @@ class AndroidOfflineSpeechSynthesisEngineTest {
 
         engine.prepare()
         assertSame(koreanVoice, candidate2.selectedVoice)
-        assertTrue(candidate1.isShutdown)
+        awaitCondition { candidate1.isShutdown }
         assertFalse(candidate2.isShutdown)
     }
 
@@ -238,7 +273,7 @@ class AndroidOfflineSpeechSynthesisEngineTest {
 
         engine.prepare()
         assertSame(koreanVoice, candidate2.selectedVoice)
-        assertTrue(candidate1.isShutdown)
+        awaitCondition { candidate1.isShutdown }
     }
 
     @Test
@@ -278,7 +313,7 @@ class AndroidOfflineSpeechSynthesisEngineTest {
 
         val frames = engine.synthesize("안녕하세요", "ko").toList()
         assertTrue("Must have received frames from candidate 2", frames.isNotEmpty())
-        assertTrue("Candidate 1 must have been invalidated and shut down", candidate1.isShutdown)
+        awaitCondition { candidate1.isShutdown }
         assertFalse(candidate2.isShutdown)
     }
 
@@ -337,7 +372,7 @@ class AndroidOfflineSpeechSynthesisEngineTest {
             "Candidate 2 must NOT have been called to re-synthesize or replay the sentence",
             candidate2SynthesizeCalled.get(),
         )
-        assertTrue("Failed candidate 1 must be shut down for future calls", candidate1.isShutdown)
+        awaitCondition { candidate1.isShutdown }
     }
 
     @Test
@@ -386,7 +421,7 @@ class AndroidOfflineSpeechSynthesisEngineTest {
         }
 
         assertEquals("user cancelled", error.message)
-        assertEquals("Stop must be called on cancelled client", 1, candidate1.stopCount)
+        awaitCondition { candidate1.stopCount == 1 }
         assertFalse("Cancellation must not trigger failover to candidate 2", candidate2Called.get())
     }
 
@@ -487,7 +522,7 @@ class AndroidOfflineSpeechSynthesisEngineTest {
             }
         }
 
-        assertEquals(1, englishClient.stopCount)
+        awaitCondition { englishClient.stopCount == 1 }
         assertEquals("Japanese client must NOT have received stop", 0, japaneseClient.stopCount)
     }
 
@@ -755,7 +790,7 @@ class AndroidOfflineSpeechSynthesisEngineTest {
         currentPref = "pkg.google"
         val invalidated = engine.invalidateIfIdle()
         assertTrue("Idle engine must invalidate on preference change", invalidated)
-        assertTrue("Samsung client must be shut down", samsungClient.isShutdown)
+        awaitCondition { samsungClient.isShutdown }
 
         // Next synthesis must use Google
         val frames = engine.synthesize("안녕하세요", "ko").toList()
@@ -805,7 +840,7 @@ class AndroidOfflineSpeechSynthesisEngineTest {
         // Once idle, next ensureReady or synthesize switches to Google
         val invalidated = engine.invalidateIfIdle()
         assertTrue("Should invalidate now that it is idle", invalidated)
-        assertTrue("Samsung client must now be shut down", samsungClient.isShutdown)
+        awaitCondition { samsungClient.isShutdown }
     }
 
     @Test
@@ -896,6 +931,79 @@ class AndroidOfflineSpeechSynthesisEngineTest {
 
         blockLatch.countDown()
         saturatedExecutor.shutdown()
+    }
+
+    @Test
+    fun `two frozen vendor submissions and stops do not block cancellation or another vendor`(): Unit = runBlocking {
+        val submitEntered = CountDownLatch(2)
+        val stopEntered = CountDownLatch(2)
+        val releaseSubmit = CountDownLatch(1)
+        val releaseStop = CountDownLatch(1)
+        val oldOutputs = java.util.concurrent.ConcurrentLinkedQueue<File>()
+        val binderLanes = AndroidTtsVendorBinderLanes(maximumVendors = 2)
+        val cleanupLanes = AndroidTtsVendorBinderLanes(maximumVendors = 2)
+        fun frozen(latch: CountDownLatch) {
+            while (latch.count > 0L) {
+                try { latch.await() } catch (_: InterruptedException) { /* Binder ignores interrupt. */ }
+            }
+        }
+        val old = FakeTtsClient("pkg.old", setOf(TestVoice("en", Locale.US)),
+            synthesizeImpl = { _, file, _, _ ->
+                oldOutputs.add(file)
+                submitEntered.countDown()
+                frozen(releaseSubmit)
+                dummyPcmWaveFile(file)
+                TextToSpeech.SUCCESS
+            })
+        val hanging = object : AndroidTtsClient by old {
+            override fun stop(): Int {
+                stopEntered.countDown()
+                frozen(releaseStop)
+                return old.stop()
+            }
+        }
+        fun healthy(language: String, locale: Locale) = FakeTtsClient("pkg.healthy", setOf(TestVoice(language, locale)),
+            synthesizeImpl = { _, file, id, listener ->
+                // Android's local JVM clock stub does not advance; one complete frame is enough
+                // to prove the other client can synthesize while the vendor transaction is stuck.
+                dummyPcmWaveFile(file, durationFrames = 1)
+                listener?.onDone(id)
+                TextToSpeech.SUCCESS
+            })
+        val englishNext = healthy("en", Locale.US)
+        val japanese = healthy("ja", Locale.JAPAN)
+        var created = 0
+        fun engine(language: String, factory: () -> AndroidTtsClient) = AndroidOfflineSpeechSynthesisEngine(
+            context = FakeContext(tempFolder.newFolder()), languageTag = language, outputSampleRateHz = 16_000,
+            onDisposed = {}, candidateEngineResolver = { _, _ -> listOf("pkg.fixture") },
+            ttsClientFactory = { _, _, init -> init(TextToSpeech.SUCCESS); factory() },
+            vendorBinderLanes = binderLanes, vendorCleanupLanes = cleanupLanes)
+        val en = engine("en") { if (created++ < 2) hanging else englishNext }
+        val ja = engine("ja") { japanese }
+        try {
+            en.prepare()
+            ja.prepare()
+            repeat(2) { index ->
+                val cancelled = launch(Dispatchers.Default) { en.synthesize("cancelled-$index", "en").toList() }
+                awaitCondition { submitEntered.count == 1L - index }
+                withTimeout(1_000L) { cancelled.cancelAndJoin() }
+            }
+            awaitCondition { stopEntered.count == 0L }
+            assertTrue(withTimeout(1_000L) { ja.synthesize("healthy", "ja").toList() }.isNotEmpty())
+            assertTrue(withTimeout(1_000L) { en.synthesize("next", "en").toList() }.isNotEmpty())
+            assertEquals(0, japanese.stopCount)
+            en.close()
+            ja.close()
+            awaitCondition { englishNext.isShutdown && japanese.isShutdown }
+            assertFalse("Frozen vendor cleanup has not been falsely reported complete", old.isShutdown)
+            releaseStop.countDown()
+            releaseSubmit.countDown()
+            awaitCondition { old.isShutdown && oldOutputs.all { !it.exists() } }
+            assertEquals("A late stop owns only the retired client", 0, englishNext.stopCount)
+        } finally {
+            releaseSubmit.countDown(); releaseStop.countDown()
+            en.close(); ja.close(); binderLanes.close(); cleanupLanes.close()
+        }
     }
 
     @Test

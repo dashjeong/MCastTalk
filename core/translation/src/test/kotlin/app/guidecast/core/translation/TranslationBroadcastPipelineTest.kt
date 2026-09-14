@@ -28,6 +28,45 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TranslationBroadcastPipelineTest {
+    @Test fun `expression and translation style reach only their queued utterance with execution callbacks intact`() = runTest {
+        val source = MutableSharedFlow<RecognizedUtterance>()
+        val expressions = mutableListOf<SpeechExpressionProfile?>()
+        val styles = mutableListOf<TranslationStyle?>()
+        val spoken = mutableListOf<String>()
+        var executionStarts = 0
+        val running = TranslationBroadcastPipeline(
+            AudioStreamRegistry(), TranslationEngineProvider {
+                TextTranslationEngine { text, _, _ ->
+                    styles += kotlinx.coroutines.currentCoroutineContext()[TranslationStyleContext]?.style
+                    text
+                }
+            }, SpeechSynthesisEngineProvider {
+                object : ExecutionAwareSpeechSynthesisEngine {
+                    override val maximumExecutionStartWaitMillis = 1_000L
+                    override fun synthesize(text: String, languageTag: String, onExecutionStarted: () -> Unit) = flow {
+                        onExecutionStarted(); executionStarts++
+                        expressions += kotlinx.coroutines.currentCoroutineContext()[SpeechExpressionContext]?.profile
+                        spoken += text
+                        emit(PcmAudioFrame(ByteArray(640) { 8 }, 1L))
+                    }
+                }
+            },
+        ).start(this, source, listOf(TranslationTarget("en", "English", "en", 16_000)), "ko")
+        try {
+            yield()
+            val expression = SpeechExpressionProfile(1.03f, 1.05f)
+            source.emit(RecognizedUtterance(1, "첫 문장?", "ko", true, 1L,
+                speechExpression = expression, translationStyle = TranslationStyle.CONVERSATIONAL))
+            advanceUntilIdle()
+            source.emit(RecognizedUtterance(2, "다음 문장.", "ko", true, 2L))
+            advanceUntilIdle()
+            assertEquals(listOf(expression, null), expressions)
+            assertEquals(listOf(TranslationStyle.CONVERSATIONAL, null), styles)
+            assertEquals(listOf("첫 문장?", "다음 문장."), spoken)
+            assertEquals(2, executionStarts)
+        } finally { running.close() }
+    }
+
     @Test
     fun `oversize correction keeps full translation and speech with warning`() = runTest {
         val source = MutableSharedFlow<RecognizedUtterance>()

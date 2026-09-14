@@ -145,6 +145,8 @@ progress { width: 100%; height: 12px; accent-color: #14a06f; }
   margin: 0;
 }
 
+.developer-information-toggle { min-height: 48px; margin-top: 12px; }
+
 .transcript-status {
   margin: 8px 0 0;
   padding: 6px 10px;

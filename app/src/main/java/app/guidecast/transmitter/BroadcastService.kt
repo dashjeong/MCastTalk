@@ -58,6 +58,7 @@ import app.guidecast.core.translation.SynthesizedPcmStats
 import app.guidecast.core.translation.RecognizedUtterance
 import app.guidecast.core.translation.ContextualTextTranslationEngine
 import app.guidecast.core.translation.TextTranslationEngine
+import app.guidecast.core.translation.TranslationStyle
 import app.guidecast.core.translation.TranslationBroadcastPipeline
 import app.guidecast.core.translation.TranslationEngineProvider
 import app.guidecast.core.translation.SelectiveRefinementTranslationEngineProvider
@@ -89,6 +90,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.flow.onCompletion
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.supervisorScope
@@ -407,6 +410,7 @@ class BroadcastService : Service() {
     @Volatile private var broadcastAudioPublicationCoordinator:
         ChannelAudioPublicationCoordinator? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private var wakeLockRenewalJob: Job? = null
     private var selectedInput: AudioInputDevice? = null
     private var mediaProjection: MediaProjection? = null
     private var mediaProjectionCallback: MediaProjection.Callback? = null
@@ -433,6 +437,17 @@ class BroadcastService : Service() {
         app = application as GuideCastApplication
         audioManager = getSystemService(AudioManager::class.java)
         createNotificationChannel()
+        serviceScope.launch {
+            var previous = app.broadcastRuntime.state.value
+            while (true) {
+                delay(60_000L)
+                val current = app.broadcastRuntime.state.value
+                if (current.inputPhase == InputPhase.ACTIVE ||
+                    current.phase == BroadcastPhase.LIVE || current.translationTestActive
+                ) RuntimeDiagnosticLog.record("pipeline_heartbeat", pipelineHeartbeat(current, previous))
+                previous = current
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -741,10 +756,12 @@ class BroadcastService : Service() {
             (current.translationTestActive || current.phase == BroadcastPhase.LIVE)
         ) {
             val recognitionInput = recognitionFrames
-            try {
-                recognitionInput?.send(pcm)
-            } catch (_: ClosedSendChannelException) {
-                // A replaced translation session must not stop the source broadcast.
+            if (recognitionInput != null && !forwardRecognitionFrame(recognitionInput, pcm)) {
+                app.broadcastRuntime.update { latest ->
+                    if (!isInputGenerationCurrent(generation)) latest else latest.copy(
+                        recognitionDroppedFrameCount = latest.recognitionDroppedFrameCount + 1,
+                    )
+                }
             }
         }
     }
@@ -874,7 +891,7 @@ class BroadcastService : Service() {
             }
         }
         synchronized(broadcastResourceLock) {
-            if (runningServer != null) {
+            if (runningServer != null || broadcastStreamSession != null) {
                 clearBroadcastSecrets(intent)
                 return
             }
@@ -900,6 +917,9 @@ class BroadcastService : Service() {
             }
         }
         val generation = broadcastGeneration.incrementAndGet()
+        val runMode = intent.getStringExtra(EXTRA_RUN_MODE)
+            ?.let { runCatching { BroadcastRunMode.valueOf(it) }.getOrNull() }
+            ?: BroadcastRunMode.NETWORK
         val mode = intent.getStringExtra(EXTRA_ACCESS_MODE)
             ?.let { runCatching { OperatorAccessMode.valueOf(it) }.getOrNull() }
             ?: OperatorAccessMode.QR_TOKEN
@@ -907,6 +927,9 @@ class BroadcastService : Service() {
         app.broadcastRuntime.update { current ->
             current.copy(
                 phase = BroadcastPhase.STARTING,
+                runMode = runMode,
+                recognitionErrorMessage = null,
+                recognitionDroppedFrameCount = 0,
                 accessMode = mode,
                 listenerUrl = null,
                 speakerUrl = null,
@@ -952,6 +975,7 @@ class BroadcastService : Service() {
                 ) { "지원하지 않는 번역 언어가 포함되어 있습니다." }
                 requireSupportedSourceLanguage(sourceLanguageTag)
                 runBroadcastServer(
+                    runMode = runMode,
                     mode = mode,
                     pin = pin,
                     speakerPin = speakerPin,
@@ -1566,6 +1590,7 @@ class BroadcastService : Service() {
         app.broadcastRuntime.update { current ->
             current.copy(
                 translationTestActive = false,
+                recognitionErrorMessage = null,
                 translationTestPassed = current.translationTestPassed && preservePass,
                 translationTestMessage = if (current.translationTestPassed && preservePass) {
                     "통역 음성 확인 결과를 유지했습니다. 방송 여부는 운영자가 판단하세요."
@@ -1615,6 +1640,7 @@ class BroadcastService : Service() {
     }
 
     private suspend fun runBroadcastServer(
+        runMode: BroadcastRunMode,
         mode: OperatorAccessMode,
         pin: CharArray?,
         speakerPin: CharArray?,
@@ -1624,16 +1650,19 @@ class BroadcastService : Service() {
         generation: Long,
         selectiveTranslationRefinement: Boolean = false,
     ) {
-        val network = LocalNetworkAddressResolver.resolve()
-            ?: error("핫스팟 또는 사설 Wi-Fi 주소를 찾지 못했습니다.")
-        val access = when (mode) {
+        val network = if (runMode == BroadcastRunMode.NETWORK) {
+            LocalNetworkAddressResolver.resolve()
+                ?: error("핫스팟 또는 사설 Wi-Fi 주소가 없습니다. '이 기기에서 사용'을 선택하면 네트워크 없이 사용할 수 있습니다.")
+        } else null
+        val access = when (if (runMode == BroadcastRunMode.STANDALONE) OperatorAccessMode.OPEN else mode) {
             OperatorAccessMode.QR_TOKEN -> BroadcastAccess.QrToken
             OperatorAccessMode.OPEN -> BroadcastAccess.Open
             OperatorAccessMode.PIN -> BroadcastAccess.Pin.from(
                 pin ?: error("PIN을 입력하세요."),
             )
         }
-        val speakerAccess = speakerPin?.let { SpeakerAccess.Pin.from(it) } ?: SpeakerAccess.Open
+        val speakerAccess = if (runMode == BroadcastRunMode.STANDALONE) SpeakerAccess.Open else
+            speakerPin?.let { SpeakerAccess.Pin.from(it) } ?: SpeakerAccess.Open
 
         val isDirectAppOutput = translationLanguages.isEmpty() &&
             app.audioInputRepository.selectedDevice.value?.kind == AudioInputKind.DEVICE_PLAYBACK
@@ -1675,7 +1704,7 @@ class BroadcastService : Service() {
             runtimeSnapshot = { app.broadcastRuntime.state.value },
         )
         val server = try {
-            GuideCastLocalServer(
+            if (runMode == BroadcastRunMode.STANDALONE) null else GuideCastLocalServer(
                 context = this,
                 streams = app.audioStreams,
                 bindAllInterfacesForDebug = BuildConfig.DEBUG,
@@ -1712,7 +1741,7 @@ class BroadcastService : Service() {
                 },
                 transcriptSnapshotProvider = transcriptPublication::snapshot,
             ).start(
-                bindAddress = network.address,
+                bindAddress = requireNotNull(network).address,
                 config = GuideCastServerConfig(
                     access = access,
                     speakerAccess = speakerAccess,
@@ -1739,10 +1768,10 @@ class BroadcastService : Service() {
                 app.broadcastRuntime.update { current ->
                     current.copy(
                         phase = BroadcastPhase.LIVE,
-                        listenerUrl = server.listenerUrl,
-                        speakerUrl = server.speakerUrl,
-                        caSha256Fingerprint = server.caSha256Fingerprint,
-                        caFingerprintWarning = server.caFingerprintWarning,
+                        listenerUrl = server?.listenerUrl,
+                        speakerUrl = server?.speakerUrl,
+                        caSha256Fingerprint = server?.caSha256Fingerprint,
+                        caFingerprintWarning = server?.caFingerprintWarning,
                         listenerCount = 0,
                         listenerDroppedFrames = 0,
                         webSocketDeliveredFrameCount = 0,
@@ -1752,7 +1781,7 @@ class BroadcastService : Service() {
                                 channelId = channelId,
                                 languageTag = languageTag,
                                 displayName = requireNotNull(TRANSLATION_LANGUAGES[languageTag]),
-                                listenerUrl = server.listenerUrlFor(channelId),
+                                listenerUrl = server?.listenerUrlFor(channelId),
                                 translationProvider = when {
                                     useGemmaForPriority && GemmaTranslationProvider.supportsTranslation(sourceLanguageTag, languageTag) -> "공유 Gemma → ML Kit"
                                     else -> "ML Kit"
@@ -1779,7 +1808,9 @@ class BroadcastService : Service() {
                         translationWarning = if (translationLanguages.isEmpty()) {
                             null
                         } else {
-                            "통역 엔진을 준비 중입니다. 방송 서버는 운영자 제어에 따라 이미 열렸습니다."
+                            if (runMode == BroadcastRunMode.STANDALONE) {
+                                "통역 엔진을 준비 중입니다. 이 기기 안에서만 처리하며 네트워크 방송은 열지 않습니다."
+                            } else "통역 엔진을 준비 중입니다. 방송 서버는 운영자 제어에 따라 이미 열렸습니다."
                         },
                         errorMessage = null,
                     )
@@ -1857,7 +1888,7 @@ class BroadcastService : Service() {
             // Session invalidation must happen even if Ktor throws while releasing its socket.
             // The original startup error remains the primary failure reported to the operator.
             streamSession.close()
-            closeServerHandle(server)?.let { stopError ->
+            server?.let(::closeServerHandle)?.let { stopError ->
                 Log.e(LOG_TAG, "Server cleanup after failed start also failed", stopError)
             }
             throw error
@@ -1964,6 +1995,7 @@ class BroadcastService : Service() {
                 translationChannels = emptyList(),
                 channelSummary = null,
                 translationWarning = null,
+                recognitionErrorMessage = null,
                 testToneActive = false,
                 errorMessage = null,
             )
@@ -2680,7 +2712,9 @@ class BroadcastService : Service() {
             }
         }
         val translationProvider = TranslationEngineProvider { targetLanguageTag ->
-            val baseEngine = baseTranslationProvider.engineFor(targetLanguageTag)
+            val baseEngine = SentenceRefiningTranslationEngine(
+                baseTranslationProvider.engineFor(targetLanguageTag), app.cloudTranslationReviewer,
+            )
             if (targetLanguageTag.equals("zh-TW", ignoreCase = true)) {
                 TraditionalChineseTranslatingEngine(baseEngine)
             } else {
@@ -2696,7 +2730,36 @@ class BroadcastService : Service() {
         val recognizedUtterances = app.speechRecognitionEngine.recognize(
             frames = input.receiveAsFlow(),
             config = SpeechRecognitionConfig(sourceLanguageTag = sourceLanguageTag),
-        )
+        ).map { utterance ->
+            val lab = app.developerLabSettings.state.value
+            val enabled = app.uiDisplaySettings.developerInfo.value
+            utterance.copy(
+                speechExpression = if (enabled && lab.expressiveTtsEnabled)
+                    deriveSpeechExpression(utterance.text, lab.translationRegister) else null,
+                translationStyle = if (enabled && lab.paraphraseEnabled)
+                    if (lab.translationRegister == TranslationRegister.CONVERSATIONAL)
+                        TranslationStyle.CONVERSATIONAL
+                    else TranslationStyle.FORMAL
+                else null,
+            )
+        }.onCompletion { cause ->
+            // Wake suspended producers when the recognizer exits; a dead consumer must never
+            // hold the independently controlled microphone/original-audio producer.
+            input.cancel()
+            if (cause !is CancellationException && isTranslationSessionCurrent(sessionId)) {
+                RuntimeDiagnosticLog.record("recognition_stream_end",
+                    "failed=${cause != null}")
+                app.broadcastRuntime.update { current ->
+                    if (!isTranslationSessionCurrent(sessionId)) current else current.copy(
+                        recognitionErrorMessage = "음성인식 스트림이 종료됐습니다. 통역을 중지한 뒤 다시 시작하세요.",
+                        translationWarning = "음성인식 스트림이 종료됐습니다. 입력과 원음은 유지됩니다. 통역을 중지한 뒤 다시 시작하세요.",
+                        translationTestMessage = if (current.translationTestActive) {
+                            "음성인식이 종료됐습니다. 통번역 시험을 다시 시작하세요."
+                        } else current.translationTestMessage,
+                    )
+                }
+            }
+        }
         // Preview owns a private registry. A cancelled test can finish a non-cooperative native
         // callback late, but can never reconfigure or supersede the active web broadcast session.
         val streamRegistry = if (streamSession == null) {
@@ -3153,8 +3216,11 @@ class BroadcastService : Service() {
         }
     }
 
-    private fun beginTranslationSession(): Long =
-        translationSessionCoordinator.beginSession()
+    private fun beginTranslationSession(): Long {
+        val sessionId = translationSessionCoordinator.beginSession()
+        app.broadcastRuntime.update { it.copy(recognitionErrorMessage = null) }
+        return sessionId
+    }
 
     private fun isTranslationSessionCurrent(sessionId: Long): Boolean =
         translationSessionCoordinator.isSessionCurrent(sessionId)
@@ -3477,6 +3543,8 @@ class BroadcastService : Service() {
             testToneActive.set(false)
             wakeLockToRelease = wakeLock
             wakeLock = null
+            wakeLockRenewalJob?.cancel()
+            wakeLockRenewalJob = null
             hadResources
         }
 
@@ -3522,12 +3590,24 @@ class BroadcastService : Service() {
     }
 
     private fun acquireWakeLock() {
-        if (wakeLock?.isHeld == true) return
+        if (wakeLockRenewalJob?.isActive == true) return
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        wakeLock = powerManager.newWakeLock(
+        val heldLock = powerManager.newWakeLock(
             PowerManager.PARTIAL_WAKE_LOCK,
             "GuideCast::Broadcast",
-        ).also { it.acquire(MAX_WAKE_LOCK_MILLIS) }
+        ).apply {
+            setReferenceCounted(false)
+            acquire(WAKE_LOCK_LEASE_MILLIS)
+        }
+        wakeLock = heldLock
+        wakeLockRenewalJob = serviceScope.renewSessionLease(WAKE_LOCK_RENEW_MILLIS) {
+            synchronized(broadcastResourceLock) {
+                if (wakeLock !== heldLock || broadcastStreamSession == null) false else {
+                    heldLock.acquire(WAKE_LOCK_LEASE_MILLIS)
+                    true
+                }
+            }
+        }
     }
 
     private fun startForegroundForInput(playbackCapture: Boolean) {
@@ -3703,6 +3783,7 @@ class BroadcastService : Service() {
         private const val ACTION_STOP_LOCAL_MONITOR = "app.guidecast.action.STOP_LOCAL_MONITOR"
         private const val ACTION_SET_LOCAL_MONITOR_VOLUME = "app.guidecast.action.SET_LOCAL_MONITOR_VOLUME"
         private const val EXTRA_ACCESS_MODE = "access_mode"
+        private const val EXTRA_RUN_MODE = "run_mode"
         private const val EXTRA_PIN = "pin"
         private const val EXTRA_SPEAKER_PIN = "speaker_pin"
         private const val EXTRA_TRANSLATION_LANGUAGES = "translation_languages"
@@ -3748,7 +3829,9 @@ class BroadcastService : Service() {
         private const val LOCAL_MONITOR_ROUTE_WAIT_ATTEMPTS = 80
         /** 20 ms frames: update local-monitor UI at most twice per second. */
         private const val LOCAL_MONITOR_UI_FRAME_CADENCE = 25L
-        private const val MAX_WAKE_LOCK_MILLIS = 4 * 60 * 60 * 1000L
+        // Renew a bounded lease while a session is owned; stop releases it immediately.
+        private const val WAKE_LOCK_LEASE_MILLIS = 10 * 60 * 1000L
+        private const val WAKE_LOCK_RENEW_MILLIS = 5 * 60 * 1000L
 
         private fun mlKitNativeFirstUseKey(languageTag: String): String =
             "$MLKIT_NATIVE_FIRST_USE_KEY_PREFIX:$languageTag"
@@ -3808,10 +3891,12 @@ class BroadcastService : Service() {
             sourceLanguageTag: String = DEFAULT_SOURCE_LANGUAGE_TAG,
             useGemma: Boolean = false,
             selectiveTranslationRefinement: Boolean = false,
+            runMode: BroadcastRunMode = BroadcastRunMode.NETWORK,
         ) {
             val intent = Intent(context, BroadcastService::class.java)
                 .setAction(ACTION_START_BROADCAST)
                 .putExtra(EXTRA_ACCESS_MODE, accessMode.name)
+                .putExtra(EXTRA_RUN_MODE, runMode.name)
                 .putExtra(EXTRA_TRANSLATION_LANGUAGES, translationLanguages)
                 .putExtra(EXTRA_SOURCE_LANGUAGE, sourceLanguageTag)
                 .putExtra(EXTRA_USE_GEMMA, useGemma)

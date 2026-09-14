@@ -12,14 +12,13 @@ import java.net.Socket
 import java.security.KeyStore
 import java.security.SecureRandom
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.Semaphore
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 import javax.net.ssl.KeyManagerFactory
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLServerSocket
 import javax.net.ssl.SSLSocket
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -58,7 +57,10 @@ internal class GuideCastTlsProxy(
 ) : Closeable {
 
     private val closed = AtomicBoolean(false)
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // Each admitted connection has two blocking socket directions, plus the accept loop.
+    // A separate elastic IO view keeps those waits outside the shared 64-task IO admission lane
+    // used by microphone/STT/TTS work. Socket and peer admission limits remain unchanged.
+    private val scope = CoroutineScope(SupervisorJob() + tlsTransportDispatcher(maxConcurrentConnections))
     private val serverSocket: ServerSocket
     private val activeSockets = ConcurrentHashMap.newKeySet<Socket>()
     private val connectionLimiter = GuideCastTlsConnectionLimiter(
@@ -271,38 +273,45 @@ internal class GuideCastTlsProxy(
     }
 }
 
+internal fun tlsTransportDispatcher(maxConcurrentConnections: Int): CoroutineDispatcher {
+    require(maxConcurrentConnections in 1..1_024)
+    return Dispatchers.IO.limitedParallelism(maxConcurrentConnections * 2 + 1)
+}
+
 /** Bounds both aggregate and per-peer sockets before a coroutine or backend connection is made. */
 internal class GuideCastTlsConnectionLimiter(
-    maxConcurrentConnections: Int,
+    private val maxConcurrentConnections: Int,
     private val maxConnectionsPerPeer: Int,
 ) {
-    private val globalPermits = Semaphore(maxConcurrentConnections)
-    private val peerCounts = ConcurrentHashMap<String, AtomicInteger>()
+    private val lock = Any()
+    private var activeConnections = 0
+    private val peerCounts = mutableMapOf<String, Int>()
 
     init {
         require(maxConcurrentConnections > 0)
         require(maxConnectionsPerPeer in 1..maxConcurrentConnections)
     }
 
-    fun tryAcquire(peerAddress: String): Closeable? {
-        if (peerAddress.isBlank() || !globalPermits.tryAcquire()) return null
-        val peerCount = peerCounts.computeIfAbsent(peerAddress) { AtomicInteger() }
-        while (true) {
-            val current = peerCount.get()
-            if (current >= maxConnectionsPerPeer) {
-                globalPermits.release()
-                if (current == 0) peerCounts.remove(peerAddress, peerCount)
-                return null
-            }
-            if (peerCount.compareAndSet(current, current + 1)) break
-        }
-        return object : Closeable {
+    fun tryAcquire(peerAddress: String): Closeable? = synchronized(lock) {
+        if (peerAddress.isBlank() || activeConnections >= maxConcurrentConnections) return null
+        val peerCount = peerCounts[peerAddress] ?: 0
+        if (peerCount >= maxConnectionsPerPeer) return null
+        activeConnections++
+        peerCounts[peerAddress] = peerCount + 1
+        object : Closeable {
             private val closed = AtomicBoolean(false)
 
             override fun close() {
                 if (!closed.compareAndSet(false, true)) return
-                if (peerCount.decrementAndGet() == 0) peerCounts.remove(peerAddress, peerCount)
-                globalPermits.release()
+                synchronized(lock) {
+                    // Removing an idle counter and admitting a reconnect are one operation.
+                    // Otherwise close can remove the same counter a new socket just incremented,
+                    // and the following reconnect bypasses the still-active peer's admission cap.
+                    val remaining = requireNotNull(peerCounts[peerAddress]) - 1
+                    if (remaining == 0) peerCounts.remove(peerAddress)
+                    else peerCounts[peerAddress] = remaining
+                    activeConnections--
+                }
             }
         }
     }

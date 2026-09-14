@@ -351,6 +351,17 @@ class SpeechCorrectionRepository private constructor(
         (storage.profiles() + DEFAULT_PROFILE + mutableActiveProfile.value).distinct().sorted()
     }
 
+    internal suspend fun exportAll(): List<SpeechCorrectionEntry> = read {
+        storage.profiles().flatMap { storage.list(it, null, "") }
+    }
+
+    /** Portable IDs never replace local IDs; current confirmed values win natural-key collisions. */
+    internal suspend fun importMissing(entries: List<SpeechCorrectionEntry>): Int {
+        require(entries.size <= SpeechCorrectionValidation.MAX_ENTRIES)
+        val valid = entries.map(SpeechCorrectionValidation::entry)
+        return write { storage.importMissing(valid).also { reloadActiveSnapshotSafely() } }
+    }
+
     suspend fun delete(id: Long): SpeechCorrectionEntry? {
         if (id <= 0L) throw SpeechCorrectionValidationException(SpeechCorrectionValidationCode.INVALID_ID)
         return write { storage.delete(id).also { reloadActiveSnapshotSafely() } }
@@ -525,6 +536,7 @@ private data class SpeechCorrectionSnapshot(
 }
 
 internal interface SpeechCorrectionStorage {
+    fun importMissing(entries: List<SpeechCorrectionEntry>): Int = error("Portable import unavailable")
     fun save(draft: SpeechCorrectionDraft, id: Long?, updatedAt: Long): SpeechCorrectionEntry
     fun list(profile: String, languageTag: String?, query: String): List<SpeechCorrectionEntry>
     fun profiles(): List<String>
@@ -546,6 +558,24 @@ private class SQLiteSpeechCorrectionStorage(
     databaseName: String,
 ) : SpeechCorrectionStorage {
     private val helper = SpeechCorrectionDatabase(context, databaseName)
+
+    override fun importMissing(entries: List<SpeechCorrectionEntry>): Int = transaction { db ->
+        var inserted = 0
+        entries.forEach { entry ->
+            val draft = entry.toDraft()
+            val exists = db.rawQuery(
+                "SELECT 1 FROM $TABLE_CORRECTIONS WHERE $COL_PROFILE=? AND $COL_LANGUAGE=? COLLATE NOCASE AND $COL_RECOGNIZED=?",
+                arrayOf(entry.profile, entry.languageTag, entry.recognizedText),
+            ).use { it.moveToFirst() }
+            if (!exists) {
+                ensureEntryCapacity(db, 1)
+                if (draft.enabled && draft.hint != null) ensureHintCapacity(db, draft, null)
+                db.insertOrThrow(TABLE_CORRECTIONS, null, draft.values(entry.updatedAt))
+                inserted++
+            }
+        }
+        inserted
+    }
 
     override fun save(
         draft: SpeechCorrectionDraft,

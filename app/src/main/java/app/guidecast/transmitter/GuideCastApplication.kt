@@ -75,7 +75,7 @@ class GuideCastApplication : Application() {
     private val gemmaTranslationProviderDelegate = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         GemmaTranslationProvider(this).also { provider ->
             nativeEngineScope.launch {
-                provider.modelManager.status.map { "${it.variant}:${it.readiness}:${it.downloadedBytes / 1048576}MiB:error=${it.errorMessage != null}" }
+                provider.modelManager.status.map(::gemmaModelDiagnostic)
                     .distinctUntilChanged().collect { RuntimeDiagnosticLog.record("gemma_model", it) }
             }
         }
@@ -94,7 +94,10 @@ class GuideCastApplication : Application() {
         GalaxySpeechRecognitionEngine(
             context = this,
             captureSilenced = audioCaptureEngine.clientSilenced,
-            recognitionHints = { language -> speechCorrections.recognitionHints(language) },
+            recognitionHints = { language ->
+                (speechCorrections.recognitionHints(language) + sentenceTranslationMemory.recognitionHints(language))
+                    .distinct().take(32)
+            },
             warmMoonshineForRestartWithNativeAdmission = { languageTag, warm ->
                 withProcessNativeColdLoadLease(
                     key = ProcessNativeColdLoadKeys.speechRecognition(languageTag),
@@ -118,8 +121,17 @@ class GuideCastApplication : Application() {
     }
     val glossary by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { TranslationGlossaryRepository(this) }
     val speechCorrections by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { SpeechCorrectionRepository(this) }
+    val uiDisplaySettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { UiDisplaySettings(this) }
+    val operatorSettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { OperatorSettings(this) }
+    val developerLabSettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { DeveloperLabSettings(this) }
+    val sentenceTranslationMemory by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { SentenceTranslationMemory(this) }
+    val cloudTranslationReviewer by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        CloudTranslationReviewer(developerLabSettings, uiDisplaySettings, sentenceTranslationMemory)
+    }
     val microphoneNoiseSettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { MicrophoneNoiseSettings(this) }
     val diagnosticExportState = kotlinx.coroutines.flow.MutableStateFlow(DiagnosticExportState())
+    val localFileWorkActive = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val localModelWorkActive = kotlinx.coroutines.flow.MutableStateFlow(false)
 
     /** Owns the short export independently of screen recreation; keeps only application context. */
     fun exportDiagnosticsTo(uri: android.net.Uri) {
@@ -527,10 +539,10 @@ class GuideCastApplication : Application() {
                 }
             }
             nativeEngineScope.launch {
-                broadcastRuntime.state.map { state ->
-                    "broadcast=${state.phase} input=${state.inputPhase} inputError=${state.inputErrorMessage != null} error=${state.errorMessage != null} " +
-                        state.translationChannels.joinToString { "${it.languageTag}:translate=${it.translationState}:tts=${it.synthesisState}:tfail=${it.translationFailures}:vfail=${it.synthesisFailures}" }
-                }.distinctUntilChanged().collect { RuntimeDiagnosticLog.record("broadcast_state", it) }
+                // Per-sentence worker transitions otherwise rotate hours of diagnostic history
+                // away. The periodic session heartbeat carries their numeric progress/failures.
+                broadcastRuntime.state.map(::broadcastControlDiagnostic)
+                    .distinctUntilChanged().collect { RuntimeDiagnosticLog.record("broadcast_state", it) }
             }
             translationDiagnostics.consumePreviousInterruptedSession()?.let { message ->
                 broadcastRuntime.update { current ->

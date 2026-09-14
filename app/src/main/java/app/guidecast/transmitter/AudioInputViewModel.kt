@@ -31,6 +31,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -54,12 +55,14 @@ data class AudioInputUiState(
     val playbackTargetApps: List<PlaybackTargetApp> = emptyList(),
     val selectedPlaybackTarget: PlaybackTargetApp? = null,
     val playbackTargetRegistrationMessage: String? = null,
+    val playbackTargetPackageName: String = "",
 )
 
 private data class PlaybackTargetUiState(
     val apps: List<PlaybackTargetApp>,
     val selected: PlaybackTargetApp?,
     val registrationMessage: String?,
+    val packageName: String,
 )
 
 private data class AudioDeviceUiState(
@@ -183,8 +186,9 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
     private val gemmaBroadcastCapability = GemmaBroadcastCapability.detect(application)
     // Set remains part of the public UI contract, but every produced instance is insertion
     // ordered. The first selected output is the operator's quality-priority channel.
-    private val selectedLanguageTags = MutableStateFlow<Set<String>>(linkedSetOf("en"))
-    private val selectedSourceLanguageTag = MutableStateFlow(DEFAULT_SOURCE_LANGUAGE_TAG)
+    private val operatorSettings = guideCastApplication.operatorSettings
+    private val selectedLanguageTags = MutableStateFlow<Set<String>>(operatorSettings.state.value.targetLanguageTags.toCollection(linkedSetOf()))
+    private val selectedSourceLanguageTag = MutableStateFlow(operatorSettings.state.value.sourceLanguageTag)
     private val modelBusy = MutableStateFlow(false)
     private data class ModelProgress(
         val label: String = "모델 상태 확인 중",
@@ -193,9 +197,9 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
     )
     private val modelProgress = MutableStateFlow(ModelProgress())
     private val modelMessage = MutableStateFlow<String?>(null)
-    private val translationBroadcastEnabled = MutableStateFlow(true)
-    private val useGemma = MutableStateFlow(true)
-    private val selectiveTranslationRefinement = MutableStateFlow(false)
+    private val translationBroadcastEnabled = MutableStateFlow(operatorSettings.state.value.translationEnabled)
+    private val useGemma = MutableStateFlow(operatorSettings.state.value.useGemma)
+    private val selectiveTranslationRefinement = MutableStateFlow(operatorSettings.state.value.selectiveRefinement)
     private val gemmaBusy = MutableStateFlow(false)
     private val gemmaMessage = MutableStateFlow<String?>(null)
     private val speechRecognitionReady = MutableStateFlow(false)
@@ -205,6 +209,7 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
     private val playbackTargetApps = MutableStateFlow(application.playbackTargetApps())
     private val selectedPlaybackTarget = MutableStateFlow<PlaybackTargetApp?>(null)
     private val playbackTargetRegistrationMessage = MutableStateFlow<String?>(null)
+    private val playbackTargetPackageName = MutableStateFlow("")
     private val deviceMemorySnapshot = MutableStateFlow(
         DeviceMemorySnapshot.detect(application),
     )
@@ -252,6 +257,7 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
         playbackTargetApps,
         selectedPlaybackTarget,
         playbackTargetRegistrationMessage,
+        playbackTargetPackageName,
         ::PlaybackTargetUiState,
     )
 
@@ -283,6 +289,7 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
             playbackTargetApps = target.apps,
             selectedPlaybackTarget = target.selected,
             playbackTargetRegistrationMessage = target.registrationMessage,
+            playbackTargetPackageName = target.packageName,
         )
     }
     .stateIn(
@@ -414,6 +421,39 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
     init {
         repository.start()
         viewModelScope.launch {
+            combine(modelBusy, gemmaBusy, GemmaModelService.preparing) { model, gemma, service ->
+                model || gemma || service
+            }.distinctUntilChanged().collect { guideCastApplication.localModelWorkActive.value = it }
+        }
+        viewModelScope.launch {
+            combine(selectedSourceLanguageTag, selectedLanguageTags, translationBroadcastEnabled,
+                useGemma, selectiveTranslationRefinement) { source, targets, translation, gemma, refinement ->
+                OperatorOptions(source, targets.toList(), translation, gemma, refinement,
+                    operatorSettings.state.value.runMode)
+            }.collect { operatorSettings.store(it.copy(runMode = operatorSettings.state.value.runMode)) }
+        }
+        viewModelScope.launch {
+            var seen = operatorSettings.restoration.value
+            operatorSettings.restoration.collectLatest { revision ->
+                if (revision != seen) {
+                    seen = revision
+                    val restored = operatorSettings.state.value
+                    while (modelJob?.isCompleted == false || gemmaBusy.value ||
+                        guideCastApplication.broadcastRuntime.state.value.let { runtime ->
+                            runtime.inputPhase in setOf(InputPhase.STARTING, InputPhase.ACTIVE, InputPhase.PAUSED) ||
+                                runtime.phase in setOf(BroadcastPhase.STARTING, BroadcastPhase.LIVE, BroadcastPhase.PAUSED) ||
+                                runtime.translationTestActive
+                        }) delay(100L)
+                    selectSourceLanguage(restored.sourceLanguageTag)
+                    selectedLanguageTags.value = restored.targetLanguageTags.toCollection(linkedSetOf())
+                    translationBroadcastEnabled.value = restored.translationEnabled
+                    useGemma.value = restored.useGemma
+                    selectiveTranslationRefinement.value = restored.selectiveRefinement
+                    modelMessage.value = "운영 설정을 가져왔습니다. 변경한 언어의 모델·음성을 확인하세요."
+                }
+            }
+        }
+        viewModelScope.launch {
             while (isActive) {
                 val detected = DeviceMemorySnapshot.detect(getApplication())
                 if (detected.materiallyDiffersFrom(deviceMemorySnapshot.value)) {
@@ -485,9 +525,25 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
         selectedPlaybackTarget.value = playbackTargetApps.value.firstOrNull {
             it.packageName == packageName
         }
+        playbackTargetPackageName.value = packageName
+        playbackTargetRegistrationMessage.value = null
+    }
+
+    fun editPlaybackTargetPackage(packageName: String) {
+        playbackTargetPackageName.value = packageName.trim()
+        playbackTargetRegistrationMessage.value = null
+    }
+
+    /** Apply the visible manual value before requesting capture permission; never use a stale app. */
+    fun preparePlaybackTarget(): Boolean {
+        val requested = playbackTargetPackageName.value
+        if (requested.isNotBlank() && selectedPlaybackTarget.value?.packageName == requested) return true
+        registerPlaybackTarget(requested)
+        return requested.isNotBlank() && selectedPlaybackTarget.value?.packageName == requested
     }
 
     fun registerPlaybackTarget(rawPackageName: String) {
+        playbackTargetPackageName.value = rawPackageName.trim()
         val context = getApplication<Application>()
         context.registerPlaybackTargetApp(rawPackageName)
             .onSuccess { target ->
@@ -836,6 +892,7 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
         accessMode: OperatorAccessMode,
         pin: CharArray? = null,
         speakerPin: CharArray? = null,
+        runMode: BroadcastRunMode = BroadcastRunMode.NETWORK,
     ) {
         val translationLanguages = if (translationBroadcastEnabled.value) {
             selectedLanguageTags.value.toTypedArray()
@@ -851,6 +908,7 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
             sourceLanguageTag = selectedSourceLanguageTag.value,
             useGemma = useGemma.value,
             selectiveTranslationRefinement = selectiveTranslationRefinement.value,
+            runMode = runMode,
         )
     }
 

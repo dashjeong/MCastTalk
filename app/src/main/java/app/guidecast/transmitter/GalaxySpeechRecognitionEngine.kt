@@ -57,6 +57,7 @@ private sealed interface RecognitionAttemptOutcome {
     data object Completed : RecognitionAttemptOutcome
     data class Failed(val error: Throwable) : RecognitionAttemptOutcome
     data class EndpointRestart(val attemptId: Long) : RecognitionAttemptOutcome
+    data class Unresponsive(val attemptId: Long) : RecognitionAttemptOutcome
     data object CaptureSilenced : RecognitionAttemptOutcome
 }
 
@@ -98,6 +99,10 @@ internal fun recognitionRecoveryAction(
     error: Throwable,
     alternateBackendReady: Boolean,
 ): RecognitionRecoveryAction = when {
+    // VAD activity without text can be music/noise. Refresh a stuck session, but do not infer a
+    // fatal provider failure or permanently disable recognition after several such intervals.
+    error is RecognitionProgressStalledException -> RecognitionRecoveryAction.RESTART_SESSION
+
     error is AndroidSpeechRecognitionException &&
         error.errorCode in setOf(
             SpeechRecognizer.ERROR_NO_MATCH,
@@ -499,6 +504,8 @@ class GalaxySpeechRecognitionEngine(
         val nextRecognitionAttempt = AtomicLong(0)
         val activeRecognitionAttempt = AtomicLong(NO_ACTIVE_RECOGNITION_ATTEMPT)
         val endpointRestartRequests = Channel<Long>(capacity = Channel.CONFLATED)
+        val recognitionStallRequests = Channel<Long>(capacity = Channel.CONFLATED)
+        val progressWatchdog = RecognitionProgressWatchdog()
 
         suspend fun emitSegmenterOutput(block: () -> List<RecognizedUtterance>) {
             segmenterMutex.withLock {
@@ -526,6 +533,12 @@ class GalaxySpeechRecognitionEngine(
                         pcmS16Le = frame.bytes,
                         capturedAtNanos = frame.capturedAtElapsedRealtimeNanos,
                     )
+                    progressWatchdog.observeInput(
+                        nowMillis = SystemClock.elapsedRealtime(),
+                        isSpeech = activity.active,
+                        frameDurationMillis = frame.bytes.size.toLong() * 1_000L /
+                            (config.sampleRateHz * config.channelCount * Short.SIZE_BYTES),
+                    )
                     segmenterMutex.withLock {
                         interpretationSegmenter.observeSpeechActivity(
                             isSpeech = activity.active,
@@ -547,6 +560,9 @@ class GalaxySpeechRecognitionEngine(
             while (currentCoroutineContext().isActive) {
                 delay(SEGMENTER_TICK_MILLIS)
                 val requestEndpoint = advanceSegmenter(SystemClock.elapsedRealtimeNanos())
+                progressWatchdog.stalledAttempt(SystemClock.elapsedRealtime())?.let {
+                    recognitionStallRequests.trySend(it)
+                }
                 if (requestEndpoint) {
                     val attemptId = activeRecognitionAttempt.get()
                     if (attemptId != NO_ACTIVE_RECOGNITION_ATTEMPT) {
@@ -638,7 +654,15 @@ class GalaxySpeechRecognitionEngine(
                                         .getOrDefault(emptyList())
                                 } else emptyList(),
                             )
+                            progressWatchdog.beginAttempt(attemptId, SystemClock.elapsedRealtime())
+                            RuntimeDiagnosticLog.record("recognition_attempt", "attempt=$attemptId backend=$attemptBackend")
+                            var previousHypothesis: Triple<Long, String, Boolean>? = null
                             engine.recognize(pcm.receiveAsFlow(), attemptConfig).collect { utterance ->
+                                val hypothesis = Triple(utterance.sequence, utterance.text, utterance.isFinal)
+                                if (hypothesis != previousHypothesis) {
+                                    previousHypothesis = hypothesis
+                                    progressWatchdog.onChangedTranscript(attemptId, SystemClock.elapsedRealtime())
+                                }
                                 segmenterMutex.withLock {
                                     if (finalGate.shouldAccept(
                                             utterance.sequence,
@@ -675,13 +699,19 @@ class GalaxySpeechRecognitionEngine(
                             endpointRestartRequests.onReceive { requestedAttemptId ->
                                 RecognitionAttemptOutcome.EndpointRestart(requestedAttemptId)
                             }
+                            recognitionStallRequests.onReceive { requestedAttemptId ->
+                                RecognitionAttemptOutcome.Unresponsive(requestedAttemptId)
+                            }
                         }
                     } while (
-                        selected is RecognitionAttemptOutcome.EndpointRestart &&
-                        selected.attemptId != attemptId
+                        (selected is RecognitionAttemptOutcome.EndpointRestart &&
+                            selected.attemptId != attemptId) ||
+                            (selected is RecognitionAttemptOutcome.Unresponsive &&
+                                selected.attemptId != attemptId)
                     )
 
                     if (selected is RecognitionAttemptOutcome.EndpointRestart ||
+                        selected is RecognitionAttemptOutcome.Unresponsive ||
                         selected is RecognitionAttemptOutcome.CaptureSilenced) {
                         // Wait for any provider final already inside the segmenter critical section.
                         // Otherwise cancellation could mutate final state but interrupt its send,
@@ -693,6 +723,15 @@ class GalaxySpeechRecognitionEngine(
                     selected
                 }
                 activeRecognitionAttempt.compareAndSet(attemptId, NO_ACTIVE_RECOGNITION_ATTEMPT)
+                progressWatchdog.endAttempt(attemptId)
+                RuntimeDiagnosticLog.record("recognition_outcome", "attempt=$attemptId outcome=" +
+                    when (attemptOutcome) {
+                        RecognitionAttemptOutcome.Completed -> "completed"
+                        RecognitionAttemptOutcome.CaptureSilenced -> "capture_silenced"
+                        is RecognitionAttemptOutcome.EndpointRestart -> "semantic_endpoint"
+                        is RecognitionAttemptOutcome.Unresponsive -> "transcript_stalled"
+                        is RecognitionAttemptOutcome.Failed -> "provider_failure:${attemptOutcome.error.javaClass.simpleName}"
+                    })
 
                 // A provider session ending is not a semantic sentence boundary. Keep its immutable
                 // lines in the bounded assembler across normal completion, endpoint restart, errors
@@ -725,8 +764,11 @@ class GalaxySpeechRecognitionEngine(
                         if (!feeder.isCompleted) delay(RESTART_DELAY_MILLIS)
                     }
 
-                    is RecognitionAttemptOutcome.Failed -> {
-                        val error = attemptOutcome.error
+                    is RecognitionAttemptOutcome.Failed,
+                    is RecognitionAttemptOutcome.Unresponsive -> {
+                        val error = if (attemptOutcome is RecognitionAttemptOutcome.Failed) {
+                            attemptOutcome.error
+                        } else RecognitionProgressStalledException()
                         val alternateReady = when (backend) {
                             RecognitionBackend.ANDROID ->
                                 shouldUseMoonshineForSource(normalizedSourceLanguage) && moonshineReady
@@ -744,11 +786,12 @@ class GalaxySpeechRecognitionEngine(
                             }
 
                             RecognitionRecoveryAction.RESTART_SESSION -> {
-                                if (error is AndroidSpeechRecognitionException &&
+                                if (error is RecognitionProgressStalledException ||
+                                    (error is AndroidSpeechRecognitionException &&
                                     error.errorCode in setOf(
                                         SpeechRecognizer.ERROR_NO_MATCH,
                                         SpeechRecognizer.ERROR_SPEECH_TIMEOUT,
-                                    )
+                                    ))
                                 ) {
                                     consecutiveFailures = 0
                                 } else {
@@ -775,6 +818,7 @@ class GalaxySpeechRecognitionEngine(
         } finally {
             activeRecognitionAttempt.set(NO_ACTIVE_RECOGNITION_ATTEMPT)
             endpointRestartRequests.close()
+            recognitionStallRequests.close()
             deadlineTicker.cancel()
             feeder.cancel()
             pcm.close()

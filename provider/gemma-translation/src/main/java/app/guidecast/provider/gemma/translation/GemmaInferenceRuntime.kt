@@ -48,6 +48,7 @@ internal class GemmaInferenceRuntime(context: Context) : Closeable {
         targetLanguageTag: String,
         glossaryHints: String = "",
         reviewDraft: String = "",
+        translationStyle: String = "",
     ): String = inferenceMutex.withLock {
         if (requestedVariant != variant) {
             // Explicit IPC identity, not cross-process SharedPreferences. A replacement model
@@ -58,6 +59,7 @@ internal class GemmaInferenceRuntime(context: Context) : Closeable {
         require(text.isNotBlank() && text.length <= MAX_SOURCE_CHARACTERS)
         require(glossaryHints.length <= 2_400) { "Glossary hints exceed the per-sentence budget" }
         require(reviewDraft.length <= MAX_REVIEW_DRAFT_CHARACTERS)
+        require(translationStyle in setOf("", "FORMAL", "CONVERSATIONAL"))
         val sourceCode = sourceLanguageTag.substringBefore('-').lowercase(Locale.ROOT)
         val targetCode = targetLanguageTag.substringBefore('-').lowercase(Locale.ROOT)
         val source = requireNotNull(SUPPORTED_LANGUAGES[sourceCode]) {
@@ -76,7 +78,7 @@ internal class GemmaInferenceRuntime(context: Context) : Closeable {
         Log.i(LOG_TAG, "Gemma translation started: target=$targetLanguageTag, chars=${text.length}")
         try {
             try {
-                runTranslation(source, target, contextBefore, text, glossaryHints, reviewDraft)
+                runTranslation(source, target, contextBefore, text, glossaryHints, reviewDraft, translationStyle)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (fatal: VirtualMachineError) {
@@ -90,7 +92,7 @@ internal class GemmaInferenceRuntime(context: Context) : Closeable {
                 resetEngineLocked()
                 Log.w(LOG_TAG, "Gemma GPU inference failed; retrying same text on CPU", error)
                 try {
-                    runTranslation(source, target, contextBefore, text, glossaryHints, reviewDraft)
+                    runTranslation(source, target, contextBefore, text, glossaryHints, reviewDraft, translationStyle)
                 } catch (cpuError: Throwable) {
                     cpuError.addSuppressed(error)
                     throw cpuError
@@ -112,6 +114,7 @@ internal class GemmaInferenceRuntime(context: Context) : Closeable {
         text: String,
         glossaryHints: String,
         reviewDraft: String,
+        translationStyle: String,
     ): String = withContext(Dispatchers.Default) {
         val activeEngine = engine ?: createEngine().also { engine = it }
         activeEngine.createConversation(
@@ -125,7 +128,7 @@ internal class GemmaInferenceRuntime(context: Context) : Closeable {
                 maxOutputToken = gemmaTranslationOutputTokenLimit(text.length),
             ),
         ).use { conversation ->
-            val prompt = if (reviewDraft.isNotEmpty()) {
+            val basePrompt = if (reviewDraft.isNotEmpty()) {
                 GemmaTranslationReviewPrompt.build(
                     source,
                     target,
@@ -137,6 +140,7 @@ internal class GemmaInferenceRuntime(context: Context) : Closeable {
             } else {
                 GemmaTranslationPrompt.build(source, target, contextBefore, text, glossaryHints)
             }
+            val prompt = GemmaTranslationStylePrompt.apply(basePrompt, translationStyle)
             // Arming failure occurs before JNI submission, so it must fail normally rather than
             // enter the ambiguous-submission bridge without a live safety deadline.
             val deadline = GemmaWorkerDeadline.arm(applicationContext.packageName)

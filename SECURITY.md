@@ -2,13 +2,14 @@
 
 ## 1. Supported Versions
 
-Security review targets the following candidate. This is not a service-level
+Security review targets the following Alpha version. This is not a service-level
 agreement or certification that all vulnerabilities have been removed:
 
 | Version | Supported |
 |---|---|
-| `0.2.38-alpha` | Under review; experimental |
-| `< 0.2.38` | :x: |
+| `0.2.40-alpha` | Current Alpha; experimental |
+| `0.2.39-alpha` | Previous public Alpha |
+| `< 0.2.39` | :x: |
 
 ---
 
@@ -24,6 +25,11 @@ MCastTalk is designed with offline-first and privacy-focused principles:
    - Listeners connect directly via the host's local Wi-Fi or mobile hotspot.
 3. **Local Setting & Glossary Storage**:
    - User correction data and glossaries are stored locally on the device (SQLite/files) and are not synced to remote cloud storage.
+4. **Optional Developer API Review**:
+   - Developer display, online review consent and a stored API key must all be enabled before one original sentence, its translation and language/style information can be sent to the selected official OpenAI or Google endpoint. Audio, diagnostics, filenames and previous conversation are excluded.
+   - This is optional paid API use; provider terms and data policies apply. Turning it off keeps local translation. Keys are encrypted with Android Keystore and excluded from portable settings. Imports reset online consent and automatic learning. See [the request contract](docs/DEVELOPER_LAB.md).
+5. **Standalone Use**:
+   - The standalone option does not open listener HTTP/WebSocket sockets. Prepared local models can be used without Wi-Fi. It does not disable Android system networking or override optional API consent.
 
 ### Listener access and transport
 
@@ -37,9 +43,25 @@ MCastTalk is designed with offline-first and privacy-focused principles:
 
 ### Stored content and diagnostics
 
-- Finalized source/translation transcripts are stored in app-private SQLite,
-  subject to 30-day / 5,000-line retention limits. Operators can view and delete
-  entries. Corrections, glossaries and settings also persist locally.
+- Finalized source/translation transcripts are stored in app-private SQLite, with
+  up to 500,000 active lines and pages of 1,000. The operator selects oldest-line
+  overwrite or per-day private backup on overflow. There is no automatic 30-day
+  expiry. Daily backups need available storage; a backup failure retains source
+  records and warns instead of deleting them.
+- Hiding archived items removes them from normal queries but preserves physical
+  daily backup copies. Portable script backups contain visible retained records;
+  they are content exports, unlike minimal diagnostic exports.
+- User-initiated settings, dictionary and script exports create ZIP files only in
+  the device's `Download/MCastTalk/Backups` folder. They are not automatically sent
+  to a server. These portable files are not encrypted and can contain private
+  sentences and file metadata. Credentials, certificates and original audio are
+  excluded. Existing backups are not overwritten; incomplete new exports are
+  kept pending until complete and cleaned up on cancellation or failure.
+- File conversion stores transcripts, translations, timing and the selected
+  file's name, location and SHA-256 in the private library. The source audio stays
+  at its selected location. Imported locations require explicit file selection
+  and matching SHA-256 before playback. Sentence memory stores up to 50,000 entries;
+  AI entries cannot overwrite user-confirmed wording.
 - Authorized listeners receive audio/text and may retain their own copies.
   Consider consent before broadcasting or sharing content.
 - Processing uses audio buffers and may use temporary synthesis files. Offline

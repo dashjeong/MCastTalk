@@ -75,6 +75,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -134,12 +135,20 @@ import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     private val viewModel: AudioInputViewModel by viewModels()
+    private val fileViewModel: FileTranslationViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
             GuideCastTheme {
+                val displaySettings = remember { (application as GuideCastApplication).uiDisplaySettings }
+                val developerInfo by displaySettings.developerInfo.collectAsStateWithLifecycle()
+                CompositionLocalProvider(
+                    LocalDeveloperInfo provides developerInfo,
+                    LocalUiDisplaySettings provides displaySettings,
+                ) {
+                FileTaskLifecycle(fileViewModel)
                 val state by viewModel.uiState.collectAsStateWithLifecycle()
                 val broadcast by viewModel.broadcastState.collectAsStateWithLifecycle()
                 val translationModels by viewModel.translationModelState.collectAsStateWithLifecycle()
@@ -181,6 +190,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 GuideCastScreen(
+                    fileViewModel = fileViewModel,
                     state = state,
                     broadcast = broadcast,
                     translationModels = translationModels,
@@ -192,6 +202,7 @@ class MainActivity : ComponentActivity() {
                     onSelectDevice = viewModel::selectDevice,
                     onSelectPlaybackTarget = viewModel::selectPlaybackTarget,
                     onRegisterPlaybackTarget = viewModel::registerPlaybackTarget,
+                    onEditPlaybackTargetPackage = viewModel::editPlaybackTargetPackage,
                     onSelectSourceLanguage = viewModel::selectSourceLanguage,
                     onToggleTranslationLanguage = viewModel::toggleTranslationLanguage,
                     onSelectAllTranslationLanguages = viewModel::selectAllTranslationLanguages,
@@ -216,8 +227,10 @@ class MainActivity : ComponentActivity() {
                     },
                     onStartInput = {
                         if (state.selectedDevice?.kind == AudioInputKind.DEVICE_PLAYBACK) {
-                            val manager = context.getSystemService(MediaProjectionManager::class.java)
-                            projectionLauncher.launch(manager.createGuideCastCaptureIntent())
+                            if (viewModel.preparePlaybackTarget()) {
+                                val manager = context.getSystemService(MediaProjectionManager::class.java)
+                                projectionLauncher.launch(manager.createGuideCastCaptureIntent())
+                            }
                         } else {
                             viewModel.startInput()
                         }
@@ -241,6 +254,7 @@ class MainActivity : ComponentActivity() {
                     onStopLocalMonitor = viewModel::stopLocalMonitor,
                     onLocalMonitorVolume = viewModel::setLocalMonitorVolume,
                 )
+                }
             }
         }
     }
@@ -259,6 +273,7 @@ private fun Context.hasPermission(permission: String): Boolean =
 
 @Composable
 private fun GuideCastScreen(
+    fileViewModel: FileTranslationViewModel,
     state: AudioInputUiState,
     broadcast: BroadcastSnapshot,
     translationModels: TranslationModelUiState,
@@ -270,6 +285,7 @@ private fun GuideCastScreen(
     onSelectDevice: (Int) -> Unit,
     onSelectPlaybackTarget: (String) -> Unit,
     onRegisterPlaybackTarget: (String) -> Unit,
+    onEditPlaybackTargetPackage: (String) -> Unit,
     onSelectSourceLanguage: (String) -> Unit,
     onToggleTranslationLanguage: (String) -> Unit,
     onSelectAllTranslationLanguages: () -> Unit,
@@ -296,7 +312,7 @@ private fun GuideCastScreen(
     onClearTranscripts: () -> Unit,
     onDeleteArchivedTranscripts: (Set<TranscriptArchiveKey>) -> Unit,
     onDeleteArchivedTranscriptSession: (Long) -> Unit,
-    onStartBroadcast: (OperatorAccessMode, CharArray?, CharArray?) -> Unit,
+    onStartBroadcast: (OperatorAccessMode, CharArray?, CharArray?, BroadcastRunMode) -> Unit,
     onPauseBroadcast: () -> Unit,
     onResumeBroadcast: () -> Unit,
     onStopBroadcast: () -> Unit,
@@ -313,10 +329,17 @@ private fun GuideCastScreen(
     var showSpeechCorrections by rememberSaveable { mutableStateOf(false) }
     var settingsCategory by rememberSaveable { mutableStateOf(SettingsCategory.LANGUAGES) }
     val noiseSettings = (LocalContext.current.applicationContext as GuideCastApplication).microphoneNoiseSettings
+    val developerInfo = LocalDeveloperInfo.current
     val noiseMode by noiseSettings.mode.collectAsStateWithLifecycle()
     val glossaryWarning by (LocalContext.current.applicationContext as GuideCastApplication).glossary.warning.collectAsStateWithLifecycle()
     var sectionTopRequest by remember { mutableStateOf(0) }
     var accessMode by rememberSaveable { mutableStateOf(OperatorAccessMode.OPEN) }
+    var runMode by rememberSaveable { mutableStateOf(BroadcastRunMode.NETWORK) }
+    var showLiveTranscript by rememberSaveable { mutableStateOf(false) }
+    var showFileTranslation by rememberSaveable { mutableStateOf(false) }
+    var showSentenceMemory by rememberSaveable { mutableStateOf(false) }
+    var showDeveloperLab by rememberSaveable { mutableStateOf(false) }
+    var showDataTransfer by rememberSaveable { mutableStateOf(false) }
     var broadcastPin by remember { mutableStateOf("") }
     var micPinEnabled by rememberSaveable { mutableStateOf(false) }
     var micPin by remember { mutableStateOf("") }
@@ -337,6 +360,12 @@ private fun GuideCastScreen(
     val broadcastActive = broadcast.phase == BroadcastPhase.STARTING ||
         broadcast.phase == BroadcastPhase.LIVE ||
         broadcast.phase == BroadcastPhase.PAUSED
+    val app = LocalContext.current.applicationContext as GuideCastApplication
+    val operatorOptions by app.operatorSettings.state.collectAsStateWithLifecycle()
+    val fileState by fileViewModel.uiState.collectAsStateWithLifecycle()
+    val filePlayback by fileViewModel.playbackState.collectAsStateWithLifecycle()
+    val speechPreviewAllowed = !inputActive && !broadcastActive && !broadcast.translationTestActive &&
+        !fileState.isConverting && !fileState.isLoading && filePlayback?.isPlaying != true && filePlayback?.isTranslating != true
     val effectiveAccessMode = if (broadcastActive) {
         broadcast.accessMode ?: accessMode
     } else {
@@ -347,6 +376,39 @@ private fun GuideCastScreen(
     }
     LaunchedEffect(broadcastActive) {
         if (broadcastActive) broadcastListState.scrollToItem(0)
+    }
+    LaunchedEffect(developerInfo) { if (!developerInfo) showDeveloperLab = false }
+    LaunchedEffect(operatorOptions.runMode, broadcastActive) {
+        if (!broadcastActive) runMode = operatorOptions.runMode
+    }
+    if (showDataTransfer) {
+        DataTransferPanel(onBack = { showDataTransfer = false },
+            unavailableReason = if (!speechPreviewAllowed || translationModels.isBusy || gemmaState.isBusy)
+                "입력·방송·시험·모델 준비가 끝난 뒤 데이터를 이관할 수 있습니다." else null)
+        return
+    }
+    if (showSentenceMemory) {
+        SentenceMemoryScreen(app.sentenceTranslationMemory, onBack = { showSentenceMemory = false })
+        return
+    }
+    if (showDeveloperLab && developerInfo) {
+        DeveloperLabPanel(app.developerLabSettings, previewAllowed = speechPreviewAllowed,
+            onBack = { showDeveloperLab = false })
+        return
+    }
+    if (showFileTranslation) {
+        FileTranslationRoute(fileViewModel, onBack = { showFileTranslation = false })
+        return
+    }
+    if (showLiveTranscript) {
+        LiveTranscriptScreen(
+            transcripts = broadcast.transcripts,
+            sourceLanguageTag = translationModels.selectedSourceLanguageTag,
+            targetLanguageTags = translationModels.selectedLanguageTags.toList(),
+            statusText = interpretationProgressStatus(broadcast).state,
+            onBack = { showLiveTranscript = false },
+        )
+        return
     }
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -416,6 +478,14 @@ private fun GuideCastScreen(
                 )
             }
 
+            if (section != GuideCastSection.MODELS) {
+                item {
+                    OutlinedButton(onClick = { showLiveTranscript = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text("화면 전환 · 전체 화면 스크립트")
+                    }
+                }
+            }
+
             val needsAudioPermission = !permissions.recordAudioGranted &&
                 section != GuideCastSection.MODELS
             val needsBluetoothPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
@@ -450,6 +520,8 @@ private fun GuideCastScreen(
                             BroadcastControls(
                                 broadcast = broadcast,
                                 accessMode = effectiveAccessMode,
+                                runMode = if (broadcastActive) broadcast.runMode else runMode,
+                                onRunModeChange = { runMode = it; app.operatorSettings.setRunMode(it) },
                                 pin = broadcastPin,
                                 micPinEnabled = micPinEnabled,
                                 micPin = micPin,
@@ -483,11 +555,14 @@ private fun GuideCastScreen(
                             playbackDiagnostics = state.playbackCaptureDiagnostics,
                             playbackTargetApps = state.playbackTargetApps,
                             selectedPlaybackTarget = state.selectedPlaybackTarget,
+                            playbackTargetPackageName = state.playbackTargetPackageName,
+                            onEditPlaybackTargetPackage = onEditPlaybackTargetPackage,
                             playbackTargetRegistrationMessage =
                                 state.playbackTargetRegistrationMessage,
                             canStart = permissions.canStartInput(state.selectedDevice?.kind) &&
                                 (state.selectedDevice?.kind != AudioInputKind.DEVICE_PLAYBACK ||
-                                    state.selectedPlaybackTarget != null),
+                                    (state.selectedPlaybackTarget != null ||
+                                        isValidAndroidPackageName(state.playbackTargetPackageName))),
                             onSelectPlaybackTarget = onSelectPlaybackTarget,
                             onRegisterPlaybackTarget = onRegisterPlaybackTarget,
                             onStart = onStartInput,
@@ -509,7 +584,7 @@ private fun GuideCastScreen(
                             onOpenTest = { section = GuideCastSection.TEST },
                         )
                     }
-                    item {
+                    if (developerInfo) item {
                         WorkspaceDisclosure(
                             title = "처리 상태 · 입력 진단",
                             summary = "입력·인식·번역·음성·웹 송출을 각각 확인합니다. 방송 시작과 중지는 직접 결정할 수 있습니다.",
@@ -554,6 +629,8 @@ private fun GuideCastScreen(
                             BroadcastControls(
                                 broadcast = broadcast,
                                 accessMode = effectiveAccessMode,
+                                runMode = if (broadcastActive) broadcast.runMode else runMode,
+                                onRunModeChange = { runMode = it; app.operatorSettings.setRunMode(it) },
                                 pin = broadcastPin,
                                 micPinEnabled = micPinEnabled,
                                 micPin = micPin,
@@ -573,6 +650,11 @@ private fun GuideCastScreen(
                 }
 
                 GuideCastSection.TEST -> {
+                    item(key = "file-translation-entry") {
+                        OutlinedButton(onClick = { showFileTranslation = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text("번역 시험 · 파일 변환 / 재생")
+                        }
+                    }
                     item {
                         InputControls(
                             broadcast = broadcast,
@@ -580,11 +662,14 @@ private fun GuideCastScreen(
                             playbackDiagnostics = state.playbackCaptureDiagnostics,
                             playbackTargetApps = state.playbackTargetApps,
                             selectedPlaybackTarget = state.selectedPlaybackTarget,
+                            playbackTargetPackageName = state.playbackTargetPackageName,
+                            onEditPlaybackTargetPackage = onEditPlaybackTargetPackage,
                             playbackTargetRegistrationMessage =
                                 state.playbackTargetRegistrationMessage,
                             canStart = permissions.canStartInput(state.selectedDevice?.kind) &&
                                 (state.selectedDevice?.kind != AudioInputKind.DEVICE_PLAYBACK ||
-                                    state.selectedPlaybackTarget != null),
+                                    (state.selectedPlaybackTarget != null ||
+                                        isValidAndroidPackageName(state.playbackTargetPackageName))),
                             onSelectPlaybackTarget = onSelectPlaybackTarget,
                             onRegisterPlaybackTarget = onRegisterPlaybackTarget,
                             onStart = onStartInput,
@@ -617,6 +702,7 @@ private fun GuideCastScreen(
                 }
 
                 GuideCastSection.MODELS -> {
+                  item(key = "developer-display") { DeveloperInformationSettings() }
                   item(key = "settings-navigation") {
                     SettingsCategoryPicker(settingsCategory) {
                         settingsCategory = it
@@ -695,8 +781,20 @@ private fun GuideCastScreen(
                             onClick = { showSpeechCorrections = true },
                             modifier = Modifier.fillMaxWidth().sizeIn(minHeight = 56.dp),
                         ) { Text("인식 학습·보정") }
+                        OutlinedButton(onClick = { showDataTransfer = true },
+                            modifier = Modifier.fillMaxWidth().sizeIn(minHeight = 56.dp)) {
+                            Text("설정 / 사전 / 스크립트 · 가져오기 / 내보내기")
+                        }
+                        OutlinedButton(onClick = { showSentenceMemory = true },
+                            modifier = Modifier.fillMaxWidth().sizeIn(minHeight = 56.dp)) {
+                            Text("문장·회화 사전 · 확인 / 수정")
+                        }
                         SettingsInformationCard(onOpenLicenses = { showLicenses = true })
                         DiagnosticsAndVoiceSettings()
+                        if (developerInfo) OutlinedButton(onClick = { showDeveloperLab = true },
+                            modifier = Modifier.fillMaxWidth().sizeIn(minHeight = 56.dp)) {
+                            Text("개발자 실험실 · 표현 TTS / 의역 / API")
+                        }
                     }
                   }
                 }
@@ -857,7 +955,7 @@ private fun OperatorHeader(
 ) {
     val active = broadcast.phase == BroadcastPhase.LIVE || broadcast.phase == BroadcastPhase.PAUSED
     val serverLabel = when {
-        broadcast.phase == BroadcastPhase.LIVE -> "방송 중"
+        broadcast.phase == BroadcastPhase.LIVE -> if (broadcast.runMode == BroadcastRunMode.STANDALONE) "단독 사용 중" else "방송 중"
         broadcast.phase == BroadcastPhase.PAUSED -> "일시정지"
         broadcast.phase == BroadcastPhase.STARTING -> "방송 준비 중"
         broadcast.translationTestActive -> "통번역 시험 중"
@@ -943,7 +1041,11 @@ private fun OperatorHeader(
                         )
                         Text(serverLabel, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                         Text(
-                            if (broadcast.translationTestActive && !active) "· 단말 점검" else "· 청취자 ${broadcast.listenerCount}명",
+                            when {
+                                active && broadcast.runMode == BroadcastRunMode.STANDALONE -> "· 기기 내 처리"
+                                broadcast.translationTestActive && !active -> "· 단말 점검"
+                                else -> "· 청취자 ${broadcast.listenerCount}명"
+                            },
                             style = MaterialTheme.typography.labelMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -953,7 +1055,7 @@ private fun OperatorHeader(
                     TextButton(
                         modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
                         onClick = onOpenBroadcast,
-                    ) { Text("방송 보기") }
+                    ) { Text(if (broadcast.runMode == BroadcastRunMode.STANDALONE) "단독 사용 보기" else "방송 보기") }
                 } else if (broadcast.translationTestActive) {
                     Button(
                         modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
@@ -1172,6 +1274,8 @@ internal fun inputListeningStatus(broadcast: BroadcastSnapshot): OperatorStageSt
 }
 
 internal fun interpretationProgressStatus(broadcast: BroadcastSnapshot): OperatorStageStatus = when {
+    broadcast.recognitionErrorMessage != null ->
+        OperatorStageStatus("문장", broadcast.recognitionErrorMessage, OperatorStatusTone.ERROR)
     broadcast.inputErrorMessage != null || broadcast.inputPhase == InputPhase.FAILED ->
         OperatorStageStatus("문장", "입력 오류 · 입력 장치를 확인하세요", OperatorStatusTone.ERROR)
     broadcast.inputPhase == InputPhase.PAUSED ->
@@ -1247,7 +1351,12 @@ internal fun operatorStageStatuses(
         BroadcastPhase.FAILED -> OperatorStageStatus("웹 방송", "오류", OperatorStatusTone.ERROR)
         BroadcastPhase.IDLE -> OperatorStageStatus("웹 방송", "대기", OperatorStatusTone.NEUTRAL)
     }
-    return listOf(input, interpretation, server)
+    return listOf(input, interpretation, if (broadcast.runMode == BroadcastRunMode.STANDALONE) {
+        server.copy(label = "단독 사용", state = when (broadcast.phase) {
+            BroadcastPhase.LIVE -> "기기 내 처리"
+            else -> server.state
+        })
+    } else server)
 }
 
 @Composable
@@ -1598,6 +1707,7 @@ private fun OutputChannelsCard(
     onOpenTest: () -> Unit,
 ) {
     val context = LocalContext.current
+    val developerInfo = LocalDeveloperInfo.current
     var expandedQrChannelId by rememberSaveable { mutableStateOf<String?>(null) }
     val selectedOptions = selectedTranslationLanguageOptions(models)
     val channels = if (broadcast.translationChannels.isNotEmpty()) {
@@ -1626,8 +1736,8 @@ private fun OutputChannelsCard(
                 Text(
                     buildString {
                         append("청취자 ${broadcast.listenerCount}명")
-                        append(" · 웹 전송 ${broadcast.webSocketDeliveredFrameCount}회")
-                        if (broadcast.listenerDroppedFrames > 0L) {
+                        if (developerInfo) append(" · 웹 전송 ${broadcast.webSocketDeliveredFrameCount}회")
+                        if (developerInfo && broadcast.listenerDroppedFrames > 0L) {
                             append(" · 누락 ${broadcast.listenerDroppedFrames}")
                         }
                     },
@@ -1728,6 +1838,7 @@ private fun OutputChannelsCard(
                                     color = operatorStatusColor(routeStatus.tone),
                                 )
                             }
+                            if (developerInfo) {
                             ChannelWorkerStatusStrip(
                                 translation = translationStatus,
                                 synthesis = synthesisStatus,
@@ -1755,10 +1866,11 @@ private fun OutputChannelsCard(
                                     MaterialTheme.colorScheme.onSurfaceVariant
                                 },
                             )
-                            if ((channel?.droppedUtterances ?: 0L) > 0L ||
+                            }
+                            if (developerInfo && ((channel?.droppedUtterances ?: 0L) > 0L ||
                                 (channel?.translationFailures ?: 0L) > 0L ||
                                 (channel?.synthesisFailures ?: 0L) > 0L ||
-                                (channel?.listenerDroppedFrames ?: 0L) > 0L
+                                (channel?.listenerDroppedFrames ?: 0L) > 0L)
                             ) {
                                 Text(
                                     "누락 ${channel?.droppedUtterances ?: 0} · " +
@@ -1917,7 +2029,7 @@ private fun BroadcastLocalMonitorCard(
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                "현재 서버에 이미 송출된 PCM을 한 채널씩 듣습니다. 별도 번역·TTS를 실행하지 않으며 원격 청취자 수에도 포함되지 않습니다.",
+                "방송 중인 원음이나 통역을 선택한 출력 장치로 미리 듣습니다.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -2026,8 +2138,8 @@ private fun BroadcastLocalMonitorCard(
                         fontWeight = FontWeight.SemiBold,
                     )
                     Text(
-                        "출력 ${monitor.outputRouteLabel ?: "Android 시스템 미디어 출력"} · " +
-                            "PCM ${monitor.renderedFrames}프레임/비무음 ${monitor.renderedNonSilentFrames}",
+                        "출력 ${monitor.outputRouteLabel ?: "Android 시스템 미디어 출력"}" +
+                            if (LocalDeveloperInfo.current) " · PCM ${monitor.renderedFrames}프레임/비무음 ${monitor.renderedNonSilentFrames}" else "",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -2685,7 +2797,7 @@ private fun TranslationTestPanel(
                     val translateMs = testLanguage?.let(line.translationLatencyMillis::get)
                     val firstAudioMs = testLanguage?.let(line.firstAudioLatencyMillis::get)
                     val speechMs = testLanguage?.let(line.synthesisLatencyMillis::get)
-                    if (translateMs != null || firstAudioMs != null || speechMs != null) {
+                    if (LocalDeveloperInfo.current && (translateMs != null || firstAudioMs != null || speechMs != null)) {
                         Text(
                             listOfNotNull(
                                 translateMs?.let { "번역 ${it}ms" },
@@ -2714,211 +2826,22 @@ private fun TranscriptArchivePanel(
     onDeleteSelected: (Set<TranscriptArchiveKey>) -> Unit,
     onDeleteSession: (Long) -> Unit,
 ) {
-    var languageFilter by rememberSaveable { mutableStateOf<String?>(null) }
-    var selectedKeys by remember { mutableStateOf<Set<TranscriptArchiveKey>>(emptySet()) }
-    var confirmSelectedDelete by remember { mutableStateOf(false) }
-    var confirmSessionDelete by remember { mutableStateOf<Long?>(null) }
-    val languages = remember(archive.lines) { archive.lines.asSequence()
-        .flatMap { it.line.translations.keys.asSequence() }
-        .distinct()
-        .sorted()
-        .toList() }
-    val filtered = remember(archive.lines, languageFilter) { archive.lines.filter { archived ->
-        languageFilter == null || languageFilter in archived.line.translations
-    } }
-    val visible = filtered.take(MAX_VISIBLE_ARCHIVE_LINES)
-    val selectedVisible = selectedKeys.intersect(visible.mapTo(mutableSetOf()) { it.key })
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("방송 스크립트 보관함", fontWeight = FontWeight.Bold)
-                    Text(
-                        "${archive.lines.size}개 문장 · 30일/최대 5,000개 자동 보존",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Text(
-                    if (archive.pendingWriteCount > 0) "저장 중 ${archive.pendingWriteCount}" else "저장 완료",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = if (archive.pendingWriteCount > 0) GuideCastWarning else GuideCastSuccess,
-                )
-            }
-            archive.warning?.let { warning ->
-                Text(warning, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
-            }
-            if (languages.isNotEmpty()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    FilterChip(
-                        selected = languageFilter == null,
-                        onClick = { languageFilter = null },
-                        label = { Text("전체 언어") },
-                    )
-                    languages.forEach { language ->
-                        FilterChip(
-                            selected = languageFilter == language,
-                            onClick = { languageFilter = language },
-                            label = { Text(language.uppercase()) },
-                        )
-                    }
-                }
-            }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                OutlinedButton(
-                    modifier = Modifier.weight(1f),
-                    enabled = visible.isNotEmpty(),
-                    onClick = {
-                        selectedKeys = if (selectedVisible.size == visible.size) {
-                            selectedKeys - visible.mapTo(mutableSetOf()) { it.key }
-                        } else {
-                            selectedKeys + visible.map { it.key }
-                        }
-                    },
-                ) { Text(if (selectedVisible.size == visible.size && visible.isNotEmpty()) "보이는 항목 해제" else "보이는 항목 선택") }
-                OutlinedButton(
-                    modifier = Modifier.weight(1f),
-                    enabled = selectedKeys.isNotEmpty(),
-                    onClick = { confirmSelectedDelete = true },
-                    colors = destructiveOutlinedButtonColors(),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
-                ) { Text("선택 ${selectedKeys.size}개 삭제") }
-            }
-            if (visible.isEmpty()) {
-                Text(
-                    "저장된 확정 문장이 없습니다.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            } else {
-                visible.forEach { archived ->
-                    val translation = languageFilter?.let(archived.line.translations::get)
-                        ?: archived.line.translations.entries.firstOrNull()?.let { (tag, text) ->
-                            "${tag.uppercase()} · $text"
-                        }
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        color = MaterialTheme.colorScheme.surfaceContainerLow,
-                        shape = MaterialTheme.shapes.medium,
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(10.dp),
-                            verticalAlignment = Alignment.Top,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Checkbox(
-                                checked = archived.key in selectedKeys,
-                                onCheckedChange = { checked ->
-                                    selectedKeys = if (checked) {
-                                        selectedKeys + archived.key
-                                    } else {
-                                        selectedKeys - archived.key
-                                    }
-                                },
-                            )
-                            Column(
-                                modifier = Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(4.dp),
-                            ) {
-                                Text(
-                                    formatArchiveSessionTime(archived.sessionStartedAtEpochMillis) +
-                                        " · ${archived.sourceLanguageTag}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
-                                SelectionContainer { Text(archived.line.sourceText) }
-                                SpeechCorrectionAction(archived.line, archived.sourceLanguageTag)
-                                translation?.let { SelectionContainer { Text(it) } }
-                                TextButton(
-                                    onClick = { confirmSessionDelete = archived.key.sessionId },
-                                ) { Text("이 방송 전체 삭제") }
-                            }
-                        }
-                    }
-                }
-                if (filtered.size > visible.size) {
-                    Text(
-                        "최신 ${visible.size}개만 표시합니다. 언어 필터로 범위를 줄일 수 있습니다.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-    }
-
-    if (confirmSelectedDelete) {
-        AlertDialog(
-            onDismissRequest = { confirmSelectedDelete = false },
-            title = { Text("선택한 스크립트 삭제") },
-            text = { Text("선택한 ${selectedKeys.size}개 문장을 기기에서 삭제합니다.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    onDeleteSelected(selectedKeys)
-                    selectedKeys = emptySet()
-                    confirmSelectedDelete = false
-                }) { Text("삭제", color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmSelectedDelete = false }) { Text("취소") }
-            },
-        )
-    }
-    confirmSessionDelete?.let { sessionId ->
-        AlertDialog(
-            onDismissRequest = { confirmSessionDelete = null },
-            title = { Text("방송 세션 전체 삭제") },
-            text = { Text("이 방송에서 저장한 모든 언어 스크립트를 삭제합니다.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    onDeleteSession(sessionId)
-                    selectedKeys = selectedKeys.filterNotTo(mutableSetOf()) { it.sessionId == sessionId }
-                    confirmSessionDelete = null
-                }) { Text("세션 삭제", color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmSessionDelete = null }) { Text("취소") }
-            },
-        )
-    }
+    val repository = (LocalContext.current.applicationContext as GuideCastApplication).transcriptArchive
+    BroadcastTranscriptArchivePanel(archive, repository::loadPage, onDeleteSelected, onDeleteSession, repository::setRetentionPolicy)
 }
-
-private fun formatArchiveSessionTime(epochMillis: Long): String =
-    java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault())
-        .format(java.util.Date(epochMillis))
-
-private const val MAX_VISIBLE_ARCHIVE_LINES = 100
 
 @Composable
 private fun PlaybackTargetSelector(
     apps: List<PlaybackTargetApp>,
     selected: PlaybackTargetApp?,
+    manualPackageName: String,
+    onManualPackageChange: (String) -> Unit,
     enabled: Boolean,
     onSelect: (String) -> Unit,
     registrationMessage: String?,
     onRegister: (String) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    var manualPackageName by rememberSaveable {
-        mutableStateOf("com.samsung.android.app.interpreter")
-    }
     Text("출력 대상 앱", fontWeight = FontWeight.SemiBold)
     OutlinedButton(
         modifier = Modifier.fillMaxWidth(),
@@ -2962,16 +2885,16 @@ private fun PlaybackTargetSelector(
         value = manualPackageName,
         enabled = enabled,
         singleLine = true,
-        label = { Text("패키지명 수동 등록") },
-        supportingText = { Text("예: com.samsung.android.app.interpreter") },
-        onValueChange = { manualPackageName = it.trim() },
+        label = { Text("사용할 앱 패키지명") },
+        supportingText = { Text("앱 선택 시 자동 입력됩니다. 직접 수정한 값은 입력 시작 시 우선 적용됩니다.") },
+        onValueChange = onManualPackageChange,
     )
     OutlinedButton(
         modifier = Modifier.fillMaxWidth(),
         enabled = enabled && manualPackageName.isNotBlank(),
         onClick = { onRegister(manualPackageName) },
     ) {
-        Text("패키지 등록 후 선택")
+        Text("수동 패키지명 적용")
     }
     registrationMessage?.let { message ->
         Text(
@@ -2993,10 +2916,12 @@ private fun InputControls(
     playbackDiagnostics: PlaybackCaptureDiagnostics,
     playbackTargetApps: List<PlaybackTargetApp>,
     selectedPlaybackTarget: PlaybackTargetApp?,
+    playbackTargetPackageName: String,
     playbackTargetRegistrationMessage: String?,
     canStart: Boolean,
     onSelectPlaybackTarget: (String) -> Unit,
     onRegisterPlaybackTarget: (String) -> Unit,
+    onEditPlaybackTargetPackage: (String) -> Unit,
     onStart: () -> Unit,
     onPause: () -> Unit,
     onResume: () -> Unit,
@@ -3036,6 +2961,8 @@ private fun InputControls(
                 PlaybackTargetSelector(
                     apps = playbackTargetApps,
                     selected = selectedPlaybackTarget,
+                    manualPackageName = playbackTargetPackageName,
+                    onManualPackageChange = onEditPlaybackTargetPackage,
                     enabled = broadcast.inputPhase == InputPhase.IDLE ||
                         broadcast.inputPhase == InputPhase.FAILED,
                     onSelect = onSelectPlaybackTarget,
@@ -3053,9 +2980,8 @@ private fun InputControls(
                     color = MaterialTheme.colorScheme.primary,
                 )
                 Text(
-                    "선택한 앱 UID의 허용된 재생음만 가상 라인 입력으로 복사합니다. 다음 Android " +
-                        "권한 창은 이 오디오 캡처 토큰을 위한 것이며 이 앱은 화면 영상을 저장하거나 " +
-                        "웹으로 보내지 않습니다. Android 창에서도 '앱 하나'와 같은 대상 앱을 선택하세요.",
+                    "다음 Android 창에서 선택한 앱의 소리 공유를 허용하세요. 화면 영상은 저장하거나 " +
+                        "웹으로 보내지 않습니다. '앱 하나'를 선택하면 같은 대상 앱을 지정하세요.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -3073,8 +2999,10 @@ private fun InputControls(
                 )
             }
             broadcast.inputProcessingSummary?.let { processingSummary ->
+                if (LocalDeveloperInfo.current || "미지원" in processingSummary) {
                 Text(
-                    processingSummary,
+                    if (LocalDeveloperInfo.current) processingSummary
+                        else "일부 소음 처리를 사용할 수 없습니다. 원음을 확인하세요.",
                     style = MaterialTheme.typography.labelSmall,
                     color = if ("미지원" in processingSummary) {
                         GuideCastWarning
@@ -3082,6 +3010,7 @@ private fun InputControls(
                         MaterialTheme.colorScheme.primary
                     },
                 )
+                }
             }
 
             when (broadcast.inputPhase) {
@@ -3172,6 +3101,7 @@ private fun InputLevel(
     selectedInputKind: AudioInputKind?,
     playbackDiagnostics: PlaybackCaptureDiagnostics,
 ) {
+    val developerInfo = LocalDeveloperInfo.current
     val inputLevel = (broadcast.inputRms * 8f).coerceIn(0f, 1f)
     val dbFs = if (broadcast.inputRms > 0f) {
         (20.0 * log10(broadcast.inputRms.toDouble())).toInt().coerceAtLeast(-90)
@@ -3181,7 +3111,8 @@ private fun InputLevel(
     LinearProgressIndicator(progress = { inputLevel }, modifier = Modifier.fillMaxWidth())
     val listening = inputListeningStatus(broadcast)
     Text(
-        text = "${listening.state} · $dbFs dBFS · ${broadcast.inputFrameCount} 프레임",
+        text = if (developerInfo) "${listening.state} · $dbFs dBFS · ${broadcast.inputFrameCount} 프레임"
+            else if (broadcast.inputSignalActive) "소리가 들어오고 있습니다" else "소리를 기다리고 있습니다",
         style = MaterialTheme.typography.bodySmall,
         color = operatorStatusColor(listening.tone),
     )
@@ -3189,6 +3120,10 @@ private fun InputLevel(
         val progress = interpretationProgressStatus(broadcast)
         Text(progress.state, style = MaterialTheme.typography.bodySmall,
             color = operatorStatusColor(progress.tone))
+    }
+    if (developerInfo && broadcast.recognitionDroppedFrameCount > 0) {
+        Text("인식 처리 지연으로 건너뛴 입력: ${broadcast.recognitionDroppedFrameCount} 프레임 · 원음 입력은 유지",
+            style = MaterialTheme.typography.labelSmall, color = GuideCastWarning)
     }
     if (broadcast.inputFrameCount > 0L && !broadcast.inputSignalActive && broadcast.inputPeak < 0.01f) {
         Text("말하는 중에도 입력 막대가 움직이지 않으면 마이크 연결·권한·다른 녹음 앱의 점유를 확인하세요.",
@@ -3200,7 +3135,9 @@ private fun InputLevel(
             signalActive = broadcast.inputSignalActive,
         )
         Text(
-            text = status.message,
+            text = if (developerInfo) status.message
+                else if (status.tone == PlaybackCaptureUiTone.WARNING) "앱 음원 입력을 확인하세요"
+                else if (broadcast.inputSignalActive) "선택한 앱의 소리를 받고 있습니다" else "선택한 앱에서 소리를 재생하세요",
             fontWeight = FontWeight.SemiBold,
             color = when (status.tone) {
                 PlaybackCaptureUiTone.SUCCESS -> GuideCastSuccess
@@ -3209,7 +3146,9 @@ private fun InputLevel(
             },
         )
         Text(
-            text = status.detail,
+            text = if (developerInfo) status.detail
+                else if (status.tone == PlaybackCaptureUiTone.WARNING) "다른 앱의 재생을 멈추고 선택한 앱의 소리를 재생하세요. 입력이 없으면 앱의 음원 공유 제한을 확인하거나 다른 입력을 선택하세요."
+                else "입력 막대가 움직이는지 확인하세요. 소리가 들어오면 방송에서 사용할 수 있습니다.",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -3621,6 +3560,7 @@ private fun SpeechVoicePreferencePicker(
 private fun MultiLanguageResourceDiagnosticsCard(
     diagnostics: MultiLanguageResourceDiagnostics,
 ) {
+    val developerInfo = LocalDeveloperInfo.current
     val statusLabel = when (diagnostics.state) {
         MultiLanguageResourceState.SAFE -> "안정"
         MultiLanguageResourceState.CAUTION -> "주의"
@@ -3639,6 +3579,7 @@ private fun MultiLanguageResourceDiagnosticsCard(
     val semanticSummary = buildString {
         append("동시 통역 자원 상태 ").append(statusLabel)
         append(", 선택 채널 ").append(diagnostics.selectedChannelCount).append("개")
+        if (developerInfo) {
         append(", 총 메모리 ").append(formatMemoryGiB(diagnostics.memory.totalMemoryBytes))
         append(", 가용 메모리 ").append(formatMemoryGiB(diagnostics.memory.availableMemoryBytes))
         append(", 추가 준비 예약 추정 ")
@@ -3646,6 +3587,7 @@ private fun MultiLanguageResourceDiagnosticsCard(
         if (diagnostics.appProcessMemory.valuesValid) {
             append(", 현재 GuideCast 합산 PSS ")
             append(formatMemoryMiB(diagnostics.appProcessMemory.totalPssBytes))
+        }
         }
     }
 
@@ -3691,6 +3633,7 @@ private fun MultiLanguageResourceDiagnosticsCard(
             )
             Text("원음 채널은 별도입니다. 언어·모델 준비 상태에 따라 권장 수가 달라지며 선택을 제한하지 않습니다.",
                 style = MaterialTheme.typography.labelSmall)
+            if (developerInfo) {
             Text(diagnostics.initialMemoryProfileLabel, style = MaterialTheme.typography.labelSmall)
             Text(
                 "총 ${formatMemoryGiB(diagnostics.memory.totalMemoryBytes)} · " +
@@ -3723,17 +3666,20 @@ private fun MultiLanguageResourceDiagnosticsCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            }
+            if (developerInfo) {
             Text(
                 diagnostics.summary,
                 style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.Medium,
             )
+            }
             Text(
                 diagnostics.recommendation,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            diagnostics.languagePlans.forEach { plan ->
+            if (developerInfo) diagnostics.languagePlans.forEach { plan ->
                 val languageName = TRANSLATION_LANGUAGE_OPTIONS.firstOrNull {
                     it.languageTag == plan.languageTag
                 }?.label?.substringBefore(" ·") ?: plan.languageTag
@@ -4158,6 +4104,8 @@ private fun InputChoiceCard(
 private fun BroadcastControls(
     broadcast: BroadcastSnapshot,
     accessMode: OperatorAccessMode,
+    runMode: BroadcastRunMode,
+    onRunModeChange: (BroadcastRunMode) -> Unit,
     pin: String,
     micPinEnabled: Boolean,
     micPin: String,
@@ -4166,7 +4114,7 @@ private fun BroadcastControls(
     onPinChange: (String) -> Unit,
     onMicPinEnabledChange: (Boolean) -> Unit,
     onMicPinChange: (String) -> Unit,
-    onStart: (OperatorAccessMode, CharArray?, CharArray?) -> Unit,
+    onStart: (OperatorAccessMode, CharArray?, CharArray?, BroadcastRunMode) -> Unit,
     onPause: () -> Unit,
     onResume: () -> Unit,
     onStop: () -> Unit,
@@ -4179,16 +4127,23 @@ private fun BroadcastControls(
     val validMicPin = micPin.length in 4..8 && micPin.all(Char::isDigit)
 
     Text(
-        text = "로컬 방송",
+        text = "사용 방식",
         style = MaterialTheme.typography.titleLarge,
         fontWeight = FontWeight.SemiBold,
     )
     Text(
-        text = "핫스팟을 먼저 켠 뒤 접속 방식을 선택하세요.",
+        text = if (runMode == BroadcastRunMode.STANDALONE) "Wi-Fi 없이 이 기기에서 통역과 스크립트를 확인합니다. 음성은 아래 기기 출력에서 재생하세요."
+            else "다른 기기에 방송하려면 핫스팟 또는 같은 Wi-Fi에 연결하세요.",
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
     Spacer(Modifier.height(10.dp))
 
+    Row(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        AccessModeButton(Modifier.weight(1f), "다른 기기에 방송", runMode == BroadcastRunMode.NETWORK, !active) { onRunModeChange(BroadcastRunMode.NETWORK) }
+        AccessModeButton(Modifier.weight(1f), "이 기기에서 사용", runMode == BroadcastRunMode.STANDALONE, !active) { onRunModeChange(BroadcastRunMode.STANDALONE) }
+    }
+    Spacer(Modifier.height(10.dp))
+    if (runMode == BroadcastRunMode.NETWORK) {
     Row(
         modifier = Modifier.selectableGroup(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -4279,6 +4234,8 @@ private fun BroadcastControls(
         )
     }
 
+    }
+
     when (broadcast.phase) {
         BroadcastPhase.IDLE,
         BroadcastPhase.FAILED,
@@ -4296,18 +4253,19 @@ private fun BroadcastControls(
                     .padding(top = 12.dp)
                     .sizeIn(minHeight = 56.dp),
                 enabled = canStart &&
-                    (accessMode != OperatorAccessMode.PIN || validPin) &&
-                    (!micPinEnabled || validMicPin),
+                    (runMode == BroadcastRunMode.STANDALONE ||
+                        ((accessMode != OperatorAccessMode.PIN || validPin) &&
+                        (!micPinEnabled || validMicPin))),
                 onClick = {
                     val suppliedPin = pin.takeIf { accessMode == OperatorAccessMode.PIN }
                         ?.toCharArray()
                     val suppliedMicPin = micPin.takeIf { micPinEnabled }?.toCharArray()
-                    onStart(accessMode, suppliedPin, suppliedMicPin)
+                    onStart(if (runMode == BroadcastRunMode.STANDALONE) OperatorAccessMode.OPEN else accessMode, suppliedPin, suppliedMicPin, runMode)
                     onPinChange("")
                     onMicPinChange("")
                 },
             ) {
-                Text("방송 시작")
+                Text(if (runMode == BroadcastRunMode.STANDALONE) "단독 사용 시작" else "방송 시작")
             }
         }
 
@@ -4395,6 +4353,10 @@ private fun LiveBroadcastCard(
     onStop: () -> Unit,
     onPlayTestTone: () -> Unit,
 ) {
+    if (broadcast.runMode == BroadcastRunMode.STANDALONE) {
+        StandaloneSessionCard(broadcast, paused, onPauseOrResume, onStop, onPlayTestTone)
+        return
+    }
     val url = broadcast.listenerUrl ?: return
     Card(
         modifier = Modifier
