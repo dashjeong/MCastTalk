@@ -21,6 +21,9 @@ data class RecognizedUtterance(
     val isRetracted: Boolean = false,
     /** Absolute first-audio safety line; null is allowed for provider/tests without a budget. */
     val firstAudioDeadlineElapsedRealtimeNanos: Long? = null,
+    /** Optional, explicit developer experiment captured with this utterance. */
+    val speechExpression: SpeechExpressionProfile? = null,
+    val translationStyle: TranslationStyle? = null,
 ) {
     init {
         require(sequence >= 0)

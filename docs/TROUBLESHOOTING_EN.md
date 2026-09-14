@@ -12,7 +12,7 @@ When an issue occurs, read the exact status message and check the pipeline in th
 
 ## Quick checks
 
-1. Confirm that the operator and listener are on the same hotspot or Wi‑Fi network.
+1. For broadcasting to other devices, confirm that the operator and listener share a hotspot or Wi‑Fi network. **Use on this device (이 기기에서 사용)** works without that network.
 2. Confirm that the input meter reacts to speech.
 3. Confirm that every selected language shows **Ready**.
 4. On the listener device, select **Play** and raise the media volume.
@@ -51,7 +51,7 @@ Do not immediately clear app storage or reinstall the app. Doing so may remove c
 
 Export the diagnostic log and include:
 
-- app version: `0.2.39-alpha`;
+- the actual installed app version, for example `0.2.40-alpha`;
 - Android version, manufacturer, and model;
 - input and output device names;
 - source language and affected interpretation language;
@@ -59,3 +59,25 @@ Export the diagnostic log and include:
 - time of occurrence and reproduction steps.
 
 Diagnostic logs are designed to exclude audio, interpreted sentences, and PINs. Review the file before sharing it.
+
+## Checks for the 0.2.40 additions
+
+| Symptom | Check and action |
+| --- | --- |
+| You want to interpret without Wi-Fi | Select **Usage mode → Use on this device (이 기기에서 사용)** and start standalone use. Prepare models and language packs first. Broadcasting to other devices still requires a shared network. |
+| No QR code in standalone mode | Standalone use does not open a listener address. Stop it and select **Broadcast to other devices (다른 기기에 방송)** when sharing is required. |
+| App selection and manual package name seem inconsistent | Selecting an app fills its package name. Editing it manually afterward takes priority when input starts. Source-app capture restrictions still apply. |
+| File conversion cannot start | Stop live input, broadcasting and interpretation tests, then follow permission guidance. New transcription needs Android 13+ and a compatible on-device service supporting file input. |
+| Automatic language is unavailable | Select the source language manually on Android 13. On Android 14+, engine or language-pack limitations can still require manual selection. |
+| Only some files or languages failed | Completed results remain saved. Resolve access, language-pack, model or storage issues, then use **Retry failed items (실패 항목 재작업)** or **Retry this file (이 파일 재작업)**. |
+| Some files are missing from a selected folder | Check audio support and provider access. Split very large folders and follow selection-limit messages. |
+| Saved transcript audio will not play | Use **Find original file again (원본 파일 다시 찾기)** and select identical file content. A matching name alone is insufficient. Saved text remains available if the original cannot be opened. |
+| No word highlight, only a sentence highlight | The recognizer did not provide usable word times. **Estimated timing (시각 추정)** does not promise precise boundaries; compare the script with the audio. |
+| Processing times and technical numbers disappeared | Enable **Settings → Show developer information (개발자 정보 표시)** if needed. Actionable errors and diagnostic export remain available in the normal view. |
+| Paraphrasing makes no apparent difference | ML Kit alone has no register control. Check that a prepared Gemma engine is used by the selected path, or that the API has a key and transmission consent. Live API learning affects later matching sentences. |
+| Expression sounds similar to baseline | This is a small rate/pitch experiment with installed Android voices. Compare the same sentence. Moonshine does not receive these controls, and emotion cloning is unsupported. |
+| Cloud review or learning is not applied | Check developer display, key, transmission consent and automatic learning for live use. Timeouts, failures and conservative checks retain the draft. AI cannot overwrite human-confirmed entries. |
+
+See the [developer lab and sentence memory guide](DEVELOPER_LAB.md) for review and data-transfer scope. Do not publish API keys, private source text/audio or file access addresses in issue reports. Diagnostic collection does not depend on enabling developer display.
+
+Eight-hour stability and physical Galaxy/One UI, outdoor or Android/iPhone behavior require tests in those exact environments. Automated and emulator checks do not establish those results or guarantee long-running operation. Consult the [test report](TEST_REPORT.md) for the exact scope.

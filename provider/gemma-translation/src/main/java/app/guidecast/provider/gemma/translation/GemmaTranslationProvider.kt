@@ -10,6 +10,7 @@ import app.guidecast.core.translation.currentNativeColdLoadTicket
 import app.guidecast.core.translation.TranslationEngineProvider
 import app.guidecast.core.translation.TranslationGlossaryContext
 import app.guidecast.core.translation.TranslationReviewContext
+import app.guidecast.core.translation.TranslationStyleContext
 import kotlinx.coroutines.currentCoroutineContext
 import java.io.Closeable
 import java.util.Locale
@@ -199,6 +200,7 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
         val nativeTicket = currentNativeColdLoadTicket()
         val glossaryHints = currentCoroutineContext()[TranslationGlossaryContext]?.hints.orEmpty()
         val review = currentCoroutineContext()[TranslationReviewContext]
+        val translationStyle = currentCoroutineContext()[TranslationStyleContext]?.style?.name.orEmpty()
         val reviewDraft = review?.let {
             require(it.originalText == text &&
                 it.sourceLanguageTag.equals(sourceLanguageTag, ignoreCase = true) &&
@@ -316,6 +318,7 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
                         targetLanguageTag,
                         glossaryHints,
                         reviewDraft,
+                        translationStyle,
                         callback,
                     )
                 } catch (error: Throwable) {

@@ -1,6 +1,6 @@
 # 제3자 소프트웨어·모델 라이선스
 
-이 문서는 MCastTalk `0.2.39-alpha` (`versionCode 45`)에 포함되거나 앱에서 별도로
+이 문서는 MCastTalk `0.2.40-alpha` (`versionCode 46`)에 포함되거나 앱에서 별도로
 다운로드하는 제3자 구성요소의 라이선스와 고지 위치를 안내합니다. MCastTalk가 작성한
 자체 코드는 저장소 루트의 Apache License 2.0에 따라 상업적 이용을 포함한
 사용·수정·재배포가 허용됩니다. 저작권·라이선스·필요한 고지 및 변경 표시 의무를 준수하세요.
@@ -108,6 +108,30 @@ License가 적용됩니다. 상업 목적 사용·배포에는 권리자 등록�
 다운로드 위치를 고지합니다. [국립국어원 저작권 정책](https://www.korean.go.kr/front/nuri/pageView.do?mkn=3&page_id=P000189)은
 홈페이지 제공 자료의 이용을 허용하며 별도로 표시된 공공누리 유형의 조건을 따르도록 안내합니다.
 자료의 기존 권리와 이용조건은 유지되며 MCastTalk 코드 라이선스로 재허가하지 않습니다.
+
+## 개발자 음성·문체 실험의 API와 검토 출처 (2026-09-14)
+
+이 변경은 새 음성 SDK·가중치·클라우드 TTS 의존성을 추가하지 않습니다. Android 설치 음성의
+표현 시험은 기존 [TextToSpeech.setPitch](https://developer.android.com/reference/android/speech/tts/TextToSpeech#setPitch(float))와
+[setSpeechRate](https://developer.android.com/reference/android/speech/tts/TextToSpeech#setSpeechRate(float))를
+사용합니다. Android framework API 사용 조건과 설치한 음성 제공자의 음성·서비스 조건이
+각각 적용됩니다. 이 기능은 사용자 문체·문장 부호에 따른 제한된 속도·높낮이 요청이며,
+원음의 감정 인식·음성 복제 또는 감정 재현 모델을 포함한다고 표시하지 않습니다.
+Moonshine 네이티브 합성에는 이 Android 설정을 적용하지 않습니다. Gemma 문체 지침은
+기존 선택 모델과 기존 라이선스를 사용하며 모델이나 원문 문장을 다시 허가하지 않습니다.
+
+업그레이드 검토와 실제 포함 상태를 구분합니다.
+
+| 검토 대상 | 공식 출처·버전 | 현재 적용·제한 |
+|---|---|---|
+| Moonshine Voice | [v0.1.5 release/tag](https://github.com/moonshine-ai/moonshine/releases/tag/v0.1.5), [해당 LICENSE](https://github.com/moonshine-ai/moonshine/blob/v0.1.5/LICENSE) | 현재 포함 SDK와 같은 릴리스. 코드 MIT와 한국어 legacy 모델의 Community License를 구분하며 위 NOTICE를 유지합니다. 확인되지 않은 모델 교체 없음 |
+| ML Kit GenAI Speech Recognition | [Android 공식 문서](https://developers.google.com/ml-kit/genai/speech-recognition/android), `com.google.mlkit:genai-speech-recognition:1.0.0-alpha1` | **미포함 검토 옵션**. 기본 모드는 Android 31 이상, 고급 모드는 문서상 Pixel 10·11. 기기·언어별 상태 확인과 모델 준비가 필요하고 alpha 호환성 변경 가능. Galaxy에서 고급 모드 동작이나 지연·정확도를 검증하지 않음 |
+| ML Kit GenAI 조건 | [ML Kit Terms](https://developers.google.com/ml-kit/terms), [Google APIs Terms](https://developers.google.com/terms) | SDK 추가 시 약관·AAR 제3자 고지·기기 지원·모델 크기·오프라인 동작을 검토하고 시험한 뒤 별도로 기록해야 함. 현재 포함 고지 수는 이 검토만으로 증가하지 않음 |
+
+GitHub 소스 공개 시 새 의존성이 생기면 package 좌표·정확한 tag 또는 commit·SPDX 식별자·
+LICENSE/NOTICE 원문·변경분을 함께 기록합니다. 문서에 링크만 추가한 검토 대상은 APK 포함
+구성요소로 세지 않습니다. 공식 API 문서의 설명은 구현 호환성의 근거이며 해당 서비스의
+음성·모델·상표를 재배포할 권한을 대신하지 않습니다.
 
 ## 소스 배포 도구
 

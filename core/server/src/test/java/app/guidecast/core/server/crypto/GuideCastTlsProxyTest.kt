@@ -13,15 +13,85 @@ import java.net.Socket
 import java.net.URL
 import java.security.KeyStore
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.Executors
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManagerFactory
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class GuideCastTlsProxyTest {
+
+    @Test
+    fun `concurrent reconnect and close never lose an active peer admission counter`() {
+        val limiter = GuideCastTlsConnectionLimiter(32, 2)
+        val active = AtomicInteger()
+        val maximumObserved = AtomicInteger()
+        val start = CountDownLatch(1)
+        val workers = Executors.newFixedThreadPool(8)
+        try {
+            val tasks = (1..8).map {
+                workers.submit {
+                    start.await()
+                    repeat(20_000) {
+                        val lease = limiter.tryAcquire("192.0.2.1")
+                        if (lease != null) {
+                            val current = active.incrementAndGet()
+                            maximumObserved.updateAndGet { maxOf(it, current) }
+                            try { Thread.yield() }
+                            finally { active.decrementAndGet(); lease.close(); lease.close() }
+                        }
+                    }
+                }
+            }
+            start.countDown()
+            tasks.forEach { it.get(10, TimeUnit.SECONDS) }
+            assertTrue("Concurrent peer admission exceeded its cap", maximumObserved.get() <= 2)
+            val first = requireNotNull(limiter.tryAcquire("192.0.2.1"))
+            val second = requireNotNull(limiter.tryAcquire("192.0.2.1"))
+            assertEquals(null, limiter.tryAcquire("192.0.2.1"))
+            first.close()
+            second.close()
+        } finally {
+            start.countDown()
+            workers.shutdownNow()
+        }
+    }
+
+    @Test
+    fun `tls socket work remains runnable while the shared io admission lane is saturated`() {
+        val sharedParallelism = System.getProperty("kotlinx.coroutines.io.parallelism")?.toIntOrNull()
+            ?: maxOf(64, Runtime.getRuntime().availableProcessors())
+        val blockersStarted = CountDownLatch(sharedParallelism)
+        val releaseBlockers = CountDownLatch(1)
+        val proxyRan = CountDownLatch(1)
+        val sharedScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        val proxyScope = CoroutineScope(SupervisorJob() + tlsTransportDispatcher(32))
+        try {
+            repeat(sharedParallelism) {
+                sharedScope.launch {
+                    blockersStarted.countDown()
+                    releaseBlockers.await()
+                }
+            }
+            assertTrue("Shared IO saturation must be established", blockersStarted.await(10, TimeUnit.SECONDS))
+            proxyScope.launch { proxyRan.countDown() }
+            assertTrue("Proxy must have independent IO admission", proxyRan.await(3, TimeUnit.SECONDS))
+        } finally {
+            releaseBlockers.countDown()
+            proxyScope.cancel()
+            sharedScope.cancel()
+        }
+    }
 
     @Test
     fun `tls proxy terminates https and forwards plain http to ktor server`() = runBlocking {

@@ -3,6 +3,7 @@
 globalThis.GuideCastI18n = (() => {
   const locales = ["en", "ja", "zh", "zh-tw", "vi", "nl", "es", "ar"];
   const rows = {
+    "개발자 정보 표시": ["Show developer information", "開発者情報を表示", "显示开发者信息", "顯示開發者資訊", "Hiển thị thông tin nhà phát triển", "Ontwikkelaarsinformatie tonen", "Mostrar información de desarrollo", "إظهار معلومات المطور"],
     "소프트웨어와 모델의 라이선스 및 이용조건이 적용됩니다.": ["Software and model licenses and terms apply.", "ソフトウェアとモデルのライセンス・利用条件が適用されます。", "适用软件和模型的许可及使用条款。", "適用軟體和模型的授權及使用條款。", "Áp dụng giấy phép và điều khoản của phần mềm và mô hình.", "Licenties en voorwaarden van software en modellen zijn van toepassing.", "Se aplican las licencias y condiciones del software y los modelos.", "تسري تراخيص وشروط البرامج والنماذج."],
     "MCastTalk": ["MCastTalk", "MCastTalk", "MCastTalk", "MCastTalk", "MCastTalk", "MCastTalk", "MCastTalk", "MCastTalk"],
     "실시간 다국어 통역방송": ["Live Multilingual Interpretation", "リアルタイム多言語通訳放送", "实时多语言口译广播", "即時多語言口譯廣播", "Phát thanh phiên dịch đa ngôn ngữ trực tiếp", "Live Meertalige Tolkuitzending", "Transmisión de interpretación multilingüe en vivo", "بث حي للترجمة الفورية متعددة اللغات"],

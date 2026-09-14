@@ -13,12 +13,14 @@ import android.speech.RecognitionSupport
 import android.speech.RecognitionSupportCallback
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
+import android.system.ErrnoException
+import android.system.Os
+import android.system.OsConstants
 import app.guidecast.core.stream.PcmAudioFrame
 import app.guidecast.core.translation.RecognizedUtterance
 import app.guidecast.core.translation.SpeechRecognitionConfig
 import app.guidecast.core.translation.SpeechRecognitionEngine
 import app.guidecast.core.translation.normalizeSpeechRecognitionBiasingPhrases
-import java.io.FileOutputStream
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
@@ -316,6 +318,21 @@ class AndroidOnDeviceSpeechRecognitionEngine(
         val pipe = ParcelFileDescriptor.createPipe()
         val recognitionInput = pipe[0]
         val audioOutput = pipe[1]
+        try {
+            // Only the writer becomes nonblocking; the recognizer retains its normal blocking
+            // read descriptor. A full pipe must not pin an IO thread and every upstream input
+            // channel indefinitely when an OEM recognizer stops reading without a callback.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                val flags = Os.fcntlInt(audioOutput.fileDescriptor, OsConstants.F_GETFL, 0)
+                Os.fcntlInt(audioOutput.fileDescriptor, OsConstants.F_SETFL, flags or OsConstants.O_NONBLOCK)
+            } else {
+                error("External PCM recognition requires Android 13")
+            }
+        } catch (error: Exception) {
+            runCatching { audioOutput.close() }
+            runCatching { recognitionInput.close() }
+            throw error
+        }
         val sequence = AtomicLong(0)
         var lastSegmentText: String? = null
 
@@ -449,13 +466,18 @@ class AndroidOnDeviceSpeechRecognitionEngine(
         }
 
         val writerJob: Job = launch(Dispatchers.IO) {
-            FileOutputStream(audioOutput.fileDescriptor).use { output ->
-                frames.collect { frame ->
-                    check(frame.bytes.size % Short.SIZE_BYTES == 0) {
-                        "Speech recognition requires PCM 16-bit frames"
+            frames.collect { frame ->
+                writeRecognitionPcm(frame.bytes, tryWrite = { offset, count ->
+                    try {
+                        Os.write(audioOutput.fileDescriptor, frame.bytes, offset, count)
+                    } catch (error: ErrnoException) {
+                        if (error.errno == OsConstants.EAGAIN || error.errno == OsConstants.EINTR) {
+                            0
+                        } else {
+                            throw error
+                        }
                     }
-                    output.write(frame.bytes)
-                }
+                })
             }
         }
 

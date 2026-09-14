@@ -35,6 +35,85 @@ class SelectiveRefinementTranslationEngineProviderTest {
     }
 
     @Test
+    fun explicitStyleReviewsShortSentencesAndDoesNotLeakIntoLaterOrdinarySentences() = runBlocking {
+        val styles = mutableListOf<TranslationStyle>()
+        val diagnostics = mutableListOf<SelectiveRefinementDiagnostic>()
+        var draftCalls = 0
+        val provider = provider(
+            draft = { draftCalls++; "We start now." },
+            reviewer = {
+                val style = requireNotNull(currentCoroutineContext()[TranslationStyleContext]).style
+                val review = requireNotNull(currentCoroutineContext()[TranslationReviewContext])
+                assertEquals("지금 시작합니다.", review.originalText)
+                assertEquals("We start now.", review.draftTranslation)
+                assertEquals(setOf(SelectiveRefinementReason.STYLE_REQUESTED), review.reasons)
+                styles += style
+                if (style == TranslationStyle.FORMAL) "We will begin now." else "Let's get started."
+            },
+            onDiagnostic = diagnostics::add,
+        )
+        val engine = provider.engineFor("en")
+        assertEquals("We will begin now.", withContext(TranslationStyleContext(TranslationStyle.FORMAL)) {
+            engine.translate("지금 시작합니다.", "ko", "en")
+        })
+        assertEquals("Let's get started.", withContext(TranslationStyleContext(TranslationStyle.CONVERSATIONAL)) {
+            engine.translate("지금 시작합니다.", "ko", "en")
+        })
+        assertEquals("We start now.", engine.translate("지금 시작합니다.", "ko", "en"))
+        assertEquals(listOf(TranslationStyle.FORMAL, TranslationStyle.CONVERSATIONAL), styles)
+        assertEquals(3, draftCalls)
+        assertEquals(listOf(SelectiveRefinementOutcome.REVIEW_ACCEPTED, SelectiveRefinementOutcome.REVIEW_ACCEPTED,
+            SelectiveRefinementOutcome.DRAFT_ACCEPTED), diagnostics.map { it.outcome })
+        assertNull(currentCoroutineContext()[TranslationStyleContext])
+        assertNull(currentCoroutineContext()[TranslationReviewContext])
+    }
+
+    @Test
+    fun explicitStyleCannotBypassReviewerAvailabilityOrNumericQualityGuard() = runBlocking {
+        var reviewerCreations = 0
+        val diagnostics = mutableListOf<SelectiveRefinementDiagnostic>()
+        val unavailable = SelectiveRefinementTranslationEngineProvider(
+            draftProvider = TranslationEngineProvider { TextTranslationEngine { _, _, _ -> "We start now." } },
+            reviewerProvider = TranslationEngineProvider {
+                reviewerCreations++
+                error("Unavailable reviewer must not be created")
+            },
+            reviewerAvailable = { false },
+            onDiagnostic = diagnostics::add,
+        )
+        withContext(TranslationStyleContext(TranslationStyle.CONVERSATIONAL)) {
+            assertEquals("We start now.", unavailable.engineFor("en").translate("지금 시작합니다.", "ko", "en"))
+            val corrupt = provider(draft = { "Bus 12 leaves now." }, reviewer = { "Bus 21 leaves now." },
+                onDiagnostic = diagnostics::add)
+            assertEquals("Bus 12 leaves now.", corrupt.engineFor("en").translate("12번 버스가 출발합니다.", "ko", "en"))
+        }
+        assertEquals(0, reviewerCreations)
+        assertEquals(SelectiveRefinementOutcome.REVIEW_UNAVAILABLE, diagnostics[0].outcome)
+        assertEquals(setOf(SelectiveRefinementReason.STYLE_REQUESTED), diagnostics[0].reasons)
+        assertEquals(SelectiveRefinementOutcome.REVIEW_REJECTED, diagnostics[1].outcome)
+        assertEquals(setOf(SelectiveRefinementReason.NUMERIC_CONTENT, SelectiveRefinementReason.STYLE_REQUESTED),
+            diagnostics[1].reasons)
+    }
+
+    @Test
+    fun explicitStyleKeepsTheExistingReviewDeadlineForShortSentences() = runBlocking {
+        val diagnostics = mutableListOf<SelectiveRefinementDiagnostic>()
+        var reviewerCalls = 0
+        val provider = provider(
+            draft = { "We start now." },
+            reviewer = { reviewerCalls++; delay(Long.MAX_VALUE); "unreachable" },
+            reviewTimeoutMillis = 100L,
+            onDiagnostic = diagnostics::add,
+        )
+        assertEquals("We start now.", withContext(TranslationStyleContext(TranslationStyle.FORMAL)) {
+            provider.engineFor("en").translate("지금 시작합니다.", "ko", "en")
+        })
+        assertEquals(1, reviewerCalls)
+        assertEquals(SelectiveRefinementOutcome.REVIEW_TIMED_OUT, diagnostics.single().outcome)
+        assertEquals(setOf(SelectiveRefinementReason.STYLE_REQUESTED), diagnostics.single().reasons)
+    }
+
+    @Test
     fun glossaryAndNumbersRequestReviewWithIsolatedImmutableContext() = runBlocking {
         var received: TranslationReviewContext? = null
         val fairReviewer = FairQueuedTranslationEngineProvider(

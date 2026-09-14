@@ -192,6 +192,66 @@ class BroadcastEmulatorIntegrationTest {
     }
 
     @Test
+    fun standaloneRunsWithoutListenerSocketsAndPreservesInputControl() = runBlocking {
+        BroadcastService.start(targetContext, OperatorAccessMode.OPEN,
+            runMode = BroadcastRunMode.STANDALONE)
+        val live = withTimeout(15_000) { app.broadcastRuntime.state.first {
+            it.phase == BroadcastPhase.LIVE || it.phase == BroadcastPhase.FAILED
+        } }
+        assertEquals(live.errorMessage, BroadcastPhase.LIVE, live.phase)
+        assertEquals(BroadcastRunMode.STANDALONE, live.runMode)
+        assertEquals(InputPhase.IDLE, live.inputPhase)
+        assertEquals(null, live.listenerUrl)
+        assertEquals(null, live.speakerUrl)
+        for (port in listOf(8787, 8788)) {
+            val listening = runCatching {
+                Socket().use { it.connect(java.net.InetSocketAddress("127.0.0.1", port), 500) }
+            }.isSuccess
+            assertFalse("Standalone must not open port $port", listening)
+        }
+        val session = app.audioStreams.currentSession()
+        val listener = session.subscribe("source")
+        try {
+            BroadcastService.playTestTone(targetContext)
+            val pcm = withTimeout(10_000) {
+                var frame = listener.frames.receive()
+                while (frame.bytes.pcmS16LeSignalStats().rms < 0.003f) frame = listener.frames.receive()
+                frame
+            }
+            assertEquals(0, pcm.bytes.size % 2)
+            assertTrue(pcm.bytes.pcmS16LeSignalStats().rms > 0.003f)
+            BroadcastService.pauseBroadcast(targetContext)
+            withTimeout(5_000) { app.broadcastRuntime.state.first { it.phase == BroadcastPhase.PAUSED } }
+            BroadcastService.resumeBroadcast(targetContext)
+            withTimeout(5_000) { app.broadcastRuntime.state.first { it.phase == BroadcastPhase.LIVE } }
+            assertEquals(InputPhase.IDLE, app.broadcastRuntime.state.value.inputPhase)
+            BroadcastService.stopBroadcast(targetContext)
+            withTimeout(5_000) { app.broadcastRuntime.state.first { it.phase == BroadcastPhase.IDLE } }
+            assertFalse(session.observabilitySnapshot().isActive)
+            BroadcastService.start(targetContext, OperatorAccessMode.OPEN,
+                runMode = BroadcastRunMode.STANDALONE)
+            withTimeout(10_000) { app.broadcastRuntime.state.first { it.phase == BroadcastPhase.LIVE } }
+            assertTrue(app.audioStreams.currentSession().generation != session.generation)
+        } finally { listener.close() }
+    }
+
+    @Test
+    fun appSelectionUpdatesPackageAndManualEditWinsUntilAnotherSelection(): Unit = runBlocking {
+        val model = ViewModelProvider(activity as MainActivity)[AudioInputViewModel::class.java]
+        val choices = withTimeout(10_000) { model.uiState.first { it.playbackTargetApps.isNotEmpty() } }.playbackTargetApps
+        val target = choices.first()
+        model.selectPlaybackTarget(target.packageName)
+        withTimeout(5_000) { model.uiState.first { it.playbackTargetPackageName == target.packageName } }
+        model.editPlaybackTargetPackage("invalid package")
+        model.refresh()
+        withTimeout(5_000) { model.uiState.first { it.playbackTargetPackageName == "invalid package" } }
+        assertFalse("Invalid manual value must not silently use the previously selected app", model.preparePlaybackTarget())
+        model.selectPlaybackTarget(target.packageName)
+        assertTrue(model.preparePlaybackTarget())
+        withTimeout(5_000) { model.uiState.first { it.playbackTargetPackageName == target.packageName } }
+    }
+
+    @Test
     fun translationReadinessNeverBlocksOperatorFromOpeningAndTestingChannel() = runBlocking {
         BroadcastService.start(
             targetContext,

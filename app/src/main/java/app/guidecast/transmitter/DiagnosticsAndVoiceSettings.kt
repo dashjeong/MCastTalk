@@ -18,6 +18,7 @@ data class DiagnosticExportState(val busy: Boolean = false, val message: String?
     val context = LocalContext.current
     val application = context.applicationContext as GuideCastApplication
     val exportState by application.diagnosticExportState.collectAsState()
+    val developerInfo = LocalDeveloperInfo.current
     val directory = remember { File(context.filesDir, "diagnostics") }
     var message by remember { mutableStateOf<String?>(null) }
     val export = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
@@ -50,9 +51,12 @@ data class DiagnosticExportState(val busy: Boolean = false, val message: String?
         }
         if (engines.isEmpty()) Text("설치된 Android TTS 엔진이 없습니다. Moonshine 미지원 언어에는 별도 오프라인 TTS가 필요합니다.")
         HorizontalDivider()
-        Text("진단 로그", style = MaterialTheme.typography.titleMedium)
-        Text("저장 위치: ${directory.absolutePath}", style = MaterialTheme.typography.bodySmall)
-        Text("앱 시작·모델 상태·오류·메모리 경고를 순환 저장합니다. 프로세스당 최대 384KiB이며 캐시 삭제로 없어지지 않습니다. 앱 삭제 시에는 제거됩니다.")
+        Text("문제 해결 자료", style = MaterialTheme.typography.titleMedium)
+        Text("오류가 생기면 진단 자료를 내보내 문제 확인에 사용할 수 있습니다. 개발자 정보 표시를 꺼도 필요한 진단 기록은 유지됩니다.")
+        if (developerInfo) {
+            Text("저장 위치: ${directory.absolutePath}", style = MaterialTheme.typography.bodySmall)
+            Text("앱 시작·모델 상태·오류·메모리 경고를 순환 저장합니다. 프로세스당 최대 384KiB이며 캐시 삭제로 없어지지 않습니다. 앱 삭제 시에는 제거됩니다.")
+        }
         OutlinedButton(onClick = { export.launch("guidecast-diagnostics-${System.currentTimeMillis()}.zip") },
             enabled = !exportState.busy, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
             Text(if (exportState.busy) "로그 저장 중" else "진단 로그 내보내기")

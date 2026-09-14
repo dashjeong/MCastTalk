@@ -134,6 +134,33 @@ class TranslationGlossaryRepository(private val context: Context) {
         database().delete("overrides", "src=? AND lang=? AND term=?", arrayOf(term.sourceLanguage, term.targetLanguage, term.sourceTerm))
     }
 
+    /** The packaged reference ships with the APK; portable backups contain every user override. */
+    internal suspend fun exportOverrides(emit: (GlossaryRow) -> Unit) = io {
+        database().rawQuery("SELECT *,1 AS edited FROM overrides ORDER BY src,lang,term", null)
+            .use { cursor -> while (cursor.moveToNext()) emit(cursor.row()) }
+    }
+
+    internal suspend fun importMissingOverrides(rows: Sequence<GlossaryRow>): Int = io {
+        val db = database()
+        var inserted = 0
+        db.beginTransaction()
+        try {
+            rows.forEach { row ->
+                val term = GlossaryCsv.validate(listOf(row.term)).single()
+                val result = db.insertWithOnConflict("overrides", null, ContentValues().apply {
+                    put("src", term.sourceLanguage); put("lang", term.targetLanguage)
+                    put("term", term.sourceTerm); put("value", term.preferredTerm)
+                    put("replacement", term.replacement); put("category", term.category)
+                    put("origin", term.origin); put("enabled", if (term.enabled) 1 else 0)
+                    put("prefix", term.sourceTerm.take(2).lowercase(Locale.ROOT)); put("alternatives", row.alternatives)
+                }, SQLiteDatabase.CONFLICT_IGNORE)
+                if (result != -1L) inserted++
+            }
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+        inserted
+    }
+
     suspend fun export(source: String, target: String, writer: java.io.Writer) {
         val staged = withContext(Dispatchers.IO) { File.createTempFile("glossary-export-", ".csv", context.cacheDir) }
         try {

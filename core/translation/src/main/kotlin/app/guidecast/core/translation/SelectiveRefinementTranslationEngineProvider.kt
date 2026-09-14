@@ -10,6 +10,7 @@ enum class SelectiveRefinementReason {
     GLOSSARY_MATCH,
     NUMERIC_CONTENT,
     LONG_COMPLETE_SENTENCE,
+    STYLE_REQUESTED,
 }
 
 data class SelectiveRefinementDecision(
@@ -111,7 +112,12 @@ class SelectiveRefinementTranslationEngineProvider(
                 require(draft.isNotBlank()) { "Draft translator returned an empty result" }
 
                 val glossaryHints = currentCoroutineContext()[TranslationGlossaryContext]?.hints.orEmpty()
-                val decision = policy.decide(text, glossaryHints)
+                val policyDecision = policy.decide(text, glossaryHints)
+                // A user-requested register change also needs the reviewer for a short, otherwise
+                // ordinary draft. Keep every availability, input, quality and deadline guard below.
+                val decision = if (currentCoroutineContext()[TranslationStyleContext] != null) {
+                    policyDecision.copy(reasons = policyDecision.reasons + SelectiveRefinementReason.STYLE_REQUESTED)
+                } else policyDecision
                 if (!decision.reviewRequested) {
                     report(targetLanguageTag, decision, SelectiveRefinementOutcome.DRAFT_ACCEPTED)
                     return draft

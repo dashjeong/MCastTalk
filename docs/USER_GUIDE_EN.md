@@ -16,13 +16,13 @@
 >
 > Without costly dedicated transmitter/receiver hardware and without requiring listeners to install any apps, anyone can simply scan a QR code with their smartphone camera to listen to live interpreted audio and view synchronized transcripts. We warmly support everyone dedicating their efforts in the field!
 
-This guide covers MCastTalk version `0.2.39-alpha`. Because the Android operator app interface is currently in Korean, Korean menu labels are provided in parentheses where helpful.
+This guide describes `0.2.40-alpha`, including the features in section 11. The Android operator interface is currently in Korean, so Korean menu labels are included where helpful.
 
 ---
 
 ## 1. How MCastTalk Works
 
-MCastTalk performs the entire pipeline locally on the operator smartphone without external cloud servers:
+After models are prepared, MCastTalk's default interpretation pipeline runs locally without external cloud servers. Separately enabled developer cloud text review is explained in section 11:
 
 ```text
 [🎤 Microphone Input]
@@ -41,7 +41,7 @@ MCastTalk performs the entire pipeline locally on the operator smartphone withou
 ```
 
 > [!NOTE]
-> Due to on-device AI computation, an end-to-end latency of approximately 1 to 2 seconds is expected. For mission-critical instructions (safety, medical, or military security in controlled areas), do not rely on machine interpretation alone; verify instructions verbally and visually.
+> Latency varies with the device, language and model readiness. The validation target for a Galaxy S23 with prepared models and one interpretation language is p95 at or below 2 seconds from sentence end to the first translated audio. This APK has not been measured on that physical device. For mission-critical instructions (safety, medical, or military security in controlled areas), do not rely on machine interpretation alone; verify instructions verbally and visually.
 
 ---
 
@@ -82,7 +82,7 @@ MCastTalk performs the entire pipeline locally on the operator smartphone withou
 
 ### 3.1 Verified Installation Steps
 
-1. Download `MCastTalk-0.2.39-alpha.apk` from GitHub [Releases](https://github.com/dashjeong/MCastTalk/releases).
+1. Download `MCastTalk-0.2.40-alpha.apk` from GitHub [Releases](https://github.com/dashjeong/MCastTalk/releases).
 2. Compare the downloaded APK SHA-256 with the `.sha256` file attached to the same release.
 3. Tap the APK file to install. If Android prompts **"Install unknown apps"**, temporarily grant permission for the file manager or browser, complete the installation, and open MCastTalk.
 4. For security, disable the "Install unknown apps" permission after installation.
@@ -193,7 +193,7 @@ Listeners do not need to install an app; anyone with a smartphone can join in se
 | **"QR scanned, but the webpage will not load!"** | Device not on hotspot, or active VPN | 1. Verify that the smartphone Wi-Fi is connected to the guide hotspot.<br>2. Temporarily turn off third-party VPN apps on the phone. |
 | **"Wi-Fi keeps disconnecting and reverting to LTE/5G!"** | "Switch to mobile data" OS feature | In phone Wi-Fi advanced settings, disable **"Switch to mobile data when internet is unavailable"**. (The local tour hotspot does not connect to the public internet.) |
 | **"Page says Connected, but there is no sound!"** | Browser autoplay blocked, or volume is zero | 1. Tap the **[▶ Play]** button in the center of the web player.<br>2. Turn up device **media volume** using hardware volume keys.<br>3. Check if the guide is speaking (silence is maintained when no speech is received). |
-| **"Audio sounds delayed by 2 to 3 seconds!"** | Natural on-device AI processing latency | Speech recognition + translation + voice synthesis takes 1 to 2 seconds of computing time. This is expected real-time interpretation performance. |
+| **"Audio sounds delayed by 2 to 3 seconds!"** | Possible processing or playback delay depending on device, models, language count and connection | A delay value alone does not establish normal operation. If it keeps increasing, check per-language status and errors, then review diagnostics using the [troubleshooting guide](TROUBLESHOOTING_EN.md). |
 | **"Audio suddenly stopped mid-walk!"** | Temporary Wi-Fi packet drop or distance | Tap the **[Live (실시간 복귀)]** button on the bottom right, or refresh (F5) the webpage. |
 
 ---
@@ -215,7 +215,7 @@ Listeners do not need to install an app; anyone with a smartphone can join in se
 
 1. At the conclusion of your tour, tap **Stop Broadcast (방송 중지)** first, then tap **Stop Input (입력 중지)**.
 2. Once participants have disconnected, turn off your mobile hotspot.
-3. To protect privacy and sensitive tour discourse, clear session logs in **Broadcast Transcript Storage (방송 스크립트 보관함)** if retention is not needed.
+3. Hide unneeded scripts in **Broadcast Transcript Storage (방송 스크립트 보관함)**. Hiding is not complete deletion: daily backups and previously exported ZIP files remain. Manage the retention and sharing of those backup files separately when they contain private content.
 
 ---
 
@@ -224,3 +224,57 @@ Listeners do not need to install an app; anyone with a smartphone can join in se
 If issues persist, please consult our [Field Troubleshooting Guide](TROUBLESHOOTING_EN.md).
 
 To report bugs or suggest enhancements, please open an issue on [GitHub Issues](https://github.com/dashjeong/MCastTalk/issues). Thank you for walking with us!
+
+## 11. Using the 0.2.40 additions
+
+### Interpret on one device
+
+Choose **Usage mode (사용 방식) → Use on this device (이 기기에서 사용) → Start standalone (단독 사용 시작)** to use local interpretation and transcripts without Wi-Fi or a hotspot. Prepare the required models and language packs first. Enable device output to listen, preferably through earphones to prevent feedback. Standalone mode provides no listener web address, QR code or remote web microphone. To share with participants, stop the session, select **Broadcast to other devices (다른 기기에 방송)** and prepare a shared network. Input controls remain independent of session controls.
+
+For device playback capture, selecting an app also fills its package name. A manually edited package name takes priority when starting input; selecting another app fills that new app's package name. This does not bypass capture restrictions imposed by the source app.
+
+### Focus on the transcript
+
+Open **Switch view / full-screen transcript (화면 전환 · 전체 화면 스크립트)** from the operator screen. Choose large text, the original with one or all translations, and whether to follow the newest sentence. Scroll back to read earlier content. Opening or leaving this view does not change input or broadcast state. In **Broadcast transcript archive (방송 스크립트 보관함)**, find sessions by their broadcast start date and time.
+
+### Convert multiple files and listen alongside text
+
+1. Open **Test → File conversion / playback (번역 시험 · 파일 변환 / 재생)** and choose one file, **Multiple files (여러 파일 선택)** or **Folder (폴더 선택)**. MP3, MP4, M4A and WAV audio tracks require a decoder supported by the device. Split very large folders into smaller selections.
+2. Choose the source and translation languages for the selected batch. With no translation language selected, only the original transcript is saved. New file transcription requires Android 13 or later and a compatible on-device speech service. Choose the source language manually on Android 13, or whenever Android 14+ reports automatic detection unavailable.
+3. Stop live input, broadcasting and interpretation tests before conversion. A failed file or translation language does not discard completed transcripts or other translations. After resolving the problem, use **Retry failed items (실패 항목 재작업)** or **Retry this file (이 파일 재작업)**. A content hash identifies the same file so compatible saved transcripts and translations can be reused.
+4. Open **Transcript playback (스크립트 재생)** to hear the original with its text. **Playback settings (재생 설정)** includes speed, repeat, previous/next file and translation language. If the file moved or permission expired, use **Find original file again (원본 파일 다시 찾기)**. Only matching file content can be linked to the saved transcript.
+
+When word start times are available, playback highlights the current word. Otherwise it highlights a sentence segment. **Estimated timing (시각 추정)** does not promise precise word boundaries. Check recognition and translation accuracy against the original audio. Deleting a saved transcript leaves the original audio file intact.
+
+### Back up and move data to another device
+
+Open **Settings → Data import / export (데이터 가져오기 · 내보내기)** to back up settings,
+dictionaries and scripts separately. Export runs only when selected and creates a new ZIP in the
+device's **Download/MCastTalk/Backups** folder. Earlier backups remain intact. Completion is shown
+after saving finishes; fix storage problems and use **Retry (재작업)** if a task fails or is cancelled.
+
+- **Settings:** includes languages, broadcast mode, display, voice selection and experimental
+  options. API keys, passwords, PINs and certificates are excluded. Cloud review and automatic
+  learning require renewed consent after import.
+- **Dictionary:** includes term overrides, recognition corrections and human/AI sentence memory.
+  Current human-confirmed entries take priority over matching backup entries.
+- **Scripts:** includes all saved broadcast records and queryable daily backups, file transcripts,
+  translations, timing and file-link metadata. Move original audio separately, then use **Find file
+  (파일 찾기)** in playback. Only content with the matching hash can be linked to a saved script.
+
+Transfer the ZIP to the other device and select **Import (가져오기)** for the same backup kind.
+The app validates format version, integrity and record relationships before merging with existing
+data. Compatible extra fields are tolerated; unsupported major formats or damage are reported
+before applying records. An interrupted merge can be retried with the same file. Backups may
+contain personal sentences; check their content before sharing. The app does not automatically
+send backups to an external server.
+
+### Enable developer features only when needed
+
+**Settings → Show developer information (개발자 정보 표시)** is off by default. Normal screens emphasize content and controls; processing times, PCM and frame details appear only when enabled. Actionable errors, permission guidance and minimal diagnostic export remain available.
+
+This setting reveals **Developer lab (개발자 실험실 · 표현 TTS / 의역 / API)**. Expression experiments make small rate/pitch changes to installed Android voices; they do not clone the original emotion. Register/paraphrasing requires a prepared Gemma engine actually used by the selected path or a separately authorized API. ML Kit alone does not apply it. Cloud review requires a saved key and transmission consent; source text, translation and language information go to the selected provider and may incur charges. Live review also requires automatic learning, and saved results apply to later matching sentences.
+
+Use **Settings → Sentence dictionary (문장·회화 사전 · 확인 / 수정)** to inspect, edit and confirm phrases. Human-confirmed translations work offline and cannot be overwritten by AI results. Learning adds entries to the device dictionary; it does not retrain model weights. See the [developer lab and sentence memory guide](DEVELOPER_LAB.md) for review and data-transfer scope.
+
+Automated and virtual-device checks do not establish physical Galaxy/One UI behavior, outdoor performance, actual Android/iPhone listening or eight-hour continuous stability. Test the complete path in your environment before use and consult the [test report](TEST_REPORT.md) for the exact validation scope.

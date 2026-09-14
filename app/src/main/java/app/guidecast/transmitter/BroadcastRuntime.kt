@@ -13,6 +13,8 @@ enum class BroadcastPhase {
     FAILED,
 }
 
+enum class BroadcastRunMode { NETWORK, STANDALONE }
+
 enum class InputPhase {
     IDLE,
     STARTING,
@@ -98,6 +100,7 @@ data class BroadcastChannelSnapshot(
 }
 
 data class BroadcastSnapshot(
+    val runMode: BroadcastRunMode = BroadcastRunMode.NETWORK,
     val inputPhase: InputPhase = InputPhase.IDLE,
     val phase: BroadcastPhase = BroadcastPhase.IDLE,
     val accessMode: OperatorAccessMode? = null,
@@ -117,9 +120,11 @@ data class BroadcastSnapshot(
     val inputLabel: String? = null,
     val channelSummary: String? = null,
     val translationWarning: String? = null,
+    val recognitionErrorMessage: String? = null,
     val inputRms: Float = 0f,
     val inputPeak: Float = 0f,
     val inputFrameCount: Long = 0,
+    val recognitionDroppedFrameCount: Long = 0,
     val inputAudibleFrameCount: Long = 0,
     val inputSignalActive: Boolean = false,
     val inputProcessingSummary: String? = null,

@@ -12,6 +12,7 @@ interface IGuideCastGemmaInference {
         String targetLanguageTag,
         String glossaryHints,
         String reviewDraft,
+        String translationStyle,
         IGuideCastGemmaInferenceCallback callback
     );
     oneway void cancel(long requestId);
