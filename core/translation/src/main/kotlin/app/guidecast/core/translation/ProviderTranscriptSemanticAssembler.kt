@@ -12,11 +12,13 @@ import java.util.TreeMap
  * lets [RealtimeInterpretationSegmenter] decide the semantic boundary. A continuously observed
  * 2-second acoustic pause may close usable text (3 seconds for known incomplete tails,
  * 5 seconds when no voice was detected); otherwise only real input EOF (or an explicit
- * owner finish using [finish]) flushes an incomplete tail.
+ * owner finish using [finish]) flushes an incomplete tail. A bounded capacity recovery also
+ * finishes the usable tail at a provider boundary and accepts the triggering next line.
  */
 class ProviderTranscriptSemanticAssembler(
     private val policy: RealtimeInterpretationPolicy = sentenceCompletionInterpretationPolicy(),
     private val maximumPendingProviderLines: Int = DEFAULT_MAX_PENDING_PROVIDER_LINES,
+    private val onRecovery: (TranscriptAssemblyRecovery) -> Unit = {},
 ) {
     private data class ProviderLine(
         val text: String,
@@ -73,13 +75,7 @@ class ProviderTranscriptSemanticAssembler(
             // hidden behind the old partial when quiet speech never opened the VAD gate.
             resetIfAllProviderLinesConsumed(allowCommittedPartialLines = true)
         }
-        if (utterance.sequence !in providerLines && providerLines.size >= maximumPendingProviderLines) {
-            throw ProviderTranscriptAssemblyOverflowException(
-                "음성인식 미완 문장이 ${providerLines.size}개 구간을 넘어 보존할 수 없습니다. " +
-                    "텍스트를 임의로 자르지 않고 현재 인식을 중단합니다.",
-            )
-        }
-        providerLines[utterance.sequence] = ProviderLine(
+        val proposed = ProviderLine(
             text = if (utterance.isFinal &&
                 utterance.sourceLanguageTag.substringBefore('-').equals("ko", ignoreCase = true)
             ) {
@@ -91,10 +87,33 @@ class ProviderTranscriptSemanticAssembler(
             capturedAtNanos = utterance.capturedAtElapsedRealtimeNanos,
             isProviderFinal = utterance.isFinal,
         )
-
-        val visibleLines = visibleProviderLines()
+        // Validate before mutation: a rejected callback must not poison seal/finish and every retry.
+        if (proposed.text.length > MAX_ASSEMBLED_CHARACTERS) {
+            throw ProviderTranscriptAssemblyOverflowException("단일 인식 결과가 안전 상한을 넘었습니다.")
+        }
+        val candidate = TreeMap(providerLines).apply { put(utterance.sequence, proposed) }
+        val reason = when {
+            candidate.size > maximumPendingProviderLines -> TranscriptAssemblyRecovery.PROVIDER_LIMIT
+            candidate.values.sumOf { it.text.trim().length + 1 } - 1 > MAX_ASSEMBLED_CHARACTERS ->
+                TranscriptAssemblyRecovery.CHARACTER_LIMIT
+            else -> null
+        }
+        if (reason != null) {
+            if (utterance.sequence in providerLines) {
+                throw ProviderTranscriptAssemblyOverflowException("인식 결과 수정이 문장 보존 상한을 넘었습니다.")
+            }
+            // Emergency capacity boundary only, never a timer or arbitrary character cut. Preserve
+            // the entire usable tail once, then accept the triggering line into a fresh buffer.
+            val recovered = finish(utterance.recognizedAtElapsedRealtimeNanos)
+            onRecovery(reason)
+            return recovered + accept(utterance)
+        }
+        // Validate hidden/interleaved lines too, before changing the recoverable buffer.
+        val allAggregate = aggregateUtterance(candidate.values.toList(), utterance.recognizedAtElapsedRealtimeNanos)
+        val visibleLines = visibleProviderLines(candidate)
+        providerLines[utterance.sequence] = proposed
         if (visibleLines.none { it.key == utterance.sequence }) return emptyList()
-        val aggregate = aggregateUtterance(
+        val aggregate = if (visibleLines.size == candidate.size) allAggregate else aggregateUtterance(
             lines = visibleLines.map { it.value },
             nowNanos = utterance.recognizedAtElapsedRealtimeNanos,
         )
@@ -106,11 +125,13 @@ class ProviderTranscriptSemanticAssembler(
             // plus acoustic pause/confirmed right context under the product policy.
             output += remap(segmenter.accept(aggregate))
         }
+        discardCommittedProviderLines()
         resetIfAllProviderLinesConsumed()
         return output
     }
 
     fun tick(nowNanos: Long): List<RecognizedUtterance> = remap(segmenter.tick(nowNanos)).also {
+        discardCommittedProviderLines()
         resetIfAllProviderLinesConsumed()
     }
 
@@ -163,13 +184,15 @@ class ProviderTranscriptSemanticAssembler(
         val output = mutableListOf<RecognizedUtterance>()
         output += remap(segmenter.accept(aggregate))
         output += remap(segmenter.accept(aggregate))
+        discardCommittedProviderLines()
         resetIfAllProviderLinesConsumed()
         return output
     }
 
     /**
      * Flushes the final usable tail exactly once for real input EOF or an explicit owner stop.
-     * Automatic recognizer completion, errors and backend restarts must not call this method.
+     * Ordinary automatic completion and backend restarts preserve their tail instead. Capacity
+     * recovery and an explicit operator reconnect may call this to resume without losing that tail.
      */
     fun finish(nowNanos: Long): List<RecognizedUtterance> {
         val output = mutableListOf<RecognizedUtterance>()
@@ -187,9 +210,9 @@ class ProviderTranscriptSemanticAssembler(
      * Never expose a later provider line ahead of an earlier revisable line. The first partial is
      * visible for preview; subsequent interleaved lines wait until every preceding line is final.
      */
-    private fun visibleProviderLines(): List<Map.Entry<Long, ProviderLine>> {
+    private fun visibleProviderLines(lines: Map<Long, ProviderLine> = providerLines): List<Map.Entry<Long, ProviderLine>> {
         val visible = mutableListOf<Map.Entry<Long, ProviderLine>>()
-        for (entry in providerLines.entries) {
+        for (entry in lines.entries) {
             visible += entry
             if (!entry.value.isProviderFinal) break
         }
@@ -250,6 +273,15 @@ class ProviderTranscriptSemanticAssembler(
         resetSegmenter()
     }
 
+    private fun discardCommittedProviderLines() {
+        while (providerLines.isNotEmpty()) {
+            val first = providerLines.firstEntry()
+            if (!first.value.isProviderFinal || !segmenter.discardCommittedProviderPrefix(first.value.text)) break
+            providerLines.remove(first.key)
+            rememberCompletedProviderSequence(first.key)
+        }
+    }
+
     private fun resetSegmenter() {
         segmenter = RealtimeInterpretationSegmenter(policy)
         logicalSourceSequence += 1L
@@ -285,3 +317,5 @@ private fun elapsedMillis(startNanos: Long, nowNanos: Long): Long =
     ((nowNanos - startNanos) / 1_000_000L).coerceAtLeast(0L)
 
 class ProviderTranscriptAssemblyOverflowException(message: String) : IllegalStateException(message)
+
+enum class TranscriptAssemblyRecovery { PROVIDER_LIMIT, CHARACTER_LIMIT }

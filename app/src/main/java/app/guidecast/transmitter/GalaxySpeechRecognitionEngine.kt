@@ -8,6 +8,7 @@ import android.speech.SpeechRecognizer
 import android.util.Log
 import app.guidecast.core.stream.PcmAudioFrame
 import app.guidecast.core.translation.ProviderTranscriptSemanticAssembler
+import app.guidecast.core.translation.ProviderTranscriptAssemblyOverflowException
 import app.guidecast.core.translation.RealtimeInterpretationPolicy
 import app.guidecast.core.translation.RecognizedUtterance
 import app.guidecast.core.translation.SpeechRecognitionConfig
@@ -22,6 +23,7 @@ import java.io.Closeable
 import java.util.LinkedHashSet
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
@@ -58,6 +60,7 @@ private sealed interface RecognitionAttemptOutcome {
     data class Failed(val error: Throwable) : RecognitionAttemptOutcome
     data class EndpointRestart(val attemptId: Long) : RecognitionAttemptOutcome
     data class Unresponsive(val attemptId: Long) : RecognitionAttemptOutcome
+    data object OperatorRestart : RecognitionAttemptOutcome
     data object CaptureSilenced : RecognitionAttemptOutcome
 }
 
@@ -258,7 +261,12 @@ class GalaxySpeechRecognitionEngine(
         { _, _ ->
             error("Moonshine STT live-restart native admission is not configured")
         },
+    private val recognitionEngineOverride: SpeechRecognitionEngine? = null,
 ) : SpeechRecognitionEngine, Closeable {
+    private val operatorRestartSink = AtomicReference<Channel<Unit>?>(null)
+
+    /** Reconnect only recognition; translated audio queues, archives and input stay owned by service. */
+    fun requestReconnect(): Boolean = operatorRestartSink.get()?.trySend(Unit)?.isSuccess == true
     private val android = AndroidOnDeviceSpeechRecognitionEngine(context)
     private val moonshine = MoonshineSpeechRecognitionEngine(context)
     private val inputProfile = context.recognitionInputProfile()
@@ -497,7 +505,11 @@ class GalaxySpeechRecognitionEngine(
         val normalizedSourceLanguage = requireSupportedSourceLanguage(config.sourceLanguageTag)
         val interpretationSegmenter = ProviderTranscriptSemanticAssembler(
             inputProfile.interpretationPolicy,
+            onRecovery = { reason ->
+                RuntimeDiagnosticLog.record("recognition_buffer_recovery", "reason=$reason")
+            },
         )
+        val operatorRestarts = Channel<Unit>(Channel.CONFLATED)
         val segmenterMutex = Mutex()
         val speechActivity = AdaptiveSpeechActivityDetector()
         val nextSourceSequence = AtomicLong(0)
@@ -593,13 +605,14 @@ class GalaxySpeechRecognitionEngine(
         var consecutiveFailures = 0
         var androidCaptureConflict = false
 
+        operatorRestartSink.set(operatorRestarts)
         try {
             // Always let one recognizer consume buffered PCM and EOF. A short finite source can
             // finish before this coroutine is scheduled; the former pre-check then skipped every
             // frame and produced an empty transcript.
-            do {
+            recognitionLoop@ do {
                 val attemptBackend = backend
-                val engine: SpeechRecognitionEngine = when (attemptBackend) {
+                val engine: SpeechRecognitionEngine = recognitionEngineOverride ?: when (attemptBackend) {
                     RecognitionBackend.ANDROID -> android
                     RecognitionBackend.MOONSHINE -> moonshine
                 }
@@ -668,11 +681,11 @@ class GalaxySpeechRecognitionEngine(
                                             utterance.sequence,
                                             utterance.isFinal,
                                         )) {
-                                        consecutiveFailures = 0
                                         val sequence = providerSequenceMap.map(utterance.sequence)
                                         interpretationSegmenter.accept(
                                             utterance.copy(sequence = sequence),
                                         ).forEach { interpretedUnit -> send(interpretedUnit) }
+                                        consecutiveFailures = 0
                                         if (utterance.isFinal) {
                                             providerSequenceMap.complete(utterance.sequence)
                                         }
@@ -702,6 +715,7 @@ class GalaxySpeechRecognitionEngine(
                             recognitionStallRequests.onReceive { requestedAttemptId ->
                                 RecognitionAttemptOutcome.Unresponsive(requestedAttemptId)
                             }
+                            operatorRestarts.onReceive { RecognitionAttemptOutcome.OperatorRestart }
                         }
                     } while (
                         (selected is RecognitionAttemptOutcome.EndpointRestart &&
@@ -710,7 +724,8 @@ class GalaxySpeechRecognitionEngine(
                                 selected.attemptId != attemptId)
                     )
 
-                    if (selected is RecognitionAttemptOutcome.EndpointRestart ||
+                    if (selected == RecognitionAttemptOutcome.OperatorRestart ||
+                        selected is RecognitionAttemptOutcome.EndpointRestart ||
                         selected is RecognitionAttemptOutcome.Unresponsive ||
                         selected is RecognitionAttemptOutcome.CaptureSilenced) {
                         // Wait for any provider final already inside the segmenter critical section.
@@ -728,6 +743,7 @@ class GalaxySpeechRecognitionEngine(
                     when (attemptOutcome) {
                         RecognitionAttemptOutcome.Completed -> "completed"
                         RecognitionAttemptOutcome.CaptureSilenced -> "capture_silenced"
+                        RecognitionAttemptOutcome.OperatorRestart -> "operator_restart"
                         is RecognitionAttemptOutcome.EndpointRestart -> "semantic_endpoint"
                         is RecognitionAttemptOutcome.Unresponsive -> "transcript_stalled"
                         is RecognitionAttemptOutcome.Failed -> "provider_failure:${attemptOutcome.error.javaClass.simpleName}"
@@ -735,12 +751,14 @@ class GalaxySpeechRecognitionEngine(
 
                 // A provider session ending is not a semantic sentence boundary. Keep its immutable
                 // lines in the bounded assembler across normal completion, endpoint restart, errors
-                // and backend failover. Seal a missing line-final as provider stability only so it
-                // cannot block later ordered lines. Actual input EOF below alone flushes a tail.
+                // and backend failover. Capacity failures and explicit operator reconnects instead
+                // preserve the usable tail once and reset the assembler before accepting new audio.
                 emitSegmenterOutput {
-                    interpretationSegmenter.sealProviderAttempt(
-                        SystemClock.elapsedRealtimeNanos(),
-                    )
+                    if (attemptOutcome == RecognitionAttemptOutcome.OperatorRestart ||
+                        (attemptOutcome is RecognitionAttemptOutcome.Failed &&
+                            attemptOutcome.error is ProviderTranscriptAssemblyOverflowException)) {
+                        interpretationSegmenter.finish(SystemClock.elapsedRealtimeNanos())
+                    } else interpretationSegmenter.sealProviderAttempt(SystemClock.elapsedRealtimeNanos())
                 }
                 providerSequenceMap.clear()
 
@@ -759,6 +777,7 @@ class GalaxySpeechRecognitionEngine(
                             "마이크 입력 충돌 감지 · 시스템 인식기를 종료하고 독립 PCM 인식으로 복구합니다.")
                     }
                     RecognitionAttemptOutcome.Completed,
+                    RecognitionAttemptOutcome.OperatorRestart,
                     is RecognitionAttemptOutcome.EndpointRestart,
                     -> {
                         if (!feeder.isCompleted) delay(RESTART_DELAY_MILLIS)
@@ -774,11 +793,29 @@ class GalaxySpeechRecognitionEngine(
                                 shouldUseMoonshineForSource(normalizedSourceLanguage) && moonshineReady
                             RecognitionBackend.MOONSHINE -> androidReady && !androidCaptureConflict
                         }
-                        when (recognitionRecoveryAction(error, alternateReady)) {
-                            RecognitionRecoveryAction.FAIL -> throw error
+                        val recovery = recognitionRecoveryAction(error, alternateReady)
+                        val ordinaryPause = error is RecognitionProgressStalledException ||
+                            (error is AndroidSpeechRecognitionException && error.errorCode in setOf(
+                                SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT))
+                        if (recovery == RecognitionRecoveryAction.FAIL ||
+                            (!ordinaryPause && consecutiveFailures + 1 >= MAX_CONSECUTIVE_FAILURES)) {
+                            mutableStatus.value = GalaxySpeechLanguageStatus(false,
+                                "음성인식 연결을 확인하세요. 권한·모델을 확인한 뒤 ‘통역 다시 연결’을 누르면 기존 듣기 채널에서 이어갑니다.")
+                            RuntimeDiagnosticLog.record("recognition_recovery", "state=awaiting_operator")
+                            // Keep the existing pipeline and listener sockets alive. An explicit
+                            // reconnect or real input EOF wakes this bounded, cancellable wait.
+                            select<Unit> {
+                                operatorRestarts.onReceive { }
+                                feeder.onJoin { }
+                            }
+                            emitSegmenterOutput { interpretationSegmenter.finish(SystemClock.elapsedRealtimeNanos()) }
+                            consecutiveFailures = 0
+                            continue@recognitionLoop
+                        }
+                        when (recovery) {
+                            RecognitionRecoveryAction.FAIL -> throw IllegalStateException("Unreachable recovery state")
                             RecognitionRecoveryAction.SWITCH_BACKEND -> {
                                 consecutiveFailures += 1
-                                if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) throw error
                                 backend = when (backend) {
                                     RecognitionBackend.ANDROID -> RecognitionBackend.MOONSHINE
                                     RecognitionBackend.MOONSHINE -> RecognitionBackend.ANDROID
@@ -796,7 +833,6 @@ class GalaxySpeechRecognitionEngine(
                                     consecutiveFailures = 0
                                 } else {
                                     consecutiveFailures += 1
-                                    if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) throw error
                                 }
                             }
                         }
@@ -816,6 +852,8 @@ class GalaxySpeechRecognitionEngine(
                 }
             }
         } finally {
+            operatorRestartSink.compareAndSet(operatorRestarts, null)
+            operatorRestarts.close()
             activeRecognitionAttempt.set(NO_ACTIVE_RECOGNITION_ATTEMPT)
             endpointRestartRequests.close()
             recognitionStallRequests.close()

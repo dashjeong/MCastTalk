@@ -146,6 +146,19 @@ class RealtimeInterpretationSegmenter(
     /** True while a usable, not-yet-committed hypothesis remains buffered. */
     internal fun hasPendingText(): Boolean = residualTokens(observedFullTokens).isNotEmpty()
 
+    /** Forget only an exact, already committed, immutable provider prefix. Pending IDs/times stay. */
+    internal fun discardCommittedProviderPrefix(text: String): Boolean {
+        val tokens = text.toInterpretationTokens()
+        if (tokens.isEmpty()) return true
+        if (committedSourceTokens.take(tokens.size) != tokens ||
+            observedFullTokens.take(tokens.size).map { it.text } != tokens) return false
+        committedSourceTokens.subList(0, tokens.size).clear()
+        observedFullTokens = observedFullTokens.drop(tokens.size)
+        latest = if (observedFullTokens.isEmpty()) null
+            else latest?.copy(text = observedFullTokens.joinToString(" ") { it.text })
+        return true
+    }
+
     /** True only while gap-free quiet PCM observations still cover [requiredMillis]. */
     internal fun hasVerifiedContinuousQuiet(nowNanos: Long, requiredMillis: Long): Boolean =
         verifiedQuietMillis(nowNanos) >= requiredMillis
