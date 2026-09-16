@@ -1,66 +1,70 @@
-# 0.2.40 Alpha validation
+# 0.2.41 Alpha validation
 
-## Status — 2026-09-14
+## Status — 2026-09-16
 
-This report identifies the exact `0.2.40-alpha` APK prepared for public Alpha
-distribution. Results from `0.2.39-alpha` are not evidence for this version.
-The APK includes local backup export, cloud-consent revocation and constrained-screen
-fixes. Source and packaging results are recorded below; physical field validation
-remains separate from this public Alpha's software checks.
+This report covers the exact signed `0.2.41-alpha` APK, versionCode `47`.
+Earlier release results are not substituted for the checks below. This public
+Alpha fixes a reproduced transcript-assembly freeze and adds app search, a live
+reading HUD and an operator-controlled recognition reconnect. It is not an
+eight-hour physical-device stability certification.
 
-## Candidate scope
+## Failure and regression evidence
 
-- Recovery from stalled recognition input, transcript loading failures, duplicate
-  requests and retries, while keeping input and broadcast controls independent.
-- App selection populates its package name; an explicit manual edit takes priority
-  until another app is selected. Standalone operation provides a device-only mode
-  without starting the broadcast server.
-- Live scripts and file playback provide source/translation reading, manual scroll
-  with explicit follow-resume, a head-up screen, and separate playback controls.
-  File conversion supports individual files, batches, folders and retries of
-  incomplete items. Ordinary screens hide developer metrics by default.
-- Saved broadcasts are queried by session start and date range, with pages of up
-  to 1,000 rows, an active retention limit of 500,000 rows, and optional daily
-  backups. Existing confirmed wording remains authoritative during migration.
-- Portable settings, dictionaries and scripts use validated app-private staging.
-  Imports check versions, integrity, record relationships, duplicate IDs and size
-  budgets before merging. File audio must be relinked by matching its hash;
-  importing a URI does not restore permission. File library limits are separate
-  from the broadcast archive: 1,000 files, with bounded metadata and script sizes.
-- Explicit export saves a new ZIP in the device's fixed
-  `Download/MCastTalk/Backups` folder. A pending MediaStore item becomes visible
-  only after the complete write succeeds. Cancellation and partial-write failure
-  clean up only the new pending item, preserve previous backups and offer retry.
-- Optional developer controls for expressive speech, wording review and sentence
-  memory remain experimental. Cloud review requires explicit opt-in; settings
-  migration excludes credentials and resets cloud/automatic-learning consent.
-  No ML Kit GenAI production dependency was added.
+Local diagnostic inspection showed audible input continuing while the published
+translation sequence stopped advancing. Repeated attempts failed with
+`ProviderTranscriptAssemblyOverflowException`. No original diagnostic archive,
+audio, transcript or credentials are included in source or release assets.
 
-## Source regression evidence
+The assembler retained already committed provider lines while any unfinished tail
+remained. Continuous speech could therefore reach the bounded line/character
+limit. A rejected oversized revision also mutated the retained buffer before
+validation, allowing the same failure to recur during finalization and retries.
+The recognition loop reset its failure count before accepting the callback.
 
-Environment: JDK 17, Android SDK/build tools 36. The closing gate covers
-**1,511 test executions across 229 XML suites**, with **0 failures, 0 errors and
-0 skipped tests**. Counts include Debug and Alpha executions of shared cases;
-they are not counts of distinct user scenarios. Only result directories belonging
-to tasks in the command below are counted; historical XML from other variants is
-excluded. Unchanged tasks reused their passing Gradle results. Alpha lint reported
-**0 errors, 43 warnings and 4 hints**. The closing Gradle gate, including APK and
-test APK packaging, completed successfully in 2 min 9 s.
+A synthetic continuous-provider regression failed with the same overflow before
+the fix. It now processes 1,000 completed English provider lines without a
+capacity recovery, duplicate final IDs or lost text. This is a deterministic
+source regression, not 1,000 real speech-recognition attempts or a timed soak.
 
-The four web/public regression scripts and the nine snapshot-checker unit tests
-passed. The final public snapshot scan passed for 556 source files, including
-credential/artifact/archive checks. Staged and working-tree whitespace checks
-also passed. The closing gate includes
-three new consent-revocation regressions: revocation during connection setup sends
-no text body, revocation during response reading discards the result, and queued
-AI writes recheck developer/cloud/automatic-learning consent before storing.
+The fix retires only exact, immutable, committed prefixes. Candidate updates are
+validated before mutation. At exceptional capacity boundaries, the entire usable
+tail is preserved once before the next provider line is accepted. Oversized
+revisions leave the original buffer recoverable. Ordinary provider restarts keep
+their semantic tail; an explicit operator reconnect can finish it once.
 
-Relevant gate commands:
+Recognition retry accounting now resets after successful acceptance. Repeated
+provider failures retain the recognition flow and wait for an explicit reconnect
+instead of silently ending the listening pipeline. Reconnect cancels the current
+recognizer under the same serialization lock and leaves broadcast/input controls,
+transcript IDs and translated-audio queues intact. It does not rewind audio.
+New diagnostic records contain only fixed recovery reasons/states, not content.
+
+The real staging/translation pipeline regression uses deterministic translator
+and TTS doubles. It verifies three distinct non-silent PCM outputs across a
+capacity boundary and reset, unchanged stream generation, zero translation/TTS
+failures, and continued original-audio publishing. Existing semantic-boundary,
+late-callback, Korean-tail and per-language queue tests also pass.
+
+## Source gates
+
+Environment: JDK 17, Android SDK/build tools 36. Closing tasks passed in 4 min 44 s.
+The strengthened PCM continuation test was subsequently rerun with
+`:core:translation:test` and passed. The final relevant XML contains **1,516 test
+executions across 229 suites**, **0 failures, 0 errors and 0 skipped tests**.
+Debug and Alpha executions of shared tests are included; these are not distinct
+user scenarios. Unchanged Gradle tasks reused passing results. Historical XML
+from tasks/variants outside the command is excluded.
+
+Alpha lint: **0 errors, 43 warnings and 5 hints**. Four web/public regression
+scripts, nine snapshot-checker tests, staged whitespace checks and the public
+snapshot scan passed. The scan covered **560 source files**. No production
+dependency or model was added.
 
 ```sh
 ./gradlew --offline --no-parallel --max-workers=2 \
   testDebugUnitTest :core:stream:test :core:translation:test \
-  :app:testAlphaUnitTest :app:lintAlpha
+  :app:testAlphaUnitTest :app:lintAlpha :app:assembleAlpha \
+  :app:verifyPackagedThirdPartyLicenseAssets :app:assembleAlphaAndroidTest
 node scripts/verify-listener-player.mjs
 node scripts/verify-listener-i18n.mjs
 node scripts/verify-speaker-mic.mjs
@@ -69,129 +73,94 @@ python3 scripts/test-public-snapshot.py
 python3 scripts/verify-public-snapshot.py
 ```
 
-Regression coverage includes bounded audio queues, stalled-pipe recovery,
-recognition finalization, per-language failure isolation, transcript retry scope,
-manual package selection, playback/word selection, and settings/consent handling.
-Migration and UI device cases additionally exercise synthetic scripts, session
-filters, manual-follow behavior, large text, ID collisions, malicious archives,
-capacity limits and preservation of existing data. Adding or compiling a device
-case is not recorded as a passed final-artifact instrumentation run.
+## Exact artifact
 
-## Final artifact verification
-
-Version: `0.2.40-alpha`, versionCode `46`, package
-`app.guidecast.transmitter.alpha`. The current R8/shrink-resources candidate was
-installed over the earlier code46 candidate using the same release certificate.
-Earlier candidate hashes and runs are not substituted for the checks below.
-
-| Check | Final status |
+| Check | Result |
 |---|---|
-| R8/shrink-resources distributable build | Passed |
-| APK size | 95,485,838 bytes |
-| APK SHA-256 | `1c432e90ec46ef8c6d333007f867561f16f5ec3f5bf4b91a9d174d95fd3153fa` |
-| Signing certificate SHA-256 | `afd9d964c7161f0052d16b0065e6dec14861900cfb876b18df639734ccf29ff3` |
-| APK signature | v3 verified |
-| 4-byte/16-KiB alignment | Passed |
-| Exact installed/pulled-back APK hash | Matches the candidate SHA-256 above |
-| Packaged listener/source correspondence | Four listener assets byte-identical to current source |
-| Packaged licenses and notices | Packaging gate passed; 40 assets included |
-| Public source snapshot scan | 556 source files passed credential/artifact/archive checks |
-| API35 arm64 AOSP device cases | 51/51 passed in 50.619 s |
-| Independent backup export | 4/4 passed in 4.502 s |
-| Independent TTS worker failure isolation | 1/1 passed in 9.004 s; independent installed APK hash matches |
-| Independent operator/standalone/TTS-web regression | 10/10 passed in 28.078 s |
-
-Required final packaging and installation checks:
+| Package | `app.guidecast.transmitter.alpha` |
+| Version | `0.2.41-alpha` / `47` |
+| Distributable | R8 and resource-shrunk Alpha |
+| Size | 95,551,374 bytes |
+| APK SHA-256 | `41ca94901d59b75487c9ab437f03a008b3c94b9253f88dab88b7959a63fd1e41` |
+| Certificate SHA-256 | `afd9d964c7161f0052d16b0065e6dec14861900cfb876b18df639734ccf29ff3` |
+| Signature / alignment | v3 verified; 4-byte and 16-KiB alignment passed |
+| Installed artifact | Updated from code46; pulled-back APK byte-identical |
+| Listener assets | All four byte-identical to current source |
+| License assets | Packaging gate passed; 40 included |
+| Final test APK SHA-256 | `c4bec0fc88013b3c5a98b47169e3b115cf2bcff05d242439aa31cec355a7f36b` |
 
 ```sh
-./gradlew --offline --no-parallel --max-workers=2 \
-  :app:assembleAlpha :app:verifyPackagedThirdPartyLicenseAssets \
-  :app:assembleAlphaAndroidTest
-apksigner verify --verbose --print-certs MCastTalk-0.2.40-alpha.apk
-zipalign -c -P 16 4 MCastTalk-0.2.40-alpha.apk
-adb install -r MCastTalk-0.2.40-alpha.apk
+apksigner verify --verbose --print-certs MCastTalk-0.2.41-alpha.apk
+zipalign -c -P 16 4 MCastTalk-0.2.41-alpha.apk
+adb install -r MCastTalk-0.2.41-alpha.apk
 ```
 
-The 51 cases use `DataTransferExportDeviceTest`, `FileTranscriptScreensDeviceTest`, `TranscriptScreensDeviceTest`,
-`SentenceMemoryScreenDeviceTest`, `FileAudioDecoderDeviceTest`,
-`FileAudioPlaybackDeviceTest`, `FileBatchSelectionDeviceTest`,
-`FileTranscriptLibraryDeviceTest`, `DataTransferDeviceTest`,
-`OperatorOptionsDeviceTest`, `DeveloperCloudMemoryDeviceTest`,
-`UiDisplaySettingsDeviceTest` and `BroadcastTranscriptArchiveDeviceTest`.
-They cover actual MediaCodec decoding and foreground MediaPlayer transport,
-SQLite persistence/import, synthetic document selection, screen return and follow
-behavior, developer visibility, and archive retention. Synthetic 360dp/2x-font,
-320dp-height and developer-settings screenshots were also visually reviewed.
-Short screens preserve a readable script line and playback controls; secondary
-controls remain available through playback settings.
+## Final-artifact emulator checks
 
-The four new export cases publish only synthetic settings, dictionary and script
-ZIPs to the fixed device folder and run the existing ZIP validator on them.
-They check pending/completed states, complete bytes, cancellation, partial-write
-failure, preservation of previous backup hashes, and the actual UI retry button.
-Each case removes only its own synthetic output. No real operator data was exported.
-Antigravity independently reran all four on the same product APK.
+API35 arm64 AOSP: **66 distinct cases passed** on the exact product APK above.
 
-An independent `MoonshineTtsLanguageFailureIsolationDeviceTest` run on the same
-API35 emulator killed the English worker, confirmed the Japanese worker process
-remained unchanged, and collected non-silent Japanese PCM afterwards. This is a
-specific worker-isolation test, not a claim of multilingual speech naturalness.
+- **4 new cases, 12.957 s**: `RecognitionReconnectDeviceTest` (2) and
+  `HudAndAppSearchDeviceTest` (2). Real recognition orchestration with a synthetic
+  provider preserves pending text and increasing unique IDs through operator
+  reconnects; three provider failures wait, then resume in the same flow. The
+  actual Compose app picker searches a 1,001-item synthetic list by package terms,
+  handles no matches and selects the correct app. The live HUD defaults to source
+  only, reveals controls on touch, enables a selected translation, follows a new
+  row, hides controls and returns without changing input/broadcast state.
+- **51 existing cases, 52.878 s**: `DataTransferExportDeviceTest`,
+  `FileTranscriptScreensDeviceTest`, `TranscriptScreensDeviceTest`,
+  `SentenceMemoryScreenDeviceTest`, `FileAudioDecoderDeviceTest`,
+  `FileAudioPlaybackDeviceTest`, `FileBatchSelectionDeviceTest`,
+  `FileTranscriptLibraryDeviceTest`, `DataTransferDeviceTest`,
+  `OperatorOptionsDeviceTest`, `DeveloperCloudMemoryDeviceTest`,
+  `UiDisplaySettingsDeviceTest`, `BroadcastTranscriptArchiveDeviceTest`.
+  These exercise MediaCodec/MediaPlayer, settings and backup migration, archive
+  retention/session filters, developer visibility, playback/HUD layouts and
+  preservation of existing confirmed data.
+- **11 operator/native TTS cases, 41.003 s**: ten selected
+  `BroadcastEmulatorIntegrationTest` methods cover branding, protected original
+  PCM/web access, test tone without input, translation-readiness warnings keeping
+  operator authority, seven translation channels plus original without microphone,
+  rapid stop/restart, cancellation of deferred restart, standalone mode without
+  listener sockets, app selection/manual override and native Moonshine English
+  TTS reaching WebSocket as non-silent PCM. The remaining
+  `MoonshineTtsLanguageFailureIsolationDeviceTest` case kills the English worker
+  and verifies that the Japanese worker and its non-silent PCM continue.
 
-Ten selected `BroadcastEmulatorIntegrationTest` methods independently passed:
-app/operator branding, protected original-audio web/PCM, test tone without input,
-translation readiness preserving operator authority, seven translated channels
-plus original without microphone, rapid stop/restart, cancelling deferred restart,
-standalone operation without listener sockets, app/manual-package selection, and
-explicit Moonshine English TTS reaching the WebSocket as non-silent PCM.
-The independent run used test APK SHA-256
-`ac519b9b015479f230d27f262dd9a49edefe696370d2aa5dfed280a6607e2041`.
-Its installed product APK was pulled back and matched the artifact hash above.
+Synthetic HUD screenshots were visually reviewed: black background, cyan source,
+yellow selected translation, chronological upward accumulation and no timing,
+sequence, diagnostics or persistent controls on the reading surface.
 
-The first 51-case run had one screen-test failure: after a persona transition,
-waiting for shared playback text could read the previous developer-enabled frame.
-The same test passed alone without changing the product. The regression now waits
-for the current persona's unique source text and retains its developer OFF/ON and
-layout assertions. Only this test fixture changed; the final test APK SHA-256 is
-`d764264ffcbcfc0ef4285f40b6babc3e8511c245f80a6bf86a10e0ea05f724d0`.
-The final 51-case rerun passed in 50.619 s. Together with the 11 additional
-independent operator/TTS cases, **62 distinct emulator cases passed**. The four
-independent export reruns are not double-counted. No earlier release results are
-counted.
+Initial UI-test failures were resolved in the fixture: Android's first immersive
+education overlay had intercepted the HUD touch, and unpadded completion text was
+under the system bar. A padding-helper fixture revision was incompatible with the
+R8 test mapping and crashed; it was replaced by a plain-text completion fixture.
+Final tests dismiss the system education overlay and retain all behavioral
+assertions. No product APK change or broader keep rule was used to hide these
+test-only issues. The final four-case rerun above passed.
 
-Test duration is not first-audio latency. Synthetic fixtures prove only the
-exercised software behavior; they are not recordings of actual users or
-physical-device field tests. No physical handset or actual cloud API request was
-used in these checks. Signing material is kept outside the public source and APK.
-The available AOSP emulator runs API35 arm64 and has no Google on-device speech
-service or speech language packs. API29 is below this app's minSdk30 and was not
-used as an installation target.
+## Limits and field validation
 
-## Release limits and remaining field validation
+No physical handset, actual Google speech service, speech language packs or cloud
+API request was used in these checks. The AOSP emulator cannot establish real
+recognition accuracy. Native TTS checks demonstrate the specified PCM paths and
+worker isolation, not voice naturalness or first-audio latency. API29 is below
+the app's minSdk30 and was not used as an installation target.
 
-The requested **eight-hour continuous operation has not been demonstrated** on a
-physical target handset. A source simulation or short emulator run cannot establish
-that input, recognition, translation and speech remain reliable for eight hours.
-The physical Galaxy S23 prepared-model first-audio **p95 ≤2,000 ms** gate has not
-been measured or passed. No completed physical two-hour or eight-hour stability
-result is claimed for `.40`.
+**Physical eight-hour continuous operation and Galaxy S23 prepared-model
+first-audio p95 ≤2,000 ms have not been demonstrated.** No physical two-hour soak,
+Galaxy/One UI capture qualification, outdoor-noise, hotspot-load or Android/iPhone
+browser result is claimed. As requested, extended handset use remains user field
+validation; the reproduced software failure and recovery paths have automated
+regressions, not a guarantee against every possible interruption.
 
-Actual live/file speech-recognition accuracy, multilingual end-to-end operation,
-cloud API translation quality, voice naturalness, source-emotion preservation and
-faithful voice cloning have not been validated. Optional engine controls and
-structural automatic checks do not certify those qualities. Device-only operation
-still requires supported, prepared local engines; it does not imply every engine
-or language works without a network connection.
+Use prepared supported local engines for standalone/offline operation. Android
+permission/capture denial requires restoring the permitted input. Reconnect
+preserves recognized usable text; it cannot reconstruct speech never recognized
+during an outage. Preserve the distinction between source regression, synthetic
+provider orchestration and actual end-to-end speech quality.
 
-Physical Galaxy/One UI capture behavior, screen-lock/projection revocation,
-Android/iPhone browser playback, outdoor noise and hotspot load still require
-testing in those exact environments. User field validation should exercise the
-intended source apps and languages, offline/device-only mode, stopping and recovery,
-and at least eight hours of continuous input. Record interruptions, recognition
-gaps, translation/TTS failures, measured latency, crashes and ANRs without publishing
-private audio or transcript content.
-
-Local backup export and validated import are implemented. Portable user-requested
-backups may contain private sentences; they are distinct from minimal diagnostic
-exports. Private originals, transcripts, credentials and signing material remain
-excluded from diagnostic exports and public release assets. This public Alpha is
-not a field-stability certification.
+Private source logs remain local. Release assets contain only the signed product
+APK and its checksum. Signing material stays outside source and APK. Portable
+user-requested backups are separate from minimal diagnostics and may contain
+private sentences; they are not public release assets.

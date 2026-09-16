@@ -5,6 +5,7 @@ import app.guidecast.core.stream.AudioChannelDescriptor
 import app.guidecast.core.stream.PcmAudioFrame
 import app.guidecast.core.stream.StreamPublishStatus
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -18,36 +19,51 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class SentenceStagingPipelineTest {
     @Test
-    fun `assembler limit is reported without closing the independent original audio session`() = runTest {
+    fun `assembler capacity recovery continues translated speech and original audio on the same session`() = runTest {
         val streams = AudioStreamRegistry()
         val session = streams.configure(listOf(
             AudioChannelDescriptor("source", "Original", "ko", 16_000),
             AudioChannelDescriptor("en", "English", "en", 16_000),
         ))
         val assembler = ProviderTranscriptSemanticAssembler(maximumPendingProviderLines = 2)
+        val spoken = mutableListOf<String>()
+        val monitor = session.subscribeLocalMonitor("en")
+        val generation = session.generation
         val source = flow {
             assembler.observeSpeechActivity(true, 0)
             repeat(3) { index ->
                 assembler.accept(RecognizedUtterance(index.toLong(), "설명 중인 장소의", "ko", true,
                     index * 1_000_000L)).forEach { emit(it) }
             }
+            assembler.finish(4_000_000L).forEach { emit(it) }
+            assembler.accept(RecognizedUtterance(3, "재연결 후 안내입니다", "ko", true,
+                5_000_000L)).forEach { emit(it) }
+            assembler.finish(6_000_000L).forEach { emit(it) }
         }
         val running = TranslationBroadcastPipeline(streams,
             TranslationEngineProvider { TextTranslationEngine { text, _, _ -> text } },
             SpeechSynthesisEngineProvider { object : SpeechSynthesisEngine {
                 override fun synthesize(text: String, languageTag: String) = flow<PcmAudioFrame> {
-                    error("Incomplete text must not reach TTS")
+                    spoken += text
+                    emit(PcmAudioFrame(ByteArray(640) { if (it % 4 == 1) 32 else 0 }, 1))
                 }
             } },
         ).start(this, source, listOf(TranslationTarget("en", "English", "en", 16_000)),
             sourceLanguageTag = "ko", streamSession = session)
         try {
             advanceUntilIdle()
-            assertTrue(running.health.value.single().lastError.orEmpty().contains("보존할 수 없습니다"))
+            assertEquals(listOf("설명 중인 장소의 설명 중인 장소의", "설명 중인 장소의", "재연결 후 안내입니다"), spoken)
+            val audio = withTimeout(1_000L) { List(3) { monitor.frames.receive() } }
+            assertTrue(audio.all { it.bytes.size == 640 && it.bytes.any { byte -> byte != 0.toByte() } })
+            assertEquals(3, audio.map { it.utteranceSequence }.toSet().size)
+            assertEquals(generation, streams.currentSession().generation)
+            assertEquals(0L, running.health.value.single().synthesisFailures)
+            assertEquals(0L, running.health.value.single().translationFailures)
             assertEquals(StreamPublishStatus.PUBLISHED,
                 session.tryPublish("source", PcmAudioFrame(byteArrayOf(0, 32, 0, -32), 1)).status)
         } finally {
             running.close()
+            monitor.close()
             session.close()
         }
     }

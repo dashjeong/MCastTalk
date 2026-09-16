@@ -2,11 +2,11 @@
 
 **실시간 다국어 통역방송(feat. DMZ peace walk)**
 
-**0.2.40-alpha — 단독 사용·스크립트·개발자 실험·백업 개선**
+**0.2.41-alpha — 통역 멈춤 복구·실시간 HUD·앱 검색**
 
-[APK 다운로드](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.40-alpha) ·
+[APK 다운로드](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.41-alpha) ·
 [검증 결과와 미검증 환경](docs/TEST_REPORT.md)
-(`versionCode 46`). 기존 공개 APK와 같은 서명키를 사용하는 업데이트입니다.
+(`versionCode 47`). 기존 공개 APK와 같은 서명키를 사용하는 업데이트입니다.
 
 Android 스마트폰에서 음성을 입력받아 원음과 통역 음성을 로컬 Wi-Fi/핫스팟으로
 송출합니다. 청취자는 별도 앱 없이 웹브라우저로 음성과 자막을 확인합니다.

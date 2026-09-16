@@ -16,7 +16,7 @@
 >
 > Without costly dedicated transmitter/receiver hardware and without requiring listeners to install any apps, anyone can simply scan a QR code with their smartphone camera to listen to live interpreted audio and view synchronized transcripts. We warmly support everyone dedicating their efforts in the field!
 
-This guide describes `0.2.40-alpha`, including the features in section 11. The Android operator interface is currently in Korean, so Korean menu labels are included where helpful.
+This guide describes `0.2.41-alpha`, including the features in sections 11 and 12. The Android operator interface is currently in Korean, so Korean menu labels are included where helpful.
 
 ---
 
@@ -82,7 +82,7 @@ After models are prepared, MCastTalk's default interpretation pipeline runs loca
 
 ### 3.1 Verified Installation Steps
 
-1. Download `MCastTalk-0.2.40-alpha.apk` from GitHub [Releases](https://github.com/dashjeong/MCastTalk/releases).
+1. Download `MCastTalk-0.2.41-alpha.apk` from GitHub [Releases](https://github.com/dashjeong/MCastTalk/releases).
 2. Compare the downloaded APK SHA-256 with the `.sha256` file attached to the same release.
 3. Tap the APK file to install. If Android prompts **"Install unknown apps"**, temporarily grant permission for the file manager or browser, complete the installation, and open MCastTalk.
 4. For security, disable the "Install unknown apps" permission after installation.
@@ -278,3 +278,11 @@ This setting reveals **Developer lab (개발자 실험실 · 표현 TTS / 의역
 Use **Settings → Sentence dictionary (문장·회화 사전 · 확인 / 수정)** to inspect, edit and confirm phrases. Human-confirmed translations work offline and cannot be overwritten by AI results. Learning adds entries to the device dictionary; it does not retrain model weights. See the [developer lab and sentence memory guide](DEVELOPER_LAB.md) for review and data-transfer scope.
 
 Automated and virtual-device checks do not establish physical Galaxy/One UI behavior, outdoor performance, actual Android/iPhone listening or eight-hour continuous stability. Test the complete path in your environment before use and consult the [test report](TEST_REPORT.md) for the exact validation scope.
+
+## 12. Live HUD, app search and recognition reconnect
+
+- Search the device-audio app picker by app name or package name. Selecting a result also fills the manual package field; a later manual edit still takes precedence.
+- **Live transcript HUD (실시간 스크립트 HUD)** is separate from the full transcript screen. It displays cyan source text on black. Tap the screen and select a translation language to add yellow translated text. Processing metrics and line numbers are absent from the reading surface.
+- New lines accumulate at the bottom and earlier lines move upward. Touch pauses automatic following so you can scroll. **Follow live (실시간 따라가기)** resumes following and hides the controls. Text sizes are available in the touch menu. System Back returns without stopping input, broadcast or listening.
+- **Reconnect interpretation (통역 다시 연결)** renews recognition while keeping the broadcast, input, listening channel and confirmed scripts. It is also available in the HUD touch menu. A retained unfinished recognition tail is preserved once; the active audio queue is not rewound to replay committed sentences.
+- Normal continuous speech retires already committed assembly history. A capacity recovery preserves the usable tail and accepts the next provider segment. Repeated provider errors leave a reconnect action available; restore any denied Android permission or missing model before retrying.

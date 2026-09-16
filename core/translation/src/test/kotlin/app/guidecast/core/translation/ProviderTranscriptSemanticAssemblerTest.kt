@@ -8,6 +8,50 @@ import org.junit.Test
 
 class ProviderTranscriptSemanticAssemblerTest {
     @Test
+    fun `continuous final lines release committed history without freezing the pending tail`() {
+        val recoveries = mutableListOf<TranscriptAssemblyRecovery>()
+        val assembler = ProviderTranscriptSemanticAssembler(onRecovery = recoveries::add)
+        assembler.observeSpeechActivity(true, 0L)
+        val finals = mutableListOf<RecognizedUtterance>()
+        val expected = (0 until 1_000).map { "Sentence number $it is complete." }
+        expected.forEachIndexed { index, text ->
+            finals += assembler.accept(providerFinal(index.toLong(), text, index * 100L + 100)
+                .copy(sourceLanguageTag = "en-US")).filter { it.isFinal }
+        }
+        finals += assembler.finish(101_000L.ms).filter { it.isFinal }
+        assertEquals(expected, finals.map { it.text })
+        assertEquals(finals.size, finals.map { it.sequence }.toSet().size)
+        assertTrue(assembler.finish(102_000L.ms).isEmpty())
+        assertTrue("Normal continuous speech must not need capacity resets", recoveries.isEmpty())
+    }
+
+    @Test
+    fun `character capacity recovery retains both long provider fragments exactly once`() {
+        val reasons = mutableListOf<TranscriptAssemblyRecovery>()
+        val assembler = ProviderTranscriptSemanticAssembler(onRecovery = reasons::add)
+        val first = "가".repeat(1_100)
+        val second = "나".repeat(1_100)
+        assembler.accept(providerFinal(0, first, 100))
+        val output = assembler.accept(providerFinal(1, second, 200)) + assembler.finish(300L.ms)
+        assertEquals(listOf(first, second), output.filter { it.isFinal }.map { it.text })
+        assertEquals(listOf(TranscriptAssemblyRecovery.CHARACTER_LIMIT), reasons)
+    }
+
+    @Test
+    fun `rejected oversized callback leaves a recoverable pending sentence`() {
+        val assembler = ProviderTranscriptSemanticAssembler()
+        val prefix = "가".repeat(1_000)
+        assembler.accept(providerFinal(0, prefix, 50))
+        assembler.accept(partial(1, "보존해야 하는 문장", 100))
+        assertThrows(ProviderTranscriptAssemblyOverflowException::class.java) {
+            assembler.accept(partial(1, "큰".repeat(1_100), 200))
+        }
+        assertEquals("$prefix 보존해야 하는 문장", assembler.finish(300L.ms).single { it.isFinal }.text)
+        assembler.accept(providerFinal(2, "다음 문장입니다", 400))
+        assertEquals("다음 문장입니다", assembler.finish(500L.ms).single { it.isFinal }.text)
+    }
+
+    @Test
     fun `speech resumed before two seconds stays together and commits once after final pause`() {
         val assembler = ProviderTranscriptSemanticAssembler()
         assembler.observeSpeechActivity(true, 0)
@@ -402,16 +446,17 @@ class ProviderTranscriptSemanticAssemblerTest {
     }
 
     @Test
-    fun `pending provider line limit fails explicitly without dropping old text`() {
-        val assembler = ProviderTranscriptSemanticAssembler(maximumPendingProviderLines = 2)
+    fun `pending provider line limit preserves tail and continues with triggering line`() {
+        val recoveries = mutableListOf<TranscriptAssemblyRecovery>()
+        val assembler = ProviderTranscriptSemanticAssembler(maximumPendingProviderLines = 2,
+            onRecovery = recoveries::add)
         assembler.accept(providerFinal(1, "첫 미완 구간의", 100))
         assembler.accept(providerFinal(2, "다음 미완 구간의", 200))
 
-        val error = assertThrows(ProviderTranscriptAssemblyOverflowException::class.java) {
-            assembler.accept(providerFinal(3, "상한을 넘는 구간", 300))
-        }
-
-        assertTrue(error.message.orEmpty().contains("임의로 자르지 않고"))
+        val output = assembler.accept(providerFinal(3, "상한 이후 구간", 300)) + assembler.finish(400L.ms)
+        assertEquals(listOf("첫 미완 구간의 다음 미완 구간의", "상한 이후 구간"),
+            output.filter { it.isFinal }.map { it.text })
+        assertEquals(listOf(TranscriptAssemblyRecovery.PROVIDER_LIMIT), recoveries)
     }
 
     private fun partial(sequence: Long, text: String, millis: Long) =

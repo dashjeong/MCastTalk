@@ -17,3 +17,10 @@
 `TranscriptScreensDeviceTest`, 문장 사전 확인과 개발자 표시·설정 스크롤은
 `SentenceMemoryScreenDeviceTest`에서 검사한다. 실제 파일 디코딩·재생·해시·SQLite 이관은
 별도 기기 시험으로 검사한다. 코드나 합성 화면 시험을 8시간 실기기 무중단 시험으로 대신 표기하지 않는다.
+
+0.2.41에서는 민서의 앱 선택 흐름을 1,001개 합성 앱 검색으로 검사했다.
+실시간 HUD는 검은 배경의 원문 전용 보기에서 번역 선택, 새 문장 따라가기,
+조작 메뉴 숨김과 뒤로가기를 실제 Compose 화면에서 검사했다.
+`HudAndAppSearchDeviceTest`와 `RecognitionReconnectDeviceTest`가 이 경로 및
+반복 인식 실패 뒤 같은 연결에서 이어가기를 검사한다. 인식 제공자는 합성 대역이며
+실제 음성 인식 정확도나 물리 기기의 장시간 청취 결과로 해석하지 않는다.

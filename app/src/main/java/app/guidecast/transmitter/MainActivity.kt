@@ -336,6 +336,7 @@ private fun GuideCastScreen(
     var accessMode by rememberSaveable { mutableStateOf(OperatorAccessMode.OPEN) }
     var runMode by rememberSaveable { mutableStateOf(BroadcastRunMode.NETWORK) }
     var showLiveTranscript by rememberSaveable { mutableStateOf(false) }
+    var showLiveHud by rememberSaveable { mutableStateOf(false) }
     var showFileTranslation by rememberSaveable { mutableStateOf(false) }
     var showSentenceMemory by rememberSaveable { mutableStateOf(false) }
     var showDeveloperLab by rememberSaveable { mutableStateOf(false) }
@@ -361,6 +362,7 @@ private fun GuideCastScreen(
         broadcast.phase == BroadcastPhase.LIVE ||
         broadcast.phase == BroadcastPhase.PAUSED
     val app = LocalContext.current.applicationContext as GuideCastApplication
+    val recognitionConnection by app.speechRecognitionEngine.status.collectAsStateWithLifecycle()
     val operatorOptions by app.operatorSettings.state.collectAsStateWithLifecycle()
     val fileState by fileViewModel.uiState.collectAsStateWithLifecycle()
     val filePlayback by fileViewModel.playbackState.collectAsStateWithLifecycle()
@@ -398,6 +400,14 @@ private fun GuideCastScreen(
     }
     if (showFileTranslation) {
         FileTranslationRoute(fileViewModel, onBack = { showFileTranslation = false })
+        return
+    }
+    if (showLiveHud) {
+        LiveTranscriptHud(broadcast.transcripts, translationModels.selectedLanguageTags.toList(),
+            onBack = { showLiveHud = false },
+            onReconnect = if (inputActive && (broadcastActive || broadcast.translationTestActive))
+                ({ app.speechRecognitionEngine.requestReconnect(); Unit }) else null,
+            recoveryMessage = recognitionConnection.message.takeIf { !recognitionConnection.isReady })
         return
     }
     if (showLiveTranscript) {
@@ -482,6 +492,16 @@ private fun GuideCastScreen(
                 item {
                     OutlinedButton(onClick = { showLiveTranscript = true }, modifier = Modifier.fillMaxWidth()) {
                         Text("화면 전환 · 전체 화면 스크립트")
+                    }
+                    OutlinedButton(onClick = { showLiveHud = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text("실시간 스크립트 HUD")
+                    }
+                    if (inputActive && (broadcastActive || broadcast.translationTestActive)) {
+                        OutlinedButton(onClick = { app.speechRecognitionEngine.requestReconnect() },
+                            modifier = Modifier.fillMaxWidth()) { Text("통역 다시 연결") }
+                        Text("입력·방송·듣기 채널을 유지하며 인식만 다시 연결합니다.", style = MaterialTheme.typography.bodySmall)
+                        if (!recognitionConnection.isReady) Text(recognitionConnection.message,
+                            color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
                     }
                 }
             }
@@ -2850,28 +2870,11 @@ private fun PlaybackTargetSelector(
     ) {
         Text(selected?.label ?: "앱 선택")
     }
-    DropdownMenu(
-        expanded = expanded,
-        onDismissRequest = { expanded = false },
-    ) {
-        apps.forEach { app ->
-            DropdownMenuItem(
-                text = {
-                    Column {
-                        Text(app.label)
-                        Text(
-                            app.packageName,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                },
-                onClick = {
-                    onSelect(app.packageName)
-                    expanded = false
-                },
-            )
-        }
+    if (expanded) {
+        PlaybackAppPicker(apps, onSelect = { packageName ->
+            onSelect(packageName)
+            expanded = false
+        }, onDismiss = { expanded = false })
     }
     if (apps.isEmpty()) {
         Text(
