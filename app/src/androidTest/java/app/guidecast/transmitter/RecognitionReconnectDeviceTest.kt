@@ -58,10 +58,16 @@ class RecognitionReconnectDeviceTest {
             }
         }
         val engine = GalaxySpeechRecognitionEngine(context, recognitionEngineOverride = fake)
+        val inputFrames = AtomicInteger()
         try {
             withTimeout(15_000L) {
-                val result = async { engine.recognize(frames(), SpeechRecognitionConfig("en-US")).first { it.isFinal } }
+                val result = async { engine.recognize(frames().onEach { inputFrames.incrementAndGet() },
+                    SpeechRecognitionConfig("en-US")).first { it.isFinal } }
                 engine.status.first { !it.isReady && it.message.contains("통역 다시 연결") }
+                val countAtWait = inputFrames.get()
+                withTimeout(3_000L) {
+                    while (inputFrames.get() < countAtWait + 64) delay(20)
+                }
                 assertFalse(result.isCompleted)
                 assertEquals(3, attempts.get())
                 assertTrue(engine.requestReconnect())
@@ -69,6 +75,28 @@ class RecognitionReconnectDeviceTest {
                 assertEquals(4, attempts.get())
                 assertFalse(engine.requestReconnect())
             }
+        } finally { engine.close() }
+    }
+
+    @Test fun providerFailureWaitDrainsFiniteInputAndClosesAtEof(): Unit = runBlocking {
+        val attempts = AtomicInteger()
+        val inputFrames = AtomicInteger()
+        val fake = object : SpeechRecognitionEngine {
+            override fun recognize(frames: Flow<PcmAudioFrame>, config: SpeechRecognitionConfig) = flow<RecognizedUtterance> {
+                attempts.incrementAndGet()
+                throw IllegalStateException("Synthetic persistent provider failure")
+            }
+        }
+        val engine = GalaxySpeechRecognitionEngine(context, recognitionEngineOverride = fake)
+        try {
+            val output = withTimeout(15_000L) {
+                engine.recognize(frames().take(200).onEach { inputFrames.incrementAndGet() },
+                    SpeechRecognitionConfig("en-US")).toList()
+            }
+            assertTrue(output.isEmpty())
+            assertEquals(200, inputFrames.get())
+            assertEquals(3, attempts.get())
+            assertFalse(engine.requestReconnect())
         } finally { engine.close() }
     }
 }

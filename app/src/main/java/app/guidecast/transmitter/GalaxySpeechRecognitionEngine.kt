@@ -802,11 +802,17 @@ class GalaxySpeechRecognitionEngine(
                             mutableStatus.value = GalaxySpeechLanguageStatus(false,
                                 "음성인식 연결을 확인하세요. 권한·모델을 확인한 뒤 ‘통역 다시 연결’을 누르면 기존 듣기 채널에서 이어갑니다.")
                             RuntimeDiagnosticLog.record("recognition_recovery", "state=awaiting_operator")
-                            // Keep the existing pipeline and listener sockets alive. An explicit
-                            // reconnect or real input EOF wakes this bounded, cancellable wait.
-                            select<Unit> {
-                                operatorRestarts.onReceive { }
-                                feeder.onJoin { }
+                            // Keep consuming unrecognized PCM while waiting: leaving this bounded
+                            // channel full would backpressure capture and prevent finite input EOF.
+                            // No audio is retained for replay or sent to another provider here.
+                            var resume = false
+                            while (!resume) {
+                                resume = select {
+                                    operatorRestarts.onReceive { true }
+                                    pcm.onReceiveCatching { frame ->
+                                        if (frame.isClosed) { feeder.join(); true } else false
+                                    }
+                                }
                             }
                             emitSegmenterOutput { interpretationSegmenter.finish(SystemClock.elapsedRealtimeNanos()) }
                             consecutiveFailures = 0

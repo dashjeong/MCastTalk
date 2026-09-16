@@ -38,6 +38,10 @@ instead of silently ending the listening pipeline. Reconnect cancels the current
 recognizer under the same serialization lock and leaves broadcast/input controls,
 transcript IDs and translated-audio queues intact. It does not rewind audio.
 New diagnostic records contain only fixed recovery reasons/states, not content.
+While waiting for the operator, unrecognized PCM is drained instead of filling
+the bounded input queue. This prevents recognition recovery from backpressuring
+capture and allows finite input EOF to close the flow. It does not archive or
+replay speech from the unavailable-recognizer interval.
 
 The real staging/translation pipeline regression uses deterministic translator
 and TTS doubles. It verifies three distinct non-silent PCM outputs across a
@@ -48,6 +52,8 @@ late-callback, Korean-tail and per-language queue tests also pass.
 ## Source gates
 
 Environment: JDK 17, Android SDK/build tools 36. Closing tasks passed in 4 min 44 s.
+After the recovery-wait drain fix, both app unit variants, Alpha lint, Alpha APK,
+license packaging and test APK gates passed again in 2 min 58 s.
 The strengthened PCM continuation test was subsequently rerun with
 `:core:translation:test` and passed. The final relevant XML contains **1,516 test
 executions across 229 suites**, **0 failures, 0 errors and 0 skipped tests**.
@@ -81,13 +87,13 @@ python3 scripts/verify-public-snapshot.py
 | Version | `0.2.41-alpha` / `47` |
 | Distributable | R8 and resource-shrunk Alpha |
 | Size | 95,551,374 bytes |
-| APK SHA-256 | `41ca94901d59b75487c9ab437f03a008b3c94b9253f88dab88b7959a63fd1e41` |
+| APK SHA-256 | `97083a4477623ae37da10295d257f04e8d0b1f921b5dca91b0388931064a1706` |
 | Certificate SHA-256 | `afd9d964c7161f0052d16b0065e6dec14861900cfb876b18df639734ccf29ff3` |
 | Signature / alignment | v3 verified; 4-byte and 16-KiB alignment passed |
-| Installed artifact | Updated from code46; pulled-back APK byte-identical |
+| Installed artifact | Updated from code46, then the earlier code47 candidate; final pulled-back APK byte-identical |
 | Listener assets | All four byte-identical to current source |
 | License assets | Packaging gate passed; 40 included |
-| Final test APK SHA-256 | `c4bec0fc88013b3c5a98b47169e3b115cf2bcff05d242439aa31cec355a7f36b` |
+| Final test APK SHA-256 | `3c7b7e3827bfa05c9528fab6ce4b9ca7f0418598a8232dd61f900946fa3b2ae3` |
 
 ```sh
 apksigner verify --verbose --print-certs MCastTalk-0.2.41-alpha.apk
@@ -97,17 +103,19 @@ adb install -r MCastTalk-0.2.41-alpha.apk
 
 ## Final-artifact emulator checks
 
-API35 arm64 AOSP: **66 distinct cases passed** on the exact product APK above.
+API35 arm64 AOSP: **67 distinct cases passed** on the exact product APK above.
 
-- **4 new cases, 12.957 s**: `RecognitionReconnectDeviceTest` (2) and
+- **5 new cases, 20.919 s**: `RecognitionReconnectDeviceTest` (3) and
   `HudAndAppSearchDeviceTest` (2). Real recognition orchestration with a synthetic
   provider preserves pending text and increasing unique IDs through operator
-  reconnects; three provider failures wait, then resume in the same flow. The
+  reconnects; three provider failures wait, then resume in the same flow while
+  another 64 input frames continue through recovery wait. A separate finite
+  200-frame input drains and ends at EOF after repeated provider failure. The
   actual Compose app picker searches a 1,001-item synthetic list by package terms,
   handles no matches and selects the correct app. The live HUD defaults to source
   only, reveals controls on touch, enables a selected translation, follows a new
   row, hides controls and returns without changing input/broadcast state.
-- **51 existing cases, 52.878 s**: `DataTransferExportDeviceTest`,
+- **51 existing cases, 53.607 s**: `DataTransferExportDeviceTest`,
   `FileTranscriptScreensDeviceTest`, `TranscriptScreensDeviceTest`,
   `SentenceMemoryScreenDeviceTest`, `FileAudioDecoderDeviceTest`,
   `FileAudioPlaybackDeviceTest`, `FileBatchSelectionDeviceTest`,
@@ -117,7 +125,7 @@ API35 arm64 AOSP: **66 distinct cases passed** on the exact product APK above.
   These exercise MediaCodec/MediaPlayer, settings and backup migration, archive
   retention/session filters, developer visibility, playback/HUD layouts and
   preservation of existing confirmed data.
-- **11 operator/native TTS cases, 41.003 s**: ten selected
+- **11 operator/native TTS cases, 39.140 s**: ten selected
   `BroadcastEmulatorIntegrationTest` methods cover branding, protected original
   PCM/web access, test tone without input, translation-readiness warnings keeping
   operator authority, seven translation channels plus original without microphone,
@@ -137,7 +145,7 @@ under the system bar. A padding-helper fixture revision was incompatible with th
 R8 test mapping and crashed; it was replaced by a plain-text completion fixture.
 Final tests dismiss the system education overlay and retain all behavioral
 assertions. No product APK change or broader keep rule was used to hide these
-test-only issues. The final four-case rerun above passed.
+test-only issues. The final five-case rerun above passed.
 
 ## Limits and field validation
 
