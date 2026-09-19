@@ -63,7 +63,7 @@ class SentenceRefiningTranslationEngineTest {
         try {
             CloudTranslationReviewer(settings(), { false }, Memory(), noTransport).use { reviewer ->
                 val wrapped = SentenceRefiningTranslationEngine(queued.engineFor("en"), reviewer)
-                assertEquals(queueConfig.maximumCallDurationMillis + 100L, wrapped.maximumCallDurationMillis)
+                assertEquals(queueConfig.maximumCallDurationMillis + 200L, wrapped.maximumCallDurationMillis)
                 val first = withContext(TranslationStyleContext(TranslationStyle.CONVERSATIONAL) +
                     TranslationGlossaryContext("서울 => Seoul")) {
                     wrapped.translateWithContext("지금 출발합니다.", "다음 장소를 안내했습니다.", "ko", "en")

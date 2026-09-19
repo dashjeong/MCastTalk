@@ -28,10 +28,10 @@ internal object DataTransferFormat {
     const val MAX_RECORDS = 20_000_000L
     private const val MAX_EPOCH = 253_402_300_799_999L
     val scriptTypes = setOf("session", "broadcast", "file", "segment", "translation")
-    val dictionaryTypes = setOf("glossary", "correction", "memory")
+    val dictionaryTypes = setOf("glossary", "correction", "memory", "teacherReport")
 
     fun manifest(kind: DataTransferKind, count: Long, sha256: String) = JSONObject().apply {
-        put("schema", SCHEMA); put("major", 1); put("minor", 1); put("kind", kind.name)
+        put("schema", SCHEMA); put("major", 1); put("minor", 2); put("kind", kind.name)
         put("createdAt", System.currentTimeMillis()); put("records", count); put("sha256", sha256)
         put("referenceDictionary", "public-20260905")
     }
@@ -76,6 +76,11 @@ internal object DataTransferFormat {
         }) { "백업 종류와 내용이 일치하지 않습니다." }
         fun id(field: String) = row.getLong(field).also { require(it in 1 until Long.MAX_VALUE) }.toString()
         return when (type) {
+            "teacherReport" -> {
+                val report = TeacherLearningReport.fromJson(row)
+                validateTeacherReport(report)
+                RecordKey(type, report.key)
+            }
             "settings" -> { PortableSettings.validate(row); RecordKey(type, "settings") }
             "session" -> {
                 epoch(row, "started"); language(row.getString("language"))

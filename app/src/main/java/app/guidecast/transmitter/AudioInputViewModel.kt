@@ -429,8 +429,9 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
             combine(selectedSourceLanguageTag, selectedLanguageTags, translationBroadcastEnabled,
                 useGemma, selectiveTranslationRefinement) { source, targets, translation, gemma, refinement ->
                 OperatorOptions(source, targets.toList(), translation, gemma, refinement,
-                    operatorSettings.state.value.runMode)
-            }.collect { operatorSettings.store(it.copy(runMode = operatorSettings.state.value.runMode)) }
+                    operatorSettings.state.value.runMode, operatorSettings.state.value.automaticPreparation)
+            }.collect { operatorSettings.store(it.copy(runMode = operatorSettings.state.value.runMode,
+                automaticPreparation = operatorSettings.state.value.automaticPreparation)) }
         }
         viewModelScope.launch {
             var seen = operatorSettings.restoration.value
@@ -503,6 +504,21 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
                 }
             } finally {
                 guideCastApplication.endPreparation(owner)
+            }
+        }
+        viewModelScope.launch {
+            combine(selectedSourceLanguageTag, selectedLanguageTags, translationBroadcastEnabled,
+                guideCastApplication.speechSynthesisProvider.voicePreferences, operatorSettings.state) { source, targets, enabled, voices, options ->
+                AutomaticPreparationRequest(source, targets.toSet(), voices.filterKeys { it in targets }.mapValues { it.value.name },
+                    enabled && options.automaticPreparation)
+            }.prepareAutomatically(canPrepare = {
+                modelJob?.isCompleted != false && !gemmaBusy.value &&
+                    !guideCastApplication.broadcastRuntime.state.value.dataTransferUnavailable() &&
+                    !guideCastApplication.localFileWorkActive.value
+            }) {
+                if (!operatorSettings.state.value.automaticPreparation) return@prepareAutomatically
+                prepareSelectedTranslationModels()
+                modelJob?.join()
             }
         }
     }
@@ -1167,6 +1183,7 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
     fun cancelModelPreparation() {
         val job = modelJob ?: return
         if (job.isCompleted) return
+        operatorSettings.setAutomaticPreparation(false)
         modelProgress.value = modelProgress.value.copy(
             label = "준비 중지 중", cancelling = true,
         )

@@ -2,11 +2,16 @@
 
 **실시간 다국어 통역방송(feat. DMZ peace walk)**
 
-**0.2.41-alpha — 통역 멈춤 복구·실시간 HUD·앱 검색**
+**0.2.42-alpha — 아스트라 미니미·승인형 선별 학습·API 번역·언어 자동 준비**
 
-[APK 다운로드](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.41-alpha) ·
+[APK 다운로드](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.42-alpha) ·
 [검증 결과와 미검증 환경](docs/TEST_REPORT.md)
-(`versionCode 47`). 기존 공개 APK와 같은 서명키를 사용하는 업데이트입니다.
+(`versionCode 48`). 기존 공개 APK와 같은 서명키를 사용하는 업데이트입니다.
+
+아스트라 미니미는 기기 상태를 진단하고 개선안을 안내합니다. 실험실에서는 필요한 문장만
+스승 API와 비교하고, 전후 리포트를 확인한 사용자가 승인·보류합니다. 승인 전에는 기존
+번역을 유지합니다. 설정에서 OpenAI·Gemini·표준 OpenAI 호환 API와 문맥별 문체를 선택할 수
+있으며, 외부 전송은 별도 허용이 필요합니다. [요구사항·벤치마킹·검증 기준](docs/PRODUCT_EVOLUTION.md)
 
 Android 스마트폰에서 음성을 입력받아 원음과 통역 음성을 로컬 Wi-Fi/핫스팟으로
 송출합니다. 청취자는 별도 앱 없이 웹브라우저로 음성과 자막을 확인합니다.

@@ -2112,7 +2112,7 @@ class BroadcastService : Service() {
     private suspend fun prepareTranslationPipeline(
         translationLanguages: List<String>,
         sourceLanguageTag: String,
-        useGemma: Boolean,
+        requestedGemma: Boolean,
         sessionId: Long,
         archiveSessionId: Long? = null,
         awaitChannelPreparation: Boolean,
@@ -2120,6 +2120,7 @@ class BroadcastService : Service() {
         audioPublicationCoordinator: ChannelAudioPublicationCoordinator? = null,
         selectiveTranslationRefinement: Boolean = false,
     ): TranslationPreparationResult {
+        val useGemma = requestedGemma && app.translationApiSettings.state.value.provider == TranslationApiProvider.LOCAL
         ensureTranslationSessionCurrent(sessionId)
         require(translationLanguages.size in 1..MAX_TRANSLATION_LANGUAGES)
         requireSupportedSourceLanguage(sourceLanguageTag)
@@ -2713,7 +2714,7 @@ class BroadcastService : Service() {
         }
         val translationProvider = TranslationEngineProvider { targetLanguageTag ->
             val baseEngine = SentenceRefiningTranslationEngine(
-                baseTranslationProvider.engineFor(targetLanguageTag), app.cloudTranslationReviewer,
+                app.translationApiService.engine(baseTranslationProvider.engineFor(targetLanguageTag)), app.cloudTranslationReviewer,
             )
             if (targetLanguageTag.equals("zh-TW", ignoreCase = true)) {
                 TraditionalChineseTranslatingEngine(baseEngine)
@@ -2737,10 +2738,8 @@ class BroadcastService : Service() {
                 speechExpression = if (enabled && lab.expressiveTtsEnabled)
                     deriveSpeechExpression(utterance.text, lab.translationRegister) else null,
                 translationStyle = if (enabled && lab.paraphraseEnabled)
-                    if (lab.translationRegister == TranslationRegister.CONVERSATIONAL)
-                        TranslationStyle.CONVERSATIONAL
-                    else TranslationStyle.FORMAL
-                else null,
+                    TranslationStyle.valueOf(lab.translationRegister.name)
+                else app.translationApiSettings.state.value.tone,
             )
         }.onCompletion { cause ->
             // Wake suspended producers when the recognizer exits; a dead consumer must never
@@ -2841,7 +2840,10 @@ class BroadcastService : Service() {
                             displayName = TRANSLATION_LANGUAGES[health.targetLanguageTag]
                                 ?: health.targetLanguageTag,
                         )).copy(
-                            translationProvider = if (selectiveTranslationRefinement &&
+                            translationProvider = if (app.translationApiSettings.state.value.provider != TranslationApiProvider.LOCAL) {
+                                app.translationApiSettings.state.value.provider.label + " · " +
+                                    (app.translationApiService.states.value[health.targetLanguageTag]?.label ?: "선택됨 · 아직 응답 없음")
+                            } else if (selectiveTranslationRefinement &&
                                 health.targetLanguageTag in readyFallbackTargets &&
                                 health.targetLanguageTag !in fallbackWarmupFailures
                             ) {

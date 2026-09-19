@@ -12,7 +12,7 @@ import javax.crypto.spec.GCMParameterSpec
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-enum class TranslationRegister { FORMAL, CONVERSATIONAL }
+enum class TranslationRegister { AUTO, FORMAL, CONVERSATIONAL }
 enum class CloudReviewProvider { OPENAI, GOOGLE }
 
 data class DeveloperLabOptions(
@@ -24,6 +24,8 @@ data class DeveloperLabOptions(
     val provider: CloudReviewProvider = CloudReviewProvider.OPENAI,
     val modelId: String = defaultReviewModel(CloudReviewProvider.OPENAI),
     val hasApiKey: Boolean = false,
+    val teacherLearningEnabled: Boolean = false,
+    val authorizationRevision: Long = 0,
 )
 
 fun defaultReviewModel(provider: CloudReviewProvider): String = when (provider) {
@@ -46,37 +48,45 @@ class DeveloperLabSettings internal constructor(
     val state = mutableState.asStateFlow()
 
     fun setExpressiveTtsEnabled(value: Boolean) = update { it.copy(expressiveTtsEnabled = value) }
+    internal fun invalidateAuthorization() = update { it.copy(authorizationRevision = it.authorizationRevision + 1) }
     fun setParaphraseEnabled(value: Boolean) = update { it.copy(paraphraseEnabled = value) }
     fun setTranslationRegister(value: TranslationRegister) = update { it.copy(translationRegister = value) }
-    fun setCloudReviewEnabled(value: Boolean) = update { it.copy(cloudReviewEnabled = value) }
-    fun setAutoLearnEnabled(value: Boolean) = update { it.copy(autoLearnEnabled = value) }
+    fun setCloudReviewEnabled(value: Boolean) = update { it.copy(cloudReviewEnabled = value, authorizationRevision = it.authorizationRevision + 1) }
+    fun setAutoLearnEnabled(value: Boolean) = update { it.copy(autoLearnEnabled = value, teacherLearningEnabled = it.teacherLearningEnabled && value,
+        authorizationRevision = it.authorizationRevision + 1) }
+    fun setTeacherLearningEnabled(value: Boolean) = update { it.copy(teacherLearningEnabled = value, autoLearnEnabled = value,
+        authorizationRevision = it.authorizationRevision + 1) }
     fun setProvider(value: CloudReviewProvider) = update {
         if (it.provider == value) it else it.copy(provider = value, modelId = defaultReviewModel(value),
-            cloudReviewEnabled = false, hasApiKey = vault.read(value) != null)
+            cloudReviewEnabled = false, hasApiKey = vault.read(value) != null, authorizationRevision = it.authorizationRevision + 1)
     }
     fun setModelId(value: String): Boolean {
         if (!validReviewModel(value)) return false
-        update { it.copy(modelId = value) }
+        update { if (it.modelId == value) it else it.copy(modelId = value, cloudReviewEnabled = false,
+            authorizationRevision = it.authorizationRevision + 1) }
         return true
     }
     fun setApiKey(value: String): Boolean = synchronized(lock) {
         if (value.length !in 20..512 || value.any { it.code !in 33..126 }) return false
         if (!vault.write(mutableState.value.provider, value)) return false
-        mutableState.value = mutableState.value.copy(hasApiKey = true)
+        mutableState.value = mutableState.value.copy(hasApiKey = true, authorizationRevision = mutableState.value.authorizationRevision + 1)
         true
     }
     fun clearApiKey(): Boolean = synchronized(lock) {
         val removed = vault.remove(mutableState.value.provider)
-        update { it.copy(hasApiKey = if (removed) false else it.hasApiKey, cloudReviewEnabled = false) }
+        update { it.copy(hasApiKey = if (removed) false else it.hasApiKey, cloudReviewEnabled = false,
+            authorizationRevision = it.authorizationRevision + 1) }
         removed
     }
     internal fun apiKey(provider: CloudReviewProvider): String? = vault.read(provider)
 
     /** Import is configuration, never renewed permission to send speech-derived text externally. */
-    fun portableOptions() = state.value.copy(hasApiKey = false, cloudReviewEnabled = false, autoLearnEnabled = false)
+    fun portableOptions() = state.value.copy(hasApiKey = false, cloudReviewEnabled = false, autoLearnEnabled = false,
+        teacherLearningEnabled = false, authorizationRevision = 0)
     fun importOptions(value: DeveloperLabOptions) = update {
         value.copy(modelId = value.modelId.takeIf(::validReviewModel) ?: defaultReviewModel(value.provider),
-            cloudReviewEnabled = false, autoLearnEnabled = false, hasApiKey = vault.read(value.provider) != null)
+            cloudReviewEnabled = false, autoLearnEnabled = false, teacherLearningEnabled = false,
+            authorizationRevision = it.authorizationRevision + 1, hasApiKey = vault.read(value.provider) != null)
     }
     private fun update(transform: (DeveloperLabOptions) -> DeveloperLabOptions) = synchronized(lock) {
         val next = transform(mutableState.value)
@@ -108,6 +118,7 @@ private class AndroidDeveloperLabPreferences(context: Context) : DeveloperLabPre
                 .getOrDefault(TranslationRegister.FORMAL),
             cloudReviewEnabled = prefs.getBoolean("cloud_review", false),
             autoLearnEnabled = prefs.getBoolean("auto_learn", false), provider = provider,
+            teacherLearningEnabled = prefs.getBoolean("selective_teacher", prefs.getBoolean("auto_learn", false)),
             modelId = prefs.getString("model", null)?.takeIf(::validReviewModel) ?: defaultReviewModel(provider),
         )
     }
@@ -115,6 +126,7 @@ private class AndroidDeveloperLabPreferences(context: Context) : DeveloperLabPre
         prefs.edit().putBoolean("expression", options.expressiveTtsEnabled)
             .putBoolean("paraphrase", options.paraphraseEnabled).putString("register", options.translationRegister.name)
             .putBoolean("cloud_review", options.cloudReviewEnabled).putBoolean("auto_learn", options.autoLearnEnabled)
+            .putBoolean("selective_teacher", options.teacherLearningEnabled)
             .putString("provider", options.provider.name).putString("model", options.modelId).apply()
     }
 }

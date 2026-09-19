@@ -24,3 +24,12 @@
 `HudAndAppSearchDeviceTest`와 `RecognitionReconnectDeviceTest`가 이 경로 및
 반복 인식 실패 뒤 같은 연결에서 이어가기를 검사한다. 인식 제공자는 합성 대역이며
 실제 음성 인식 정확도나 물리 기기의 장시간 청취 결과로 해석하지 않는다.
+
+0.2.42에서는 품질 담당자의 자동 후보 선별 → 비교 → 보류/승인 → 조건부 취소를 추가했다.
+`TeacherLearningDeviceTest`는 승인 전 미적용, 보류 후 승인, 기존 확정 문장 보존,
+취소 재실행과 변조된 이관 기록의 권한 획득 방지를 검사한다.
+`TeacherLearningScreenDeviceTest`는 실제 화면에서 전후 문장을 확인하고 승인해 저장한 뒤
+돌아가며, 아스트라 아바타와 근거를 확인한 후 사용자의 탭으로만 입력 화면에 이동한다.
+`TranslationApiDeviceTest`는 실제 기기 JSON/Keystore와 합성 HTTPS를 통해 선택 API,
+실패 시 대체 경로, 동의 철회, 문맥 상한과 악성 응답 거부를 확인한다.
+합성 HTTPS는 유료 API의 응답 속도·번역 의미 품질을 검증한 결과가 아니다.

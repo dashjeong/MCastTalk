@@ -26,6 +26,10 @@ internal suspend fun translateFileScript(
     val notes = linkedSetOf<String>()
     val results = MutableList(entry.segments.size) { "" }
     var allReviewsCompleted = mode == FileTranslationEngine.GEMMA
+    var allApiCompleted = mode == FileTranslationEngine.API
+    if (mode == FileTranslationEngine.API) check(app.translationApiSettings.state.value.provider != TranslationApiProvider.LOCAL) {
+        "설정의 번역 서비스에서 API를 선택하고 전송 허용을 확인하세요."
+    }
     val grouped = entry.segments.indices.groupBy { index ->
         (entry.segments[index].languageTag ?: entry.sourceLanguageTag)?.substringBefore('-')
             ?: error("음성 언어를 확인한 뒤 다시 변환하세요.")
@@ -41,9 +45,11 @@ internal suspend fun translateFileScript(
         try {
             withTimeout(180_000) {
                 app.selectTranslationSource(owner)
-                app.prepareTranslationModelsWithProcessAdmission(setOf(target), true, owner)
+                if (mode != FileTranslationEngine.API) app.prepareTranslationModelsWithProcessAdmission(setOf(target), true, owner)
+                else app.refreshTranslationModels(setOf(target), owner)
             }
-            val draftEngine = app.translationProvider.engineFor(target)
+            val localEngine = app.translationProvider.engineFor(target)
+            val draftEngine = if (mode == FileTranslationEngine.API) app.translationApiService.engine(localEngine) else localEngine
             val reviewerReady = mode == FileTranslationEngine.GEMMA &&
                 app.gemmaTranslationProvider.modelManager.status.value.readiness == GemmaModelReadiness.READY &&
                 !app.gemmaTranslationProvider.isAutomaticRetryBlocked() &&
@@ -63,11 +69,11 @@ internal suspend fun translateFileScript(
                 val translated = chunks.map { chunk ->
                     val lab = app.developerLabSettings.state.value
                     val style = if (app.uiDisplaySettings.developerInfo.value && lab.paraphraseEnabled)
-                        TranslationStyleContext(if (lab.translationRegister == TranslationRegister.CONVERSATIONAL)
-                            TranslationStyle.CONVERSATIONAL else TranslationStyle.FORMAL)
-                    else EmptyCoroutineContext
+                        TranslationStyleContext(TranslationStyle.valueOf(lab.translationRegister.name))
+                    else TranslationStyleContext(app.translationApiSettings.state.value.tone)
                     withContext(style) {
                     val draft = withTimeout(20_000) { draftEngine.translate(chunk, source, target) }
+                    if (mode == FileTranslationEngine.API && app.translationApiService.states.value[target] != TranslationApiState.READY) allApiCompleted = false
                     check(draft.isNotBlank()) { "번역 결과가 비어 있습니다." }
                     val localResult = if (!reviewAvailable || !TranslationReviewContext.canRepresent(chunk, draft)) {
                         if (mode == FileTranslationEngine.GEMMA) allReviewsCompleted = false
@@ -113,9 +119,11 @@ internal suspend fun translateFileScript(
             }
         } finally { app.endPreparation(owner) }
     }
-    notes += if (!allReviewsCompleted) "Google ML Kit 번역 · 자동 검사는 의미 정확성을 보증하지 않습니다."
+    if (mode != FileTranslationEngine.API) notes += if (!allReviewsCompleted) "Google ML Kit 번역 · 자동 검사는 의미 정확성을 보증하지 않습니다."
         else "Google ML Kit 번역 + 준비된 AI 모델 검토 · 최종 내용은 원음과 대조하세요."
-    FileScriptTranslation(results, notes.toList(), if (allReviewsCompleted) FileTranslationEngine.GEMMA else FileTranslationEngine.MLKIT)
+    if (mode == FileTranslationEngine.API) notes += "설정한 API 경로 · " + (app.translationApiService.states.value[target]?.label ?: "기기 내 번역")
+    if (mode == FileTranslationEngine.API && !allApiCompleted) notes += "일부 구간은 기기 내 번역으로 대체했습니다."
+    FileScriptTranslation(results, notes.toList(), if (allApiCompleted) FileTranslationEngine.API else if (allReviewsCompleted) FileTranslationEngine.GEMMA else FileTranslationEngine.MLKIT)
 }
 
 internal fun fileTranslationChunks(text: String, maximum: Int = 500): List<String> {

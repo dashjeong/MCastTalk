@@ -16,7 +16,7 @@
 >
 > Without costly dedicated transmitter/receiver hardware and without requiring listeners to install any apps, anyone can simply scan a QR code with their smartphone camera to listen to live interpreted audio and view synchronized transcripts. We warmly support everyone dedicating their efforts in the field!
 
-This guide describes `0.2.41-alpha`, including the features in sections 11 and 12. The Android operator interface is currently in Korean, so Korean menu labels are included where helpful.
+This guide describes `0.2.42-alpha`, including the features in sections 11–13. The Android operator interface is currently in Korean, so Korean menu labels are included where helpful.
 
 ---
 
@@ -82,7 +82,7 @@ After models are prepared, MCastTalk's default interpretation pipeline runs loca
 
 ### 3.1 Verified Installation Steps
 
-1. Download `MCastTalk-0.2.41-alpha.apk` from GitHub [Releases](https://github.com/dashjeong/MCastTalk/releases).
+1. Download `MCastTalk-0.2.42-alpha.apk` from GitHub [Releases](https://github.com/dashjeong/MCastTalk/releases).
 2. Compare the downloaded APK SHA-256 with the `.sha256` file attached to the same release.
 3. Tap the APK file to install. If Android prompts **"Install unknown apps"**, temporarily grant permission for the file manager or browser, complete the installation, and open MCastTalk.
 4. For security, disable the "Install unknown apps" permission after installation.
@@ -286,3 +286,13 @@ Automated and virtual-device checks do not establish physical Galaxy/One UI beha
 - New lines accumulate at the bottom and earlier lines move upward. Touch pauses automatic following so you can scroll. **Follow live (실시간 따라가기)** resumes following and hides the controls. Text sizes are available in the touch menu. System Back returns without stopping input, broadcast or listening.
 - **Reconnect interpretation (통역 다시 연결)** renews recognition while keeping the broadcast, input, listening channel and confirmed scripts. It is also available in the HUD touch menu. A retained unfinished recognition tail is preserved once; the active audio queue is not rewound to replay committed sentences.
 - Normal continuous speech retires already committed assembly history. A capacity recovery preserves the usable tail and accepts the next provider segment. Repeated provider errors leave a reconnect action available; restore any denied Android permission or missing model before retrying.
+
+## 13. Automatic preparation, translation APIs and Astra in 0.2.42
+
+- **Settings → Languages → Automatic preparation** reuses saved assets after source/target language or voice changes and prepares missing assets. Preparation waits while input, broadcast or file work is active. New installs select English, Japanese, simplified/traditional Chinese and Vietnamese; existing selections remain. Initial downloads need network access and storage. Disable or cancel preparation as needed; failures can be retried manually.
+- **Settings → Models → Translation API** offers local, OpenAI, Gemini and OpenAI-compatible providers. For compatible servers, set the HTTPS base URL, model and Responses/Chat Completions protocol. Save a key and explicitly allow online use. Destination, model and key changes revoke consent. File conversion has a **Configured API** engine option. A prepared local fallback is optional. Protocol compatibility does not establish compatibility with every server/model.
+- Choose automatic, conversational or formal tone. Automatic mode requests a register matching dialogue or announcements. This affects API/Gemma instructions and sentence memory; it does not add a style-control API to ML Kit.
+- **Settings → Astra mini-me** shows local evidence and suggested actions for input recovery, language failures, preparation and observed latency. Navigation requires a tap; diagnostics do not silently stop a broadcast.
+- In the developer laboratory, enable **Self-diagnosis/self-improvement**, configure the separate teacher API and allow review. Only selected problem candidates are sent within the rate budget. The before/after report shows source, draft, proposal, selection reasons and computed checks. **Approve/apply** or **Hold** each proposal. Approved corrections apply to future matching sentences and preserve prior user-confirmed wording. This is sentence knowledge, not model-weight reinforcement learning.
+- Reports support conditional undo and JSON export. Dictionary backup/import includes report evidence; imported reports cannot grant approval/rollback rights. Reports retain up to 200 selected examples and sentence memory up to 50,000 entries. Keys and online/learning permissions are not imported.
+- Assistant settings proposals apply only after approval. Proposals requiring code changes remain development-review records. Semantic translation quality and extended physical-device operation still require field validation.

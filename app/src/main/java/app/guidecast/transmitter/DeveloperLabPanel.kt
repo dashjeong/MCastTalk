@@ -63,6 +63,12 @@ internal fun DeveloperLabPanel(
     if (!LocalDeveloperInfo.current) return
     BackHandler(enabled = onBack != null) { onBack?.invoke() }
     val context = LocalContext.current
+    val app = context.applicationContext as GuideCastApplication
+    var reportsVisible by remember { mutableStateOf(false) }
+    if (reportsVisible) {
+        TeacherLearningReportScreen(app.sentenceTranslationMemory) { reportsVisible = false }
+        return
+    }
     val options by settings.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     val owner = LocalLifecycleOwner.current
@@ -132,7 +138,7 @@ internal fun DeveloperLabPanel(
                 TranslationRegister.entries.forEach { register ->
                     FilterChip(selected = options.translationRegister == register,
                         onClick = { settings.setTranslationRegister(register) },
-                        label = { Text(if (register == TranslationRegister.FORMAL) "공식 안내" else "자연스러운 대화") })
+                        label = { Text(when (register) { TranslationRegister.AUTO -> "문맥에 맞게"; TranslationRegister.FORMAL -> "공식 안내"; TranslationRegister.CONVERSATIONAL -> "자연스러운 대화" }) })
                 }
             }
             Text("문체 조절에는 선택한 경로의 준비된 Gemma 모델 또는 키를 저장하고 전송을 허용한 온라인 API가 필요합니다. ML Kit 기본 번역만 사용하면 이 옵션을 켜도 의역하지 않습니다. 숫자·이름·부정·조건을 유지하도록 요청하며, 결과는 원음과 대조하세요.", style = MaterialTheme.typography.bodySmall)
@@ -181,9 +187,11 @@ internal fun DeveloperLabPanel(
             }
             Text(if (options.hasApiKey) "API 키 저장됨" else "API 키 없음", style = MaterialTheme.typography.bodySmall)
             LabSwitch("온라인 전송·문장 검토 허용", options.cloudReviewEnabled, settings::setCloudReviewEnabled, options.hasApiKey)
-            LabSwitch("검증된 문장 표현 자동 학습", options.autoLearnEnabled, settings::setAutoLearnEnabled)
-            Text("자동 학습은 검증을 통과한 표현을 기기의 학습 자료에 추가합니다. 원래 확정 문장을 덮어쓰지 않습니다.", style = MaterialTheme.typography.bodySmall)
-            Text("실시간 통역의 API 검토는 자동 학습도 켠 경우에만 별도로 진행합니다. 이미 표시·낭독한 문장은 바꾸지 않으며, 저장한 표현은 이후 같은 문장을 사용할 때 반영합니다. 파일 번역은 제한 시간 안에 검토한 결과를 반영합니다.", style = MaterialTheme.typography.bodySmall)
+            LabSwitch("자가진단·자기개선 모드", options.teacherLearningEnabled, settings::setTeacherLearningEnabled)
+            SelfImprovementPanel(app)
+            Text("선별된 원문과 해당 번역만 선택한 API에 전송합니다. 검사 통과는 의미 품질 보증이 아닙니다. 사용자 확정 문장은 덮어쓰지 않습니다.", style = MaterialTheme.typography.bodySmall)
+            TeacherLearningControls(settings, app.cloudTranslationReviewer) { reportsVisible = true }
+            Text("자가개선 모드에서는 실시간·파일 번역 모두 개선안을 먼저 제안합니다. 이미 표시·낭독한 문장은 바꾸지 않으며, 승인한 표현은 이후 같은 문장을 사용할 때 반영합니다.", style = MaterialTheme.typography.bodySmall)
             message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             HorizontalDivider()
             Text("현재 기기의 음성 엔진", style = MaterialTheme.typography.titleMedium)

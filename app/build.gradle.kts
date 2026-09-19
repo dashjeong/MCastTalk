@@ -132,14 +132,14 @@ android {
         applicationId = "app.guidecast.transmitter"
         minSdk = 30
         targetSdk = 36
-        versionCode = 47
-        versionName = "0.2.41"
+        versionCode = 48
+        versionName = "0.2.42"
 
         // Galaxy Note9/S23 and newer targets are ARM64. Keeping only the required ABI
         // avoids shipping an unused second LiteRT-LM native runtime in the sideload APK.
         ndk.abiFilters += "arm64-v8a"
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = "app.guidecast.transmitter.GuideCastTestRunner"
         vectorDrawables.useSupportLibrary = true
     }
 

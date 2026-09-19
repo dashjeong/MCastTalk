@@ -21,13 +21,16 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /** Display preference only: diagnostic collection/export and engine operation do not depend on it. */
-class UiDisplaySettings internal constructor(private val store: UiDisplayPreferenceStore) {
-    constructor(context: Context) : this(AndroidUiDisplayPreferenceStore(context.applicationContext))
+class UiDisplaySettings internal constructor(private val store: UiDisplayPreferenceStore, private val onChange: () -> Unit = {}) {
+    constructor(context: Context) : this(AndroidUiDisplayPreferenceStore(context.applicationContext), {
+        (context.applicationContext as? GuideCastApplication)?.developerLabSettings?.invalidateAuthorization()
+    })
 
     private val mutableDeveloperInfo = MutableStateFlow(store.readDeveloperInfo())
     val developerInfo = mutableDeveloperInfo.asStateFlow()
 
     fun setDeveloperInfo(enabled: Boolean) {
+        if (mutableDeveloperInfo.value != enabled) onChange()
         store.writeDeveloperInfo(enabled)
         mutableDeveloperInfo.value = enabled
     }

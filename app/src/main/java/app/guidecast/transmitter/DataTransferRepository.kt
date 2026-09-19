@@ -82,6 +82,7 @@ class DataTransferRepository(private val app: GuideCastApplication) {
                             }) }
                             offset += rows.size
                         } while (rows.size == 1_000)
+                        app.sentenceTranslationMemory.teacherReports().forEach { report -> emit(report.toJson().put("type", "teacherReport")) }
                     }
                     DataTransferKind.SCRIPTS -> {
                         var lastSession: Long? = null
@@ -140,6 +141,10 @@ class DataTransferRepository(private val app: GuideCastApplication) {
                         inserted += app.glossary.importMissingOverrides(stage.records("glossary").onEach { coroutine.ensureActive() }.map(DataTransferFormat::glossary))
                         stage.records("memory").map(DataTransferFormat::memory).chunked(1_000).forEach { batch ->
                             coroutine.ensureActive(); inserted += app.sentenceTranslationMemory.importRecords(batch)
+                        }
+                        stage.records("teacherReport").forEach { row ->
+                            coroutine.ensureActive()
+                            if (app.sentenceTranslationMemory.importTeacherReport(TeacherLearningReport.fromJson(row))) inserted++
                         }
                     }
                     DataTransferKind.SCRIPTS -> {
@@ -211,6 +216,7 @@ internal object PortableSettings {
         put("retentionPolicy", app.transcriptArchive.snapshot.value.retentionPolicy.name)
         put("correctionProfile", app.speechCorrections.activeProfile.value)
         put("operator", app.operatorSettings.state.value.toJson())
+        put("translationApi", app.translationApiSettings.state.value.portable())
         put("lab", JSONObject().apply {
             put("expressiveTts", options.expressiveTtsEnabled); put("paraphrase", options.paraphraseEnabled)
             put("register", options.translationRegister.name); put("provider", options.provider.name); put("model", options.modelId)
@@ -226,6 +232,7 @@ internal object PortableSettings {
             if (row.has(key)) put(key, row.get(key))
         }
         row.optJSONObject("operator")?.let { put("operator", OperatorOptions.fromJson(it).toJson()) }
+        row.optJSONObject("translationApi")?.let { put("translationApi", TranslationApiOptions.fromPortable(it).portable()) }
         row.optJSONObject("lab")?.let { lab -> put("lab", JSONObject().apply {
             listOf("expressiveTts", "paraphrase", "register", "provider", "model").forEach { key -> if (lab.has(key)) put(key, lab.get(key)) }
         }) }
@@ -236,6 +243,7 @@ internal object PortableSettings {
         if (row.has("retentionPolicy")) TranscriptRetentionPolicy.valueOf(row.getString("retentionPolicy"))
         if (row.has("correctionProfile")) SpeechCorrectionValidation.profile(row.getString("correctionProfile"))
         row.optJSONObject("operator")?.let { OperatorOptions.fromJson(it) }
+        row.optJSONObject("translationApi")?.let { TranslationApiOptions.fromPortable(it) }
         row.optJSONObject("lab")?.let { lab ->
             listOf("expressiveTts", "paraphrase").forEach { if (lab.has(it)) require(lab.get(it) is Boolean) }
             if (lab.has("register")) TranslationRegister.valueOf(lab.getString("register"))
@@ -255,8 +263,10 @@ internal object PortableSettings {
         check(!app.dataTransferUnavailable())
         app.developerLabSettings.setCloudReviewEnabled(false)
         app.developerLabSettings.setAutoLearnEnabled(false)
+        app.translationApiSettings.setAllowOnline(false)
+        row.optJSONObject("translationApi")?.let { app.translationApiSettings.configure(TranslationApiOptions.fromPortable(it)) }
         if (row.has("microphoneNoise")) app.microphoneNoiseSettings.select(MicrophoneNoiseMode.valueOf(row.getString("microphoneNoise")))
-        if (row.has("developerInfo")) UiDisplaySettings(app).setDeveloperInfo(row.getBoolean("developerInfo"))
+        if (row.has("developerInfo")) app.uiDisplaySettings.setDeveloperInfo(row.getBoolean("developerInfo"))
         if (row.has("retentionPolicy")) app.transcriptArchive.setRetentionPolicy(TranscriptRetentionPolicy.valueOf(row.getString("retentionPolicy")))
         if (row.has("correctionProfile")) app.speechCorrections.selectProfile(row.getString("correctionProfile"))
         row.optJSONObject("operator")?.let { incoming ->
