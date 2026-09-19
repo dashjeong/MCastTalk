@@ -64,8 +64,8 @@ class CloudTranslationReviewerTest {
                         "learning" -> settings.setAutoLearnEnabled(false)
                     }
                     execute.complete(Unit)
-                    // Revoking only learning still permits the separately authorized file review.
-                    assertEquals(if (revoked == "learning") "We will walk together." else "We walk together.",
+                    // An authorization generation change also discards already-running responses.
+                    assertEquals("We walk together.",
                         withTimeout(1_000L) { result.await() })
                     assertNull("No AI record may be written after $revoked consent is revoked", saved)
                 } finally { execute.complete(Unit); result.cancel() }

@@ -28,6 +28,20 @@ import org.junit.Test
 
 class MoonshineTtsAsyncRequestsTest {
     @Test
+    fun `shutdown tolerates the last operation completing concurrently`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            repeat(1_000) { index ->
+                val dispatcher = MoonshineTtsAsyncRequestDispatcher(scope, maxConcurrentOperations = 2, maxPendingOperations = 0)
+                val done = CompletableDeferred<Unit>()
+                assertTrue(dispatcher.submit(CLIENT_A, index.toLong() + 1L, "en", RecordingServiceCallback()) { null })
+                dispatcher.shutdown { done.complete(Unit) }
+                withTimeout(2_000) { done.await() }
+            }
+        } finally { scope.cancel() }
+    }
+
+    @Test
     fun `stream completion is independent of callback arrival order`() {
         assertFalse(
             moonshineStreamCanComplete(

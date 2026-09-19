@@ -4,6 +4,8 @@ package app.guidecast.provider.gemma.translation
 internal object GemmaTranslationStylePrompt {
     fun apply(prompt: String, style: String): String = when (style) {
         "" -> prompt
+        "AUTO" -> "Match the original situation and register: natural spoken phrasing for dialogue, formal phrasing for announcements. " +
+            "Use provided context only to resolve ambiguity. Translate only the current utterance. " + FIDELITY + "\n\n" + prompt
         "FORMAL" -> "Use a clear, formal register suitable for a public announcement. " +
             FIDELITY + "\n\n" + prompt
         "CONVERSATIONAL" -> "Use natural conversational phrasing suitable for spoken guidance. " +

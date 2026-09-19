@@ -40,6 +40,8 @@ internal interface SentenceMemoryStore {
     /** Deferred stores must evaluate the predicate where the actual write begins. */
     suspend fun upsertIf(entry: SentenceMemoryEntry, allowedToWrite: () -> Boolean): Boolean =
         if (allowedToWrite()) upsert(entry) else false
+    suspend fun recordTeacherReport(report: TeacherLearningReport, allowedToWrite: () -> Boolean): Boolean = false
+    suspend fun teacherReport(key: String): TeacherLearningReport? = null
 }
 
 /** Exact sentence retrieval, not an update to any model's weights. Contents stay in app-private SQLite. */
@@ -63,6 +65,13 @@ class SentenceTranslationMemory(context: Context, databaseName: String = "senten
     override suspend fun lookup(sourceLanguageTag: String, targetLanguageTag: String,
         register: TranslationRegister, original: String): SentenceMemoryEntry? = io {
         if (original.length !in 1..MAX_ORIGINAL_CHARS) return@io null
+        if (register == TranslationRegister.AUTO) {
+            val confirmed = database.readableDatabase.query("phrases", null,
+                "source_language=? AND target_language=? AND normalized_original=? AND origin='USER'",
+                arrayOf(normalizeMemoryLanguage(sourceLanguageTag), normalizeMemoryLanguage(targetLanguageTag), normalizeMemorySource(original)),
+                null, null, "updated_at DESC,id DESC", "1").use { if (it.moveToFirst()) it.entry() else null }
+            if (confirmed != null) return@io confirmed
+        }
         database.readableDatabase.query("phrases", null, KEY_SELECTION,
             arrayOf(normalizeMemoryLanguage(sourceLanguageTag), normalizeMemoryLanguage(targetLanguageTag),
                 register.name, normalizeMemorySource(original)), null, null, null, "1").use { cursor ->
@@ -101,6 +110,115 @@ class SentenceTranslationMemory(context: Context, databaseName: String = "senten
 
     suspend fun delete(id: Long) = io {
         if (database.writableDatabase.delete("phrases", "id=?", arrayOf(id.toString())) > 0) markChanged(database.readableDatabase)
+    }
+
+    override suspend fun recordTeacherReport(report: TeacherLearningReport, allowedToWrite: () -> Boolean): Boolean = io {
+        validateTeacherReport(report)
+        if (!allowedToWrite()) return@io false
+        val db = database.writableDatabase
+        db.beginTransaction()
+        try {
+            if (!allowedToWrite()) return@io false
+            val inserted = db.insertWithOnConflict("teacher_reports", null, ContentValues().apply {
+                put("fingerprint", report.key); put("created_at", report.createdAtEpochMillis)
+                put("report_json", report.toJson().toString())
+            }, SQLiteDatabase.CONFLICT_REPLACE)
+            if (inserted == -1L) return@io false
+            db.execSQL("DELETE FROM teacher_reports WHERE fingerprint IN (SELECT fingerprint FROM teacher_reports " +
+                "ORDER BY created_at DESC, fingerprint DESC LIMIT -1 OFFSET 200)")
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+        mutableRevision.value++
+        true
+    }
+
+    override suspend fun teacherReport(key: String): TeacherLearningReport? = io {
+        database.readableDatabase.query("teacher_reports", arrayOf("report_json"), "fingerprint=?", arrayOf(key),
+            null, null, null, "1").use { if (it.moveToFirst()) TeacherLearningReport.fromJson(org.json.JSONObject(it.getString(0))) else null }
+    }
+
+    suspend fun teacherReports(): List<TeacherLearningReport> = io {
+        database.readableDatabase.rawQuery("SELECT report_json FROM teacher_reports ORDER BY created_at DESC,fingerprint DESC LIMIT 200", null)
+            .use { cursor -> buildList { while (cursor.moveToNext()) add(TeacherLearningReport.fromJson(org.json.JSONObject(cursor.getString(0)))) } }
+    }
+
+    suspend fun clearTeacherReports() = io {
+        database.writableDatabase.delete("teacher_reports", null, null)
+        mutableRevision.value++
+    }
+
+    suspend fun decideTeacherLearning(report: TeacherLearningReport, approve: Boolean): Boolean = io {
+        val db = database.writableDatabase
+        var changed = false
+        db.beginTransaction()
+        try {
+            val stored = db.query("teacher_reports", arrayOf("report_json"), "fingerprint=?", arrayOf(report.key), null, null, null, "1").use {
+                if (it.moveToFirst()) TeacherLearningReport.fromJson(org.json.JSONObject(it.getString(0))) else null
+            } ?: return@io false
+            if (stored != report || stored.outcome !in setOf(TeacherReviewOutcome.PROPOSED, TeacherReviewOutcome.HELD)) return@io false
+            val appliedAt = if (approve) {
+                val candidate = stored.after ?: return@io false
+                if (stored.lessons.isEmpty() || !conservativeReviewAccepted(stored.original, stored.before, candidate, stored.targetLanguageTag)) return@io false
+                val entry = SentenceMemoryEntry(sourceLanguageTag = stored.sourceLanguageTag, targetLanguageTag = stored.targetLanguageTag,
+                    translationRegister = stored.translationRegister, original = stored.original, corrected = candidate, origin = SentenceMemoryOrigin.USER)
+                // A prior confirmed sentence wins even if it was confirmed while this report was open.
+                val existing = db.rawQuery("SELECT 1 FROM phrases WHERE source_language=? AND target_language=? " +
+                    "AND normalized_original=? AND origin=?" + (if (entry.translationRegister == TranslationRegister.AUTO) " LIMIT 1" else " AND register_name=? LIMIT 1"),
+                    (listOf(normalizeMemoryLanguage(entry.sourceLanguageTag), normalizeMemoryLanguage(entry.targetLanguageTag),
+                        normalizeMemorySource(entry.original), SentenceMemoryOrigin.USER.name) +
+                        if (entry.translationRegister == TranslationRegister.AUTO) emptyList() else listOf(entry.translationRegister.name)).toTypedArray()).use { it.moveToFirst() }
+                if (existing || !upsertInternal(db, entry, false)) return@io false
+                db.query("phrases", arrayOf("updated_at"), KEY_SELECTION, arrayOf(normalizeMemoryLanguage(entry.sourceLanguageTag),
+                    normalizeMemoryLanguage(entry.targetLanguageTag), entry.translationRegister.name, normalizeMemorySource(entry.original)), null, null, null, "1").use {
+                    it.moveToFirst(); it.getLong(0)
+                }
+            } else null
+            db.update("teacher_reports", ContentValues().apply {
+                put("report_json", stored.copy(outcome = if (approve) TeacherReviewOutcome.APPROVED else TeacherReviewOutcome.HELD,
+                    appliedAtEpochMillis = appliedAt).toJson().toString())
+            }, "fingerprint=?", arrayOf(report.key))
+            db.setTransactionSuccessful(); changed = true
+        } finally { db.endTransaction() }
+        if (changed) markChanged(db)
+        changed
+    }
+
+    suspend fun importTeacherReport(report: TeacherLearningReport): Boolean = io {
+        validateTeacherReport(report)
+        val db = database.writableDatabase
+        // Imported metadata cannot mint a local approval/rollback receipt.
+        val evidence = report.copy(outcome = TeacherReviewOutcome.IMPORTED, appliedAtEpochMillis = null)
+        if (db.rawQuery("SELECT COUNT(*) FROM teacher_reports", null).use { it.moveToFirst(); it.getInt(0) } >= 200) return@io false
+        val inserted = db.insertWithOnConflict("teacher_reports", null, ContentValues().apply {
+            put("fingerprint", report.key); put("created_at", report.createdAtEpochMillis); put("report_json", evidence.toJson().toString())
+        }, SQLiteDatabase.CONFLICT_IGNORE) != -1L
+        if (inserted) mutableRevision.value++
+        inserted
+    }
+
+    /** Roll back only this still-unconfirmed AI correction; never erase subsequent or human edits. */
+    suspend fun undoTeacherLearning(report: TeacherLearningReport): Boolean = io {
+        val db = database.writableDatabase
+        db.beginTransaction()
+        val removed: Boolean
+        try {
+            val stored = db.query("teacher_reports", arrayOf("report_json"), "fingerprint=?", arrayOf(report.key), null, null, null, "1").use {
+                if (it.moveToFirst()) TeacherLearningReport.fromJson(org.json.JSONObject(it.getString(0))) else null
+            }
+            if (stored != report || stored.outcome !in setOf(TeacherReviewOutcome.APPROVED, TeacherReviewOutcome.LEARNED)) return@io false
+            val extra = if (report.outcome == TeacherReviewOutcome.APPROVED && report.appliedAtEpochMillis != null)
+                " AND updated_at=${report.appliedAtEpochMillis}" else ""
+            removed = db.delete("phrases", "$KEY_SELECTION AND origin=? AND corrected=?$extra",
+                arrayOf(normalizeMemoryLanguage(report.sourceLanguageTag), normalizeMemoryLanguage(report.targetLanguageTag),
+                    report.translationRegister.name, normalizeMemorySource(report.original),
+                    if (extra.isNotEmpty()) SentenceMemoryOrigin.USER.name else SentenceMemoryOrigin.AI.name, report.after.orEmpty())) > 0
+            if (removed) db.update("teacher_reports", ContentValues().apply {
+                put("report_json", report.copy(outcome = TeacherReviewOutcome.UNDONE).toJson().toString())
+            }, "fingerprint=?", arrayOf(report.key))
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+        if (removed) markChanged(database.readableDatabase)
+        removed
     }
 
     suspend fun confirm(id: Long): Boolean = io {
@@ -209,15 +327,26 @@ class SentenceTranslationMemory(context: Context, databaseName: String = "senten
         origin = SentenceMemoryOrigin.valueOf(getString(getColumnIndexOrThrow("origin"))),
         updatedAtEpochMillis = getLong(getColumnIndexOrThrow("updated_at")),
     )
-    private class MemoryDatabase(context: Context, name: String) : SQLiteOpenHelper(context, name, null, 1) {
+    private class MemoryDatabase(context: Context, name: String) : SQLiteOpenHelper(context, name, null, 2) {
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL("CREATE TABLE phrases(id INTEGER PRIMARY KEY AUTOINCREMENT,source_language TEXT NOT NULL," +
                 "target_language TEXT NOT NULL,register_name TEXT NOT NULL,normalized_original TEXT NOT NULL," +
                 "original TEXT NOT NULL,corrected TEXT NOT NULL,origin TEXT NOT NULL,updated_at INTEGER NOT NULL," +
                 "UNIQUE(source_language,target_language,register_name,normalized_original))")
             db.execSQL("CREATE INDEX phrases_recent ON phrases(updated_at DESC,id DESC)")
+            db.execSQL("CREATE INDEX phrases_confirmed ON phrases(source_language,target_language,normalized_original,origin,updated_at)")
+            createTeacherReports(db)
         }
-        override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+        override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+            if (oldVersion < 2) {
+                createTeacherReports(db)
+                db.execSQL("CREATE INDEX phrases_confirmed ON phrases(source_language,target_language,normalized_original,origin,updated_at)")
+            }
+        }
+        private fun createTeacherReports(db: SQLiteDatabase) {
+            db.execSQL("CREATE TABLE teacher_reports(fingerprint TEXT PRIMARY KEY, created_at INTEGER NOT NULL,report_json TEXT NOT NULL)")
+            db.execSQL("CREATE INDEX teacher_reports_recent ON teacher_reports(created_at DESC)")
+        }
     }
     companion object {
         const val MAX_ENTRIES = 50_000

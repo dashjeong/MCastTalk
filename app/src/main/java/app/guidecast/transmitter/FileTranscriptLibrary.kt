@@ -9,7 +9,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.Closeable
 
-enum class FileTranslationEngine { MLKIT, GEMMA }
+enum class FileTranslationEngine { MLKIT, GEMMA, API }
 
 /** User content, kept only in the app-private library and excluded from diagnostic exports. */
 data class FileLibraryEntry(

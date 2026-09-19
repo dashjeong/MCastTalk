@@ -124,6 +124,8 @@ class GuideCastApplication : Application() {
     val uiDisplaySettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { UiDisplaySettings(this) }
     val operatorSettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { OperatorSettings(this) }
     val developerLabSettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { DeveloperLabSettings(this) }
+    val translationApiSettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { TranslationApiSettings(this) }
+    val translationApiService by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { TranslationApiService(translationApiSettings) }
     val sentenceTranslationMemory by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { SentenceTranslationMemory(this) }
     val cloudTranslationReviewer by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         CloudTranslationReviewer(developerLabSettings, uiDisplaySettings, sentenceTranslationMemory)

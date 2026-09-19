@@ -498,7 +498,11 @@ internal class MoonshineTtsAsyncRequestDispatcher(
                 synchronized(shutdownLock) {
                     shutdownAction = onIdle
                 }
-                operations.values.toList()
+                // Completion can remove the last entry before taking languageQueueLock.
+                // Avoid Collection.toList's racy size==1 / iterator.next() optimization.
+                ArrayList<ActiveOperation>().also { snapshot ->
+                    operations.values.forEach { snapshot.add(it) }
+                }
             }
         }
         if (activeOperations == null) return

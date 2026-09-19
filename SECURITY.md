@@ -7,7 +7,8 @@ agreement or certification that all vulnerabilities have been removed:
 
 | Version | Supported |
 |---|---|
-| `0.2.41-alpha` | Current Alpha; experimental |
+| `0.2.42-alpha` | Current Alpha; experimental |
+| `0.2.41-alpha` | Previous public Alpha |
 | `0.2.40-alpha` | Superseded: continuous transcript buffer recovery fix in 0.2.41 |
 | `0.2.39-alpha` | Previous public Alpha |
 | `< 0.2.39` | :x: |
@@ -31,6 +32,12 @@ MCastTalk is designed with offline-first and privacy-focused principles:
    - This is optional paid API use; provider terms and data policies apply. Turning it off keeps local translation. Keys are encrypted with Android Keystore and excluded from portable settings. Imports reset online consent and automatic learning. See [the request contract](docs/DEVELOPER_LAB.md).
 5. **Standalone Use**:
    - The standalone option does not open listener HTTP/WebSocket sockets. Prepared local models can be used without Wi-Fi. It does not disable Android system networking or override optional API consent.
+6. **Optional Primary Translation API**:
+   - Settings can select OpenAI, Gemini or a user-specified HTTPS OpenAI-compatible endpoint. Separate consent permits the current source text and up to 1,000 characters of preceding context. No audio, diagnostic logs or credentials enter the body. Credentials are encrypted and scoped to the provider/base URL. Changing the destination or model resets consent; redirects are rejected.
+   - Responses are bounded by time, size and JSON nesting depth. The app never executes model-generated tools, commands or code. Recognizable credential-shaped text is blocked locally; this heuristic is not a complete personal-data classifier. Do not send sensitive speech to a third-party service without reviewing its terms.
+7. **Approval-Based Improvement**:
+   - Teacher learning first selects likely problem cases locally. Normal repeated sentences are not sent simply because they occur often. Improved candidates remain pending until the user approves; holding a proposal preserves current behavior. Existing confirmed corrections take precedence.
+   - Up to 200 selected before/after reports are stored privately and may be explicitly exported or migrated with dictionary data. The local Astra assistant uses counters and fixed actions, with no permission to change security policy or deploy code. No claim of immunity to attacks by AI agents or humans is made.
 
 ### Listener access and transport
 

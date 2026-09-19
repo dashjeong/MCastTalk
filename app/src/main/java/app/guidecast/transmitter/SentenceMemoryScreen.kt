@@ -102,7 +102,7 @@ internal fun SentenceMemoryScreen(memory: SentenceTranslationMemory, onBack: () 
                         SentenceLanguageChoice("번역", target, !busy) { target = it }
                         TranslationRegister.entries.forEach { option ->
                             FilterChip(selected = option == register, enabled = !busy, onClick = { register = option },
-                                label = { Text(if (option == TranslationRegister.FORMAL) "공식·안내" else "대화·의역 실험") })
+                                label = { Text(when (option) { TranslationRegister.AUTO -> "문맥에 맞게"; TranslationRegister.FORMAL -> "공식·안내"; TranslationRegister.CONVERSATIONAL -> "대화·의역 실험" }) })
                         }
                         OutlinedTextField(original, { original = it.take(4_000) }, label = { Text("원문") }, enabled = !busy, modifier = Modifier.fillMaxWidth())
                         OutlinedTextField(corrected, { corrected = it.take(8_000) }, label = { Text("확인한 번역") }, enabled = !busy, modifier = Modifier.fillMaxWidth())
@@ -121,7 +121,7 @@ internal fun SentenceMemoryScreen(memory: SentenceTranslationMemory, onBack: () 
                 OutlinedCard(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text("${sentenceLanguageLabel(entry.sourceLanguageTag)} → ${sentenceLanguageLabel(entry.targetLanguageTag)} · " +
-                            if (entry.translationRegister == TranslationRegister.FORMAL) "공식·안내" else "대화")
+                            when (entry.translationRegister) { TranslationRegister.AUTO -> "문맥에 맞게"; TranslationRegister.FORMAL -> "공식·안내"; TranslationRegister.CONVERSATIONAL -> "대화" })
                         Text(entry.original, style = MaterialTheme.typography.bodyLarge)
                         Text(entry.corrected, color = MaterialTheme.colorScheme.primary)
                         Text(if (entry.origin == SentenceMemoryOrigin.USER) "사용자 확인 완료" else "AI 보정 · 내용 확인 필요", style = MaterialTheme.typography.labelMedium)

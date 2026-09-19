@@ -328,6 +328,7 @@ private fun GuideCastScreen(
     var showGlossary by rememberSaveable { mutableStateOf(false) }
     var showSpeechCorrections by rememberSaveable { mutableStateOf(false) }
     var settingsCategory by rememberSaveable { mutableStateOf(SettingsCategory.LANGUAGES) }
+    var showAssistant by rememberSaveable { mutableStateOf(false) }
     val noiseSettings = (LocalContext.current.applicationContext as GuideCastApplication).microphoneNoiseSettings
     val developerInfo = LocalDeveloperInfo.current
     val noiseMode by noiseSettings.mode.collectAsStateWithLifecycle()
@@ -382,6 +383,23 @@ private fun GuideCastScreen(
     LaunchedEffect(developerInfo) { if (!developerInfo) showDeveloperLab = false }
     LaunchedEffect(operatorOptions.runMode, broadcastActive) {
         if (!broadcastActive) runMode = operatorOptions.runMode
+    }
+    if (showAssistant) {
+        OperatorAssistantScreen(broadcast, translationModels, onBack = { showAssistant = false }, onNavigate = { destination ->
+            showAssistant = false
+            when (destination) {
+                AssistantDestination.INPUT -> section = GuideCastSection.BROADCAST
+                AssistantDestination.TEST -> section = GuideCastSection.TEST
+                AssistantDestination.LANGUAGES -> { section = GuideCastSection.MODELS; settingsCategory = SettingsCategory.LANGUAGES }
+                AssistantDestination.LEARNING -> {
+                    section = GuideCastSection.MODELS
+                    settingsCategory = SettingsCategory.TOOLS
+                    if (developerInfo) showDeveloperLab = true
+                }
+            }
+            sectionTopRequest += 1
+        })
+        return
     }
     if (showDataTransfer) {
         DataTransferPanel(onBack = { showDataTransfer = false },
@@ -722,12 +740,22 @@ private fun GuideCastScreen(
                 }
 
                 GuideCastSection.MODELS -> {
+                  item(key = "operator-assistant") {
+                    OutlinedButton(onClick = { showAssistant = true }, modifier = Modifier.fillMaxWidth()) { Text("아스트라 미니미 · 진단과 개선 제안") }
+                  }
                   item(key = "developer-display") { DeveloperInformationSettings() }
                   item(key = "settings-navigation") {
                     SettingsCategoryPicker(settingsCategory) {
                         settingsCategory = it
                         sectionTopRequest += 1
                     }
+                  }
+                  if (settingsCategory == SettingsCategory.LANGUAGES) item(key = "automatic-language-preparation") {
+                    AutomaticPreparationSettings(app.operatorSettings)
+                  }
+                  if (settingsCategory == SettingsCategory.MODELS) item(key = "translation-api") {
+                    TranslationApiPanel(app.translationApiSettings, app.translationApiService,
+                        enabled = !inputActive && !broadcastActive && !broadcast.translationTestActive)
                   }
                   item(key = "settings-${settingsCategory.name}") {
                     if (broadcast.translationTestActive) {
@@ -3510,13 +3538,7 @@ private fun TranslationPreparationActions(
                 Spacer(Modifier.size(8.dp))
                 Text(state.operationLabel)
             } else {
-                Text(
-                    if (state.useGemma) {
-                        "음성인식 · 선택한 통역 음성 준비"
-                    } else {
-                        "번역 · 음성인식 · 선택 음성 준비"
-                    },
-                )
+                Text("준비 상태 다시 확인 · 실패 항목 재시도")
             }
         }
         if (state.isBusy) {

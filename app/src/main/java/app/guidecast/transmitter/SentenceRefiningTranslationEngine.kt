@@ -10,7 +10,7 @@ internal class SentenceRefiningTranslationEngine(
     private val reviewer: CloudTranslationReviewer,
 ) : BoundedQueuedTranslationEngine {
     override val maximumCallDurationMillis: Long
-        get() = ((delegate as? BoundedQueuedTranslationEngine)?.maximumCallDurationMillis ?: 4_000L) + 100L
+        get() = ((delegate as? BoundedQueuedTranslationEngine)?.maximumCallDurationMillis ?: 4_000L) + 200L
 
     override suspend fun translateWithContext(text: String, contextBefore: String?,
         sourceLanguageTag: String, targetLanguageTag: String): String {

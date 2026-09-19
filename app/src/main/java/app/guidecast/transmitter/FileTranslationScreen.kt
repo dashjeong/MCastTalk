@@ -205,6 +205,8 @@ internal fun FileTranslationScreen(
                         FilterChip(selected = state.translationEngine == FileTranslationEngine.GEMMA,
                             enabled = !busy, onClick = { onTranslationEngineChange(FileTranslationEngine.GEMMA) },
                             label = { Text(if (developerInfo) "ML Kit + AI 검토" else "번역 + 추가 검토") })
+                        FilterChip(selected = state.translationEngine == FileTranslationEngine.API,
+                            enabled = !busy, onClick = { onTranslationEngineChange(FileTranslationEngine.API) }, label = { Text("설정한 API") })
                     }
                     Text("준비된 모델과 기기 성능에 따라 처리 시간과 지원 언어가 달라집니다.",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
