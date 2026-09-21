@@ -2,11 +2,18 @@
 
 **실시간 다국어 통역방송(feat. DMZ peace walk)**
 
-**0.2.42-alpha — 아스트라 미니미·승인형 선별 학습·API 번역·언어 자동 준비**
+**0.2.43-alpha 개발 소스 — 서비스 홈·음성노트**
+
+녹톡(음성노트) / 라이브톡(원음 방송) / 통역톡(다국어 방송) /
+스크립톡(파일 전사)를 독립된 작업 공간으로
+구분했습니다. 음성노트는 녹음 후 받아쓰기, 원문과 괄호 번역, 원음 재생,
+TXT·SRT·WAV 저장을 제공합니다. [사용 방법과 지원 범위](docs/VOICE_NOTES.md) ·
+[이번 개발 업데이트 검증 결과](docs/VOICE_NOTES_VALIDATION.md)
+이 소스의 버전은 `versionCode 49`이며, 아래 공개 APK는 이전 배포본입니다.
 
 [APK 다운로드](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.42-alpha) ·
 [검증 결과와 미검증 환경](docs/TEST_REPORT.md)
-(`versionCode 48`). 기존 공개 APK와 같은 서명키를 사용하는 업데이트입니다.
+(`0.2.42-alpha`, `versionCode 48`). 새 정식 서명 업데이트는 아직 게시하지 않았습니다.
 
 아스트라 미니미는 기기 상태를 진단하고 개선안을 안내합니다. 실험실에서는 필요한 문장만
 스승 API와 비교하고, 전후 리포트를 확인한 사용자가 승인·보류합니다. 승인 전에는 기존

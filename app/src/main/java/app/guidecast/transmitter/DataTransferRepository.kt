@@ -303,4 +303,4 @@ internal fun BroadcastSnapshot.dataTransferUnavailable(): Boolean = translationT
     inputPhase in setOf(InputPhase.STARTING, InputPhase.ACTIVE, InputPhase.PAUSED)
 
 internal fun GuideCastApplication.dataTransferUnavailable(): Boolean = broadcastRuntime.state.value.dataTransferUnavailable() ||
-    localFileWorkActive.value || localModelWorkActive.value
+    localFileWorkActive.value || localVoiceNoteWorkActive.value || localModelWorkActive.value

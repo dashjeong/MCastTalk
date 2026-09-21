@@ -71,8 +71,8 @@ internal class DataTransferViewModel private constructor(
 
     init {
         viewModelScope.launch {
-            combine(app.broadcastRuntime.state, app.localFileWorkActive, app.localModelWorkActive) { runtime, fileBusy, modelBusy ->
-                runtime.dataTransferUnavailable() || fileBusy || modelBusy
+            combine(app.broadcastRuntime.state, app.localFileWorkActive, app.localModelWorkActive, app.localVoiceNoteWorkActive) { runtime, fileBusy, modelBusy, noteBusy ->
+                runtime.dataTransferUnavailable() || fileBusy || modelBusy || noteBusy
             }.distinctUntilChanged().collect { busy ->
                 if (busy) work?.cancel()
             }

@@ -136,6 +136,7 @@ import kotlinx.coroutines.withContext
 class MainActivity : ComponentActivity() {
     private val viewModel: AudioInputViewModel by viewModels()
     private val fileViewModel: FileTranslationViewModel by viewModels()
+    private val voiceNoteViewModel: VoiceNoteViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -149,6 +150,7 @@ class MainActivity : ComponentActivity() {
                     LocalUiDisplaySettings provides displaySettings,
                 ) {
                 FileTaskLifecycle(fileViewModel)
+                VoiceNoteLifecycle(voiceNoteViewModel)
                 val state by viewModel.uiState.collectAsStateWithLifecycle()
                 val broadcast by viewModel.broadcastState.collectAsStateWithLifecycle()
                 val translationModels by viewModel.translationModelState.collectAsStateWithLifecycle()
@@ -191,6 +193,7 @@ class MainActivity : ComponentActivity() {
 
                 GuideCastScreen(
                     fileViewModel = fileViewModel,
+                    voiceNoteViewModel = voiceNoteViewModel,
                     state = state,
                     broadcast = broadcast,
                     translationModels = translationModels,
@@ -274,6 +277,7 @@ private fun Context.hasPermission(permission: String): Boolean =
 @Composable
 private fun GuideCastScreen(
     fileViewModel: FileTranslationViewModel,
+    voiceNoteViewModel: VoiceNoteViewModel,
     state: AudioInputUiState,
     broadcast: BroadcastSnapshot,
     translationModels: TranslationModelUiState,
@@ -324,6 +328,8 @@ private fun GuideCastScreen(
     onLocalMonitorVolume: (Float) -> Unit,
 ) {
     var section by rememberSaveable { mutableStateOf(GuideCastSection.BROADCAST) }
+    var service by rememberSaveable { mutableStateOf<MCastService?>(null) }
+    var broadcastWorkspace by rememberSaveable { mutableStateOf<MCastService?>(null) }
     var showLicenses by rememberSaveable { mutableStateOf(false) }
     var showGlossary by rememberSaveable { mutableStateOf(false) }
     var showSpeechCorrections by rememberSaveable { mutableStateOf(false) }
@@ -363,12 +369,47 @@ private fun GuideCastScreen(
         broadcast.phase == BroadcastPhase.LIVE ||
         broadcast.phase == BroadcastPhase.PAUSED
     val app = LocalContext.current.applicationContext as GuideCastApplication
+    val voiceNoteState by voiceNoteViewModel.state.collectAsStateWithLifecycle()
     val recognitionConnection by app.speechRecognitionEngine.status.collectAsStateWithLifecycle()
     val operatorOptions by app.operatorSettings.state.collectAsStateWithLifecycle()
     val fileState by fileViewModel.uiState.collectAsStateWithLifecycle()
     val filePlayback by fileViewModel.playbackState.collectAsStateWithLifecycle()
     val speechPreviewAllowed = !inputActive && !broadcastActive && !broadcast.translationTestActive &&
+        !voiceNoteState.recording && !voiceNoteState.busy && !voiceNoteState.playback.isPlaying &&
         !fileState.isConverting && !fileState.isLoading && filePlayback?.isPlaying != true && filePlayback?.isTranslating != true
+    val activeService = when {
+        inputActive || broadcastActive || broadcast.translationTestActive ->
+            broadcastWorkspace ?: if (translationModels.broadcastTranslationEnabled) MCastService.MULTILINGUAL else MCastService.VOICE
+        voiceNoteState.recording || voiceNoteState.busy || voiceNoteState.playback.isPlaying -> MCastService.NOTES
+        fileState.isConverting || fileState.isLoading || filePlayback?.isPlaying == true || filePlayback?.isTranslating == true -> MCastService.FILES
+        else -> null
+    }
+    if (service == null) {
+        ServiceHomeScreen(activeService) { selected ->
+            if (activeService == null && selected in setOf(MCastService.VOICE, MCastService.MULTILINGUAL)) {
+                broadcastWorkspace = selected
+                onSetTranslationBroadcastEnabled(selected == MCastService.MULTILINGUAL)
+                runMode = BroadcastRunMode.NETWORK
+                app.operatorSettings.setRunMode(BroadcastRunMode.NETWORK)
+            }
+            section = GuideCastSection.BROADCAST
+            showLicenses = false; showGlossary = false; showSpeechCorrections = false
+            showAssistant = false; showDataTransfer = false; showSentenceMemory = false
+            showDeveloperLab = false; showFileTranslation = false; showLiveHud = false; showLiveTranscript = false
+            service = selected
+        }
+        return
+    }
+    if (service == MCastService.NOTES) {
+        VoiceNoteRoute(voiceNoteViewModel, onBack = { service = null })
+        return
+    }
+    if (service == MCastService.FILES) {
+        FileTranslationRoute(fileViewModel, onBack = { service = null })
+        return
+    }
+    BackHandler(enabled = !showLicenses && !showGlossary && !showSpeechCorrections && !showAssistant &&
+        !showDataTransfer && !showSentenceMemory && !showDeveloperLab && !showFileTranslation && !showLiveHud && !showLiveTranscript) { service = null }
     val effectiveAccessMode = if (broadcastActive) {
         broadcast.accessMode ?: accessMode
     } else {
@@ -441,6 +482,10 @@ private fun GuideCastScreen(
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
+          Column(Modifier.statusBarsPadding()) {
+            TextButton(onClick = { service = null }) {
+                Text("← 서비스 홈 · ${service?.title.orEmpty()}")
+            }
             OperatorHeader(
                 broadcast = broadcast,
                 onOpenBroadcast = {
@@ -453,6 +498,7 @@ private fun GuideCastScreen(
                 onOpenLicenses = { showSpeechCorrections = false; showGlossary = false; showLicenses = true },
                 onStopTranslationTest = onStopTranslationTest,
             )
+          }
         },
         bottomBar = {
             if (!showLicenses && !showGlossary && !showSpeechCorrections) {
@@ -501,12 +547,14 @@ private fun GuideCastScreen(
             item {
                 SectionIntroduction(
                     eyebrow = section.eyebrow,
-                    title = section.title,
-                    description = section.description,
+                    title = if (section == GuideCastSection.BROADCAST) service?.title.orEmpty()
+                        else if (section == GuideCastSection.TEST && service == MCastService.VOICE) "음성 송출 점검" else section.title,
+                    description = if (section == GuideCastSection.BROADCAST) service?.description.orEmpty()
+                        else if (section == GuideCastSection.TEST && service == MCastService.VOICE) "입력 장치와 원음 상태를 확인하세요." else section.description,
                 )
             }
 
-            if (section != GuideCastSection.MODELS) {
+            if (section != GuideCastSection.MODELS && service == MCastService.MULTILINGUAL) {
                 item {
                     OutlinedButton(onClick = { showLiveTranscript = true }, modifier = Modifier.fillMaxWidth()) {
                         Text("화면 전환 · 전체 화면 스크립트")
@@ -563,7 +611,7 @@ private fun GuideCastScreen(
                                 pin = broadcastPin,
                                 micPinEnabled = micPinEnabled,
                                 micPin = micPin,
-                                canStart = true,
+                                canStart = service != MCastService.MULTILINGUAL || translationModels.broadcastTranslationEnabled,
                                 onAccessModeChange = { accessMode = it },
                                 onPinChange = { broadcastPin = it },
                                 onMicPinEnabledChange = { micPinEnabled = it },
@@ -615,7 +663,7 @@ private fun GuideCastScreen(
                             state.selectedDevice?.kind != AudioInputKind.WEB_SPEAKER, noiseSettings::select)
                     }
                     item { OperatorStatusStrip(broadcast = broadcast, models = translationModels) }
-                    item {
+                    if (service == MCastService.MULTILINGUAL) item {
                         LiveSentenceMonitor(
                             broadcast = broadcast,
                             models = translationModels,
@@ -631,7 +679,7 @@ private fun GuideCastScreen(
                             ProcessingPipelineCard(broadcast = broadcast, models = translationModels)
                         }
                     }
-                    item {
+                    if (service == MCastService.MULTILINGUAL) item {
                         OutputChannelsCard(
                             broadcast = broadcast,
                             models = translationModels,
@@ -653,14 +701,14 @@ private fun GuideCastScreen(
                         }
                     }
                     item {
-                        BroadcastModeSelector(
-                            translationEnabled = translationModels.broadcastTranslationEnabled,
-                            selectedInputKind = state.selectedDevice?.kind,
-                            selectedLanguageLabels = selectedTranslationLanguageOptions(translationModels)
-                                .map { it.label.substringBefore(" ·") },
-                            enabled = !broadcastActive,
-                            onSetTranslationEnabled = onSetTranslationBroadcastEnabled,
-                        )
+                        Text(if (service == MCastService.VOICE) "원음 방송 · 청취자에게 입력 소리를 그대로 전달합니다."
+                            else "다국어 방송 · 설정에서 통역할 언어와 모델을 준비하세요.", style = MaterialTheme.typography.bodyMedium)
+                        if (service == MCastService.MULTILINGUAL && !translationModels.broadcastTranslationEnabled) {
+                            OutlinedButton(onClick = { onSetTranslationBroadcastEnabled(true) }, enabled = !broadcastActive) {
+                                Text("언어·모델 준비 확인 후 통역 활성화")
+                            }
+                            Text("통역을 활성화하면 방송을 시작할 수 있습니다. 설정에서 언어와 모델을 준비하세요.", style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                     if (!broadcastActive) {
                         item {
@@ -672,7 +720,7 @@ private fun GuideCastScreen(
                                 pin = broadcastPin,
                                 micPinEnabled = micPinEnabled,
                                 micPin = micPin,
-                                canStart = true,
+                                canStart = service != MCastService.MULTILINGUAL || translationModels.broadcastTranslationEnabled,
                                 onAccessModeChange = { accessMode = it },
                                 onPinChange = { broadcastPin = it },
                                 onMicPinEnabledChange = { micPinEnabled = it },
@@ -690,7 +738,7 @@ private fun GuideCastScreen(
                 GuideCastSection.TEST -> {
                     item(key = "file-translation-entry") {
                         OutlinedButton(onClick = { showFileTranslation = true }, modifier = Modifier.fillMaxWidth()) {
-                            Text("번역 시험 · 파일 변환 / 재생")
+                            Text("${MCastService.FILES.title} 열기")
                         }
                     }
                     item {
@@ -716,7 +764,7 @@ private fun GuideCastScreen(
                             onStop = onStopInput,
                         )
                     }
-                    item {
+                    if (service == MCastService.MULTILINGUAL) item {
                         TranslationTestPanel(
                             broadcast = broadcast,
                             models = translationModels,
@@ -725,7 +773,7 @@ private fun GuideCastScreen(
                             onClear = onClearTranscripts,
                         )
                     }
-                    item {
+                    if (service == MCastService.MULTILINGUAL) item {
                         WorkspaceDisclosure(
                             title = "방송 스크립트 보관함",
                             summary = transcriptArchive.warning ?: "최근 ${transcriptArchive.lines.size}개 문장 · 언어별 조회 및 선택 삭제",

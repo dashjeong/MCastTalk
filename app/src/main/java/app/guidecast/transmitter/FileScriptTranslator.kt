@@ -21,6 +21,7 @@ internal suspend fun translateFileScript(
     entry: FileLibraryEntry,
     target: String,
     mode: FileTranslationEngine,
+    allowCloudReview: Boolean = true,
     onProgress: (Int, Int) -> Unit,
 ): FileScriptTranslation = app.withTranslationBackendUse {
     val notes = linkedSetOf<String>()
@@ -108,7 +109,7 @@ internal suspend fun translateFileScript(
                             draft
                         } else reviewed
                     }
-                    val refined = app.cloudTranslationReviewer.refine(source, target, chunk, localResult)
+                    val refined = if (allowCloudReview) app.cloudTranslationReviewer.refine(source, target, chunk, localResult) else localResult
                     if (refined != localResult) notes += "문장 사전 또는 사용자가 활성화한 API 검토 보정을 반영했습니다."
                     if (target.equals("zh-TW", true)) convertToTraditionalChinese(refined) else refined
                     }

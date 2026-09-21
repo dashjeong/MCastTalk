@@ -99,7 +99,7 @@ internal fun FileTranslationScreen(
     val readyCount = queued.count { it.status == FileConversionStatus.READY || fileConversionCanRetry(it.status) }
     val retryCount = queued.count { fileConversionCanRetry(it.status) }
     val conversionPreflight = fileConversionPreflight(state)
-    Surface(modifier.fillMaxSize().safeDrawingPadding().semantics { paneTitle = "파일 번역 시험" }) {
+    Surface(modifier.fillMaxSize().safeDrawingPadding().semantics { paneTitle = MCastService.FILES.title }) {
         Column(Modifier.fillMaxSize()) {
             TextButton(onClick = onBack, modifier = Modifier.padding(horizontal = 8.dp)) { Text("시험 화면으로") }
             LazyColumn(
@@ -108,7 +108,7 @@ internal fun FileTranslationScreen(
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 item {
-                    Text("파일 번역 시험", style = MaterialTheme.typography.headlineSmall,
+                    Text(MCastService.FILES.title, style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
                     Text("음성 파일을 문장으로 변환하고, 번역을 나란히 보며 원본 음성을 재생합니다.",
                         style = MaterialTheme.typography.bodyMedium)

@@ -329,6 +329,7 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
         }
     }
     private fun isBusy(): Boolean = work?.isCompleted == false || mutableUi.value.isConverting ||
+        app.localVoiceNoteWorkActive.value ||
         mutablePlayback.value?.isTranslating == true || mutableUi.value.isLoading
     private suspend fun refreshLibrary() {
         try { val entries = withContext(Dispatchers.IO) { library.list() }; mutableUi.update { it.copy(library = entries) } }
