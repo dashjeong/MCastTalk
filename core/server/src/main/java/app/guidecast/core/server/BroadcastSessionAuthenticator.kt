@@ -177,13 +177,16 @@ class BroadcastSessionAuthenticator private constructor(
         private fun hashPin(pin: CharArray, salt: ByteArray): ByteArray {
             val encoded = StandardCharsets.UTF_8.encode(CharBuffer.wrap(pin))
             val bytes = ByteArray(encoded.remaining())
-            encoded.get(bytes)
-            val digest = MessageDigest.getInstance("SHA-256")
-            digest.update(salt)
-            digest.update(ByteBuffer.allocate(Int.SIZE_BYTES).putInt(bytes.size).array())
-            val result = digest.digest(bytes)
-            bytes.fill(0)
-            return result
+            try {
+                encoded.get(bytes)
+                val digest = MessageDigest.getInstance("SHA-256")
+                digest.update(salt)
+                digest.update(ByteBuffer.allocate(Int.SIZE_BYTES).putInt(bytes.size).array())
+                return digest.digest(bytes)
+            } finally {
+                bytes.fill(0)
+                if (encoded.hasArray()) encoded.array().fill(0)
+            }
         }
     }
 }

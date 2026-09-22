@@ -76,6 +76,8 @@ internal fun DeveloperLabPanel(
     var language by remember { mutableStateOf("ko") }
     var keyInput by remember(options.provider) { mutableStateOf("") }
     var modelInput by remember(options.provider, options.modelId) { mutableStateOf(options.modelId) }
+    var secondaryModelInput by remember(options.secondaryModelId) { mutableStateOf(options.secondaryModelId) }
+    var situationInput by remember(options.comparisonSituation) { mutableStateOf(options.comparisonSituation) }
     var message by remember { mutableStateOf<String?>(null) }
     var previewMessage by remember { mutableStateOf<String?>(null) }
     var previewBusy by remember { mutableStateOf(false) }
@@ -144,6 +146,12 @@ internal fun DeveloperLabPanel(
             Text("문체 조절에는 선택한 경로의 준비된 Gemma 모델 또는 키를 저장하고 전송을 허용한 온라인 API가 필요합니다. ML Kit 기본 번역만 사용하면 이 옵션을 켜도 의역하지 않습니다. 숫자·이름·부정·조건을 유지하도록 요청하며, 결과는 원음과 대조하세요.", style = MaterialTheme.typography.bodySmall)
             HorizontalDivider()
             Text("같은 문장으로 음성 비교", style = MaterialTheme.typography.titleMedium)
+            Text("숫자·부정 표현이 빠지지 않는지, 이름 발음과 문장 사이 목소리가 일관되는지 확인하세요. 기본 음성과 표현 실험에 같은 문장을 사용합니다.", style = MaterialTheme.typography.bodySmall)
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                SpeechAuditionScenario.entries.forEach { scenario ->
+                    OutlinedButton(onClick = { text = speechAuditionSample(language, scenario) }, enabled = !previewBusy) { Text(scenario.label) }
+                }
+            }
             OutlinedTextField(text, { if (it.length <= 500) text = it }, enabled = !previewBusy,
                 label = { Text("비교할 문장 · 최대 500자") }, modifier = Modifier.fillMaxWidth())
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -188,6 +196,18 @@ internal fun DeveloperLabPanel(
             Text(if (options.hasApiKey) "API 키 저장됨" else "API 키 없음", style = MaterialTheme.typography.bodySmall)
             LabSwitch("온라인 전송·문장 검토 허용", options.cloudReviewEnabled, settings::setCloudReviewEnabled, options.hasApiKey)
             LabSwitch("자가진단·자기개선 모드", options.teacherLearningEnabled, settings::setTeacherLearningEnabled)
+            Text("Gemini·ChatGPT 교차 검증", style = MaterialTheme.typography.titleMedium)
+            Text("두 제공자에서 각각 번역안을 받고 다른 제공자가 후보를 다시 검사합니다. 원문·앱 번역·직전 문맥 최대 1,000자·아래 상황을 두 API에 전송합니다. 재검증에는 이 문장의 기존 교정과 기기에 저장된 유사 교정 최대 3건의 원문·번역·상황도 포함됩니다. 비교 1건당 최대 3회 API 요청이며 각 제공자의 요금이 발생할 수 있습니다. 채팅 구독과 API 요금은 별개입니다.", style = MaterialTheme.typography.bodySmall)
+            Text(if (options.hasComparisonKeys) "두 제공자의 API 키 저장됨" else "위 제공자 선택에서 OpenAI·Google 키를 각각 저장하세요.")
+            OutlinedTextField(secondaryModelInput, { if (it.length <= 80) secondaryModelInput = it },
+                label = { Text("다른 제공자(${options.provider.other().name})의 모델 ID") }, modifier = Modifier.fillMaxWidth())
+            OutlinedTextField(situationInput, { if (it.length <= 300) situationInput = it },
+                label = { Text("방송·대화 상황 · 예: 박물관 관람 안내") }, modifier = Modifier.fillMaxWidth())
+            TextButton(onClick = { message = if (settings.setComparisonDetails(secondaryModelInput, situationInput))
+                "비교 설정을 저장했습니다. 내용을 확인한 뒤 두 제공자 전송을 켜세요." else "모델 ID·상황 길이·민감 정보 포함 여부를 확인하세요." }) { Text("비교 설정 저장") }
+            LabSwitch("두 제공자 전송·교차 검증 허용", options.comparisonEnabled, settings::setComparisonEnabled,
+                options.hasComparisonKeys && options.cloudReviewEnabled)
+            Text("문맥 후보는 분당 최대 2건씩 선별합니다. 두 모델의 답변 일치만으로 정답이라 판단하지 않습니다. 검증 실패·의견 불일치는 보류하며, 승인 전에는 기존 번역을 바꾸지 않습니다. 유사 문장은 후보 검색에만 쓰고 다른 상황에 자동 적용하지 않습니다.", style = MaterialTheme.typography.bodySmall)
             SelfImprovementPanel(app)
             Text("선별된 원문과 해당 번역만 선택한 API에 전송합니다. 검사 통과는 의미 품질 보증이 아닙니다. 사용자 확정 문장은 덮어쓰지 않습니다.", style = MaterialTheme.typography.bodySmall)
             TeacherLearningControls(settings, app.cloudTranslationReviewer) { reportsVisible = true }

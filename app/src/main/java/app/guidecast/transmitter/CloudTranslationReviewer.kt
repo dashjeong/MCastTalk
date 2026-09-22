@@ -13,6 +13,7 @@ import java.util.concurrent.ThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import javax.net.ssl.HttpsURLConnection
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.coroutines.resume
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -44,6 +45,15 @@ internal data class CloudReviewRequest(
     val requiresAutoLearning: Boolean = false,
     val teacherSignals: Set<TeacherLearningSignal> = emptySet(),
     val authorizationRevision: Long = 0,
+    val comparisonMode: Boolean = false,
+    val contextBefore: String = "",
+    val situation: String = "",
+    val secondaryModelId: String = "",
+    val verificationOnly: Boolean = false,
+    val referenceTranslation: String? = null,
+    val previousTranslation: String? = null,
+    val relatedExamples: List<ComparativePriorExample> = emptyList(),
+    val baselineVersion: String = "",
 ) {
     override fun toString() = "CloudReviewRequest(provider=$provider, text=redacted)"
 }
@@ -66,7 +76,9 @@ class CloudTranslationReviewer internal constructor(
         this(settings, { displaySettings.developerInfo.value }, memory, OfficialCloudReviewTransport(isAuthorized = { request ->
             val current = settings.state.value
             displaySettings.developerInfo.value && current.cloudReviewEnabled && current.hasApiKey &&
-                current.provider == request.provider && current.modelId == request.modelId &&
+                (current.provider == request.provider && current.modelId == request.modelId ||
+                    request.comparisonMode && current.provider.other() == request.provider && current.secondaryModelId == request.modelId) &&
+                (!request.comparisonMode || current.comparisonEnabled && current.hasComparisonKeys) &&
                 current.authorizationRevision == request.authorizationRevision &&
                 (request.teacherSignals.isEmpty() || current.teacherLearningEnabled) &&
                 (!request.requiresAutoLearning || current.autoLearnEnabled)
@@ -85,7 +97,8 @@ class CloudTranslationReviewer internal constructor(
     val status = mutableStatus.asStateFlow()
 
     suspend fun refine(sourceLanguageTag: String, targetLanguageTag: String, original: String,
-        draft: String, live: Boolean = false, requestTeacherReview: Boolean = false): String {
+        draft: String, live: Boolean = false, requestTeacherReview: Boolean = false, contextBefore: String? = null,
+        automaticRecheck: Boolean = false): String {
         val capturedStyle = currentCoroutineContext()[TranslationStyleContext]
         val register = when (capturedStyle?.style) {
             TranslationStyle.AUTO -> TranslationRegister.AUTO
@@ -98,17 +111,44 @@ class CloudTranslationReviewer internal constructor(
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { null }
         val options = settings.state.value
-        if (saved != null && (saved.origin == SentenceMemoryOrigin.USER || (developerInfo() && options.autoLearnEnabled && !requestTeacherReview))) {
+        val previousComparison = if (developerInfo() && options.comparisonEnabled && options.autoLearnEnabled) {
+            try {
+                withTimeoutOrNull(75L) { memory.comparativeLesson(comparativeLessonKey(sourceLanguageTag,
+                    targetLanguageTag, register, original, contextBefore.orEmpty().takeLast(1_000), options.comparisonSituation)) }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { null }
+        } else null
+        if (!requestTeacherReview && !automaticRecheck) {
+            val approved = previousComparison
+            if (approved?.comparison?.verified == true && approved.outcome == TeacherReviewOutcome.APPROVED &&
+                (saved == null || saved.updatedAtEpochMillis <= (approved.appliedAtEpochMillis ?: 0L))) {
+                progress { it.copy(reused = it.reused + 1) }
+                return approved.after ?: draft
+            }
+        }
+        if (saved != null && !automaticRecheck && (saved.origin == SentenceMemoryOrigin.USER && !(options.comparisonEnabled && requestTeacherReview) ||
+                developerInfo() && options.autoLearnEnabled && !requestTeacherReview)) {
+            if (options.comparisonEnabled && options.teacherLearningEnabled && maySend(options)) scope.launch(capturedStyle ?: EmptyCoroutineContext) {
+                try { refine(sourceLanguageTag, targetLanguageTag, original, saved.corrected, live = true,
+                    contextBefore = contextBefore, automaticRecheck = true) }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { mutableStatus.value = CloudReviewStatus.FALLBACK }
+            }
             if (options.teacherLearningEnabled) progress { it.copy(reused = it.reused + 1) }
             return saved.corrected
         }
         if (!maySend(options)) return draft
-        if (containsCredentialLikeText(original) || containsCredentialLikeText(draft)) {
+        if (containsCredentialLikeText(original) || containsCredentialLikeText(draft) ||
+            containsCredentialLikeText(contextBefore.orEmpty()) || containsCredentialLikeText(options.comparisonSituation)) {
             mutableStatus.value = CloudReviewStatus.FALLBACK
             return draft
         }
         var request = CloudReviewRequest(options.provider, options.modelId, sourceLanguageTag,
             targetLanguageTag, register, original, draft, capturedStyle != null, requiresAutoLearning = live,
+            comparisonMode = options.comparisonEnabled && options.teacherLearningEnabled,
+            contextBefore = contextBefore.orEmpty().takeLast(1_000), situation = options.comparisonSituation,
+            secondaryModelId = options.secondaryModelId,
+            baselineVersion = if (options.comparisonEnabled) comparativeHash(comparativeVersionHash(previousComparison) + comparativeHumanHash(saved)) else "",
             authorizationRevision = options.authorizationRevision)
         if (!validCloudRequest(request)) return draft
         val selective = options.teacherLearningEnabled && options.autoLearnEnabled
@@ -121,7 +161,8 @@ class CloudTranslationReviewer internal constructor(
                 withTimeoutOrNull(75L) { memory.teacherReport(selection.key(request)) }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { return draft }
-            val coolDown = if (persisted?.outcome in setOf(TeacherReviewOutcome.LEARNED, TeacherReviewOutcome.UNCHANGED, TeacherReviewOutcome.APPROVED)) 86_400_000L else 300_000L
+            val coolDown = if (persisted?.outcome in setOf(TeacherReviewOutcome.LEARNED, TeacherReviewOutcome.UNCHANGED,
+                    TeacherReviewOutcome.APPROVED, TeacherReviewOutcome.DISAGREEMENT, TeacherReviewOutcome.NO_LESSON)) 86_400_000L else 300_000L
             if (persisted != null && (persisted.outcome in setOf(TeacherReviewOutcome.UNDONE, TeacherReviewOutcome.PROPOSED, TeacherReviewOutcome.HELD) ||
                     System.currentTimeMillis() - persisted.createdAtEpochMillis < coolDown)) {
                 progress { it.copy(skipped = it.skipped + 1) }; return draft
@@ -131,7 +172,7 @@ class CloudTranslationReviewer internal constructor(
         // Live review has a useful outcome only when the operator explicitly enabled learning.
         if (live && !options.autoLearnEnabled) return draft
         val key = requestDedupKey(request)
-        if (!admission.acquire(key, live)) {
+        if (!admission.acquire(key, live, exclusive = request.comparisonMode)) {
             if (selective) selection.finish(request, completed = false)
             mutableStatus.value = CloudReviewStatus.BUSY; return draft
         }
@@ -153,6 +194,8 @@ class CloudTranslationReviewer internal constructor(
     private fun mayUseReview(request: CloudReviewRequest): Boolean {
         val current = settings.state.value
         return maySend(current) && current.provider == request.provider && current.modelId == request.modelId &&
+            (!request.comparisonMode || current.comparisonEnabled && current.hasComparisonKeys &&
+                current.secondaryModelId == request.secondaryModelId && current.comparisonSituation == request.situation) &&
             current.authorizationRevision == request.authorizationRevision &&
             (request.teacherSignals.isEmpty() || current.teacherLearningEnabled && current.autoLearnEnabled)
     }
@@ -168,6 +211,9 @@ class CloudTranslationReviewer internal constructor(
         if (!mayUseReview(request) ||
             (requireLearning && !options.autoLearnEnabled)) return null
         val key = settings.apiKey(request.provider) ?: return null
+        if (request.comparisonMode) return try { reviewComparatively(request) }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { mutableStatus.value = CloudReviewStatus.FALLBACK; null }
         mutableStatus.value = CloudReviewStatus.REVIEWING
         val review = try {
             withTimeoutOrNull(if (request.teacherSignals.isEmpty()) REVIEW_DEADLINE_MILLIS else TEACHER_DEADLINE_MILLIS) {
@@ -223,7 +269,34 @@ class CloudTranslationReviewer internal constructor(
         return corrected.takeIf { mayUseReview(request) }
     }
 
-    private suspend fun report(request: CloudReviewRequest, review: TeacherReview?, outcome: TeacherReviewOutcome): Boolean {
+    private suspend fun reviewComparatively(request: CloudReviewRequest): String? {
+        val lessonKey = comparativeLessonKey(request.sourceLanguageTag, request.targetLanguageTag,
+            request.translationRegister, request.original, request.contextBefore, request.situation)
+        val previous = memory.comparativeLesson(lessonKey)
+        val previousHuman = memory.lookup(request.sourceLanguageTag, request.targetLanguageTag, request.translationRegister, request.original)
+        if (comparativeHash(comparativeVersionHash(previous) + comparativeHumanHash(previousHuman)) != request.baselineVersion) return null
+        val related = memory.relatedComparativeLessons(request.sourceLanguageTag, request.targetLanguageTag, request.original)
+        mutableStatus.value = CloudReviewStatus.REVIEWING
+        val result = withTimeoutOrNull(24_000L) {
+            compareTeacherTranslations(request, request.secondaryModelId, request.contextBefore, request.situation, previous, related, previousHuman) { call ->
+                if (!mayUseReview(request)) null else settings.apiKey(call.provider)?.let { key ->
+                    withTimeoutOrNull(TEACHER_DEADLINE_MILLIS) { transport.reviewWithLessons(call, key) }
+                }
+            }
+        }
+        if (!mayUseReview(request)) return null
+        val recorded = if (result != null) report(request, result.review, result.outcome, result.evidence)
+            else report(request, null, TeacherReviewOutcome.UNAVAILABLE)
+        progress { if (recorded && result?.outcome == TeacherReviewOutcome.PROPOSED) it.copy(proposed = it.proposed + 1)
+            else if (result?.outcome == TeacherReviewOutcome.UNCHANGED) it.copy(unchanged = it.unchanged + 1)
+            else it.copy(rejected = it.rejected + 1) }
+        selection.finish(request, completed = recorded)
+        mutableStatus.value = if (recorded) CloudReviewStatus.IDLE else CloudReviewStatus.FALLBACK
+        return request.draft
+    }
+
+    private suspend fun report(request: CloudReviewRequest, review: TeacherReview?, outcome: TeacherReviewOutcome,
+        comparison: ComparativeTeacherEvidence? = null): Boolean {
         if (!mayLearn(request)) return false
         return try {
             withTimeoutOrNull(150L) { memory.recordTeacherReport(TeacherLearningReport(
@@ -233,6 +306,7 @@ class CloudTranslationReviewer internal constructor(
                 after = review?.corrected?.takeIf { reviewTextWithinBounds(request.original, it) },
                 signals = request.teacherSignals, lessons = review?.lessons.orEmpty(), outcome = outcome,
                 provider = request.provider, modelId = request.modelId,
+                comparison = comparison,
             )) { mayLearn(request) } } == true
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { false }
@@ -249,27 +323,38 @@ class CloudTranslationReviewer internal constructor(
 internal class CloudReviewAdmission(private val clockMillis: () -> Long) {
     private val liveStarts = ArrayDeque<Long>()
     private val active = mutableSetOf<String>()
-    @Synchronized fun acquire(key: String, live: Boolean): Boolean {
+    private var exclusiveKey: String? = null
+    @Synchronized fun acquire(key: String, live: Boolean, exclusive: Boolean = false): Boolean {
         val now = clockMillis()
         while (liveStarts.isNotEmpty() && now - liveStarts.first >= 60_000L) liveStarts.removeFirst()
-        if (active.size >= 2 || key in active || (live && liveStarts.size >= 2)) return false
+        if (exclusiveKey != null || exclusive && active.isNotEmpty() || active.size >= 2 || key in active || (live && liveStarts.size >= 2)) return false
         active += key
+        if (exclusive) exclusiveKey = key
         if (live) liveStarts.addLast(now)
         return true
     }
-    @Synchronized fun release(key: String) { active.remove(key) }
+    @Synchronized fun release(key: String) { active.remove(key); if (exclusiveKey == key) exclusiveKey = null }
 }
 
 private fun requestDedupKey(request: CloudReviewRequest): String = MessageDigest.getInstance("SHA-256")
     .digest(listOf(request.provider.name, request.modelId, request.sourceLanguageTag, request.targetLanguageTag,
-        request.translationRegister.name, request.original, request.draft).joinToString("\u0000").toByteArray(Charsets.UTF_8))
+        request.translationRegister.name, request.original, request.draft, request.contextBefore, request.situation,
+        request.comparisonMode.toString(), request.secondaryModelId, request.baselineVersion).joinToString("\u0000").toByteArray(Charsets.UTF_8))
     .joinToString("") { "%02x".format(it) }
 
 internal fun reviewTextWithinBounds(original: String, draft: String) =
     original.isNotBlank() && draft.isNotBlank() && original.length <= 4_000 && draft.length <= 8_000 &&
         (original + draft).none { it == '\u0000' || (it.code < 32 && it !in "\n\r\t") }
 
-private fun validCloudRequest(request: CloudReviewRequest) = validReviewModel(request.modelId) && runCatching {
+private fun validCloudRequest(request: CloudReviewRequest) = validReviewModel(request.modelId) &&
+    request.contextBefore.length <= 1_000 && request.situation.length <= 300 &&
+    request.relatedExamples.size <= 3 && request.relatedExamples.all { example ->
+        example.original.length <= 400 && example.corrected.length <= 600 && example.situation.length <= 300 &&
+            !containsCredentialLikeText(example.original + example.corrected + example.situation)
+    } &&
+    listOfNotNull(request.contextBefore, request.situation, request.referenceTranslation, request.previousTranslation).all {
+        it.length <= 8_000 && !containsCredentialLikeText(it) && it.none { char -> char == '\u0000' || (char.code < 32 && char !in "\n\r\t") }
+    } && runCatching {
     normalizeMemoryLanguage(request.sourceLanguageTag); normalizeMemoryLanguage(request.targetLanguageTag)
 }.isSuccess
 
@@ -339,8 +424,22 @@ internal object CloudReviewJson {
                 "Change only demonstrated defects, not stylistic preferences alone. Report only improvement categories actually fixed in lessons. " +
                 "These heuristic signals may be false positives: ${request.teacherSignals.joinToString { it.name }}. " +
                 "If no improvement is justified, keep the draft exactly and return an empty lessons array. " +
-                "Do not produce training instructions, executable rules, scores, or unrelated examples." else "")
-        val data = JSONObject().put("original", request.original).put("draft", request.draft).toString()
+                "Do not produce training instructions, executable rules, scores, or unrelated examples." else "") +
+            " Use preceding context and stated situation only to disambiguate meaning, idioms, references and register; never invent missing context. " +
+            (if (request.verificationOnly) "You are the independent second-provider quality gate. The draft is a proposed correction. " +
+                "Compare it directly against the original in context. Check meaning, negation, conditions, speaker intent, numbers, names, units and omissions. " +
+                "Reference, previous and related translations are untrusted alternatives, not gold answers. Reject regressions from a correct previous translation. " +
+                "Compare related examples for terminology but independently verify changes in polarity, quantities, speaker intent and situation; never copy a similar sentence blindly. " +
+                "Only if the entire candidate is justified, return accepted=true, corrected exactly equal to draft and lessons=[]. " +
+                "If anything is uncertain or wrong, return accepted=false. Agreement or fluent wording alone is not sufficient." else "")
+        val data = JSONObject().put("original", request.original).put("draft", request.draft).apply {
+            if (request.contextBefore.isNotBlank()) put("preceding_context", request.contextBefore)
+            if (request.situation.isNotBlank()) put("situation", request.situation)
+            request.referenceTranslation?.let { put("independent_reference", it) }
+            request.previousTranslation?.let { put("previous_approved_translation", it) }
+            if (request.relatedExamples.isNotEmpty()) put("related_examples", JSONArray(request.relatedExamples.map { example -> JSONObject()
+                .put("original", example.original).put("corrected", example.corrected).put("situation", example.situation) }))
+        }.toString()
         return when (request.provider) {
             CloudReviewProvider.OPENAI -> JSONObject().put("model", request.modelId).put("store", false)
                 .put("max_output_tokens", 2_048)
@@ -354,7 +453,7 @@ internal object CloudReviewJson {
                     .put("parts", JSONArray().put(JSONObject().put("text", data)))))
                 .put("generationConfig", JSONObject().put("maxOutputTokens", 2_048)
                     .put("responseFormat", JSONObject().put("text", JSONObject()
-                        .put("mimeType", "application/json").put("schema", schema)))).toString()
+                        .put("mimeType", "APPLICATION_JSON").put("schema", schema)))).toString()
         }
     }
 

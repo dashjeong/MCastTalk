@@ -50,10 +50,20 @@ const pinnedChannelId = (() => {
 })();
 
 const fragmentToken = new URLSearchParams(location.hash.slice(1)).get("token") || "";
-let accessToken = fragmentToken || sessionStorage.getItem("guidecast-token") || "";
+function readSessionToken() {
+  try { return sessionStorage.getItem("guidecast-token") || ""; }
+  catch (_) { return ""; }
+}
+function saveSessionToken(token) {
+  try {
+    if (token) sessionStorage.setItem("guidecast-token", token);
+    else sessionStorage.removeItem("guidecast-token");
+  } catch (_) { /* Restricted storage: credentials remain in this page's memory only. */ }
+}
+let accessToken = fragmentToken || readSessionToken();
 let sessionAccessMode = "";
 if (fragmentToken) {
-  sessionStorage.setItem("guidecast-token", fragmentToken);
+  saveSessionToken(fragmentToken);
   history.replaceState(null, "", `${location.pathname}${location.search}`);
 }
 
@@ -602,7 +612,7 @@ async function loadChannels() {
   if (response.status === 401 && sessionAccessMode === "pin") {
     accessToken = "";
     clearTranscriptSnapshot();
-    sessionStorage.removeItem("guidecast-token");
+    saveSessionToken("");
     showPinDialog("입장 정보가 만료됐습니다. PIN을 다시 입력하세요.");
     return;
   }
@@ -660,7 +670,7 @@ pinForm.addEventListener("submit", async (event) => {
     if (!response.ok) throw new Error("PIN이 올바르지 않습니다.");
     accessToken = await response.text();
     clearTranscriptSnapshot();
-    sessionStorage.setItem("guidecast-token", accessToken);
+    saveSessionToken(accessToken);
     pinInput.value = "";
     pinDialog.close();
     await loadChannels();
@@ -801,7 +811,6 @@ function connectPlaybackSocket(request) {
     // A server config or PCM frame proves that the reconnected stream is usable. Merely opening
     // a socket is not enough: an authorization/policy close may follow immediately and must keep
     // backing off instead of retrying four times per second forever.
-    reconnectAttempt = 0;
     handleAudioMessage(event, request);
   };
   targetSocket.onerror = () => {
@@ -907,8 +916,10 @@ function handleAudioMessage(event, request) {
   if (typeof event.data === "string") {
     try {
       const config = JSON.parse(event.data);
-      if (config.type === "config" && Number.isFinite(config.sampleRate)) {
+      if (config.type === "config" && Number.isInteger(config.sampleRate) &&
+          config.sampleRate >= 8000 && config.sampleRate <= 192000) {
         request.sourceSampleRate = config.sampleRate;
+        reconnectAttempt = 0;
       }
     } catch (_) {
       setStatus("방송 형식 오류", "error");
@@ -922,6 +933,7 @@ function handleAudioMessage(event, request) {
 
   const view = new DataView(event.data);
   if (view.byteLength === 0 || view.byteLength % 2 !== 0) return;
+  reconnectAttempt = 0;
 
   const samples = new Float32Array(view.byteLength / 2);
   let sumSquares = 0;
@@ -1040,27 +1052,33 @@ function discardScheduledAudio(targetAudioContext) {
 }
 
 function resample(source, sourceRate, targetRate, request = null) {
-  if (sourceRate === targetRate || source.length < 2) {
-    if (request && source.length > 0) request.lastSample = source[source.length - 1];
-    return source;
+  if (!source.length || !Number.isFinite(sourceRate) || !Number.isFinite(targetRate) || sourceRate <= 0 || targetRate <= 0) return new Float32Array(0);
+  const state = request || {};
+  const rates = `${sourceRate}/${targetRate}`;
+  if (state.resampleRates !== rates) {
+    state.resampleRates = rates;
+    state.resamplePhase = 0;
+    state.lastSample = null;
   }
-  const outputLength = Math.max(1, Math.floor(source.length * targetRate / sourceRate));
-  const output = new Float32Array(outputLength);
+  if (sourceRate === targetRate) return source;
+  const hasTail = state.lastSample !== null;
+  const length = source.length + (hasTail ? 1 : 0);
+  const sample = (index) => hasTail && index === 0 ? state.lastSample : source[index - (hasTail ? 1 : 0)];
   const ratio = sourceRate / targetRate;
+  const phase = state.resamplePhase || 0;
+  // Keep one source sample as lookahead. Never extrapolate a frame tail or reset fractional phase.
+  const outputLength = Math.max(0, Math.ceil((length - 1 - phase) / ratio - 1e-10));
+  const output = new Float32Array(outputLength);
   for (let index = 0; index < outputLength; index += 1) {
-    const position = index * ratio;
+    const position = phase + index * ratio;
     const left = Math.floor(position);
-    const right = left + 1;
     const fraction = position - left;
-    const leftSample = left < source.length ? source[left] : source[source.length - 1];
-    const rightSample = right < source.length
-      ? source[right]
-      : (leftSample + (leftSample - (left > 0 ? source[left - 1] : leftSample)));
+    const leftSample = sample(left);
+    const rightSample = sample(left + 1);
     output[index] = leftSample + (rightSample - leftSample) * fraction;
   }
-  if (request && source.length > 0) {
-    request.lastSample = source[source.length - 1];
-  }
+  state.resamplePhase = Math.max(0, phase + outputLength * ratio - (length - 1));
+  state.lastSample = source[source.length - 1];
   return output;
 }
 

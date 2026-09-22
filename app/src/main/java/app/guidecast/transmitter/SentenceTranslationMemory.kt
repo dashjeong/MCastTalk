@@ -42,6 +42,8 @@ internal interface SentenceMemoryStore {
         if (allowedToWrite()) upsert(entry) else false
     suspend fun recordTeacherReport(report: TeacherLearningReport, allowedToWrite: () -> Boolean): Boolean = false
     suspend fun teacherReport(key: String): TeacherLearningReport? = null
+    suspend fun comparativeLesson(key: String): TeacherLearningReport? = null
+    suspend fun relatedComparativeLessons(source: String, target: String, original: String): List<TeacherLearningReport> = emptyList()
 }
 
 /** Exact sentence retrieval, not an update to any model's weights. Contents stay in app-private SQLite. */
@@ -64,15 +66,20 @@ class SentenceTranslationMemory(context: Context, databaseName: String = "senten
 
     override suspend fun lookup(sourceLanguageTag: String, targetLanguageTag: String,
         register: TranslationRegister, original: String): SentenceMemoryEntry? = io {
-        if (original.length !in 1..MAX_ORIGINAL_CHARS) return@io null
+        lookupInternal(database.readableDatabase, sourceLanguageTag, targetLanguageTag, register, original)
+    }
+
+    private fun lookupInternal(db: SQLiteDatabase, sourceLanguageTag: String, targetLanguageTag: String,
+        register: TranslationRegister, original: String): SentenceMemoryEntry? {
+        if (original.length !in 1..MAX_ORIGINAL_CHARS) return null
         if (register == TranslationRegister.AUTO) {
-            val confirmed = database.readableDatabase.query("phrases", null,
+            val confirmed = db.query("phrases", null,
                 "source_language=? AND target_language=? AND normalized_original=? AND origin='USER'",
                 arrayOf(normalizeMemoryLanguage(sourceLanguageTag), normalizeMemoryLanguage(targetLanguageTag), normalizeMemorySource(original)),
                 null, null, "updated_at DESC,id DESC", "1").use { if (it.moveToFirst()) it.entry() else null }
-            if (confirmed != null) return@io confirmed
+            if (confirmed != null) return confirmed
         }
-        database.readableDatabase.query("phrases", null, KEY_SELECTION,
+        return db.query("phrases", null, KEY_SELECTION,
             arrayOf(normalizeMemoryLanguage(sourceLanguageTag), normalizeMemoryLanguage(targetLanguageTag),
                 register.name, normalizeMemorySource(original)), null, null, null, "1").use { cursor ->
             if (cursor.moveToFirst()) cursor.entry() else null
@@ -137,8 +144,107 @@ class SentenceTranslationMemory(context: Context, databaseName: String = "senten
             null, null, null, "1").use { if (it.moveToFirst()) TeacherLearningReport.fromJson(org.json.JSONObject(it.getString(0))) else null }
     }
 
+    override suspend fun comparativeLesson(key: String): TeacherLearningReport? = io {
+        readComparativeLesson(database.readableDatabase, key)
+    }
+
+    override suspend fun relatedComparativeLessons(source: String, target: String, original: String): List<TeacherLearningReport> = io {
+        database.readableDatabase.rawQuery("SELECT report_json FROM verified_lessons ORDER BY updated_at DESC LIMIT 500", null).use { cursor ->
+            buildList { while (cursor.moveToNext()) {
+                val report = TeacherLearningReport.fromJson(org.json.JSONObject(cursor.getString(0)))
+                if (normalizeMemoryLanguage(report.sourceLanguageTag) == normalizeMemoryLanguage(source) &&
+                    normalizeMemoryLanguage(report.targetLanguageTag) == normalizeMemoryLanguage(target) &&
+                    comparativeSourceSimilarity(report.original, original) >= 0.65) add(report)
+            } }.sortedByDescending { comparativeSourceSimilarity(it.original, original) }.take(3)
+        }
+    }
+
+    private fun readComparativeLesson(db: SQLiteDatabase, key: String): TeacherLearningReport? =
+        db.query("verified_lessons", arrayOf("report_json"), "lesson_key=?", arrayOf(key), null, null, null, "1").use {
+            if (it.moveToFirst()) TeacherLearningReport.fromJson(org.json.JSONObject(it.getString(0))) else null
+        }
+
+    private fun decideComparativeLesson(db: SQLiteDatabase, report: TeacherLearningReport, approve: Boolean): Boolean {
+        db.beginTransaction()
+        try {
+            val stored = db.query("teacher_reports", arrayOf("report_json"), "fingerprint=?", arrayOf(report.key), null, null, null, "1").use {
+                if (it.moveToFirst()) TeacherLearningReport.fromJson(org.json.JSONObject(it.getString(0))) else null
+            } ?: return false
+            if (stored != report || stored.outcome !in setOf(TeacherReviewOutcome.PROPOSED, TeacherReviewOutcome.HELD)) return false
+            val evidence = stored.comparison ?: return false
+            validateTeacherReport(stored)
+            val previous = readComparativeLesson(db, stored.comparativeKey())
+            val applied = if (approve) {
+                if (!evidence.verified || evidence.secondaryProvider == stored.provider || stored.after == null ||
+                    stored.lessons.isEmpty() || evidence.primaryTranslation != stored.after ||
+                    normalizeMemorySource(evidence.verificationTranslation.orEmpty()) != normalizeMemorySource(stored.after) ||
+                    !conservativeReviewAccepted(stored.original, stored.before, stored.after, stored.targetLanguageTag) ||
+                    comparativeHumanHash(lookupInternal(db, stored.sourceLanguageTag, stored.targetLanguageTag,
+                        stored.translationRegister, stored.original)) != evidence.expectedHumanHash ||
+                    comparativeVersionHash(previous) != evidence.expectedPreviousHash) return false
+                if (previous == null && db.rawQuery("SELECT COUNT(*) FROM verified_lessons", null).use { it.moveToFirst(); it.getInt(0) } >= 500) return false
+                stored.copy(outcome = TeacherReviewOutcome.APPROVED, appliedAtEpochMillis = System.currentTimeMillis())
+            } else stored.copy(outcome = TeacherReviewOutcome.HELD)
+            if (approve) db.insertWithOnConflict("verified_lessons", null, ContentValues().apply {
+                put("lesson_key", stored.comparativeKey()); put("report_key", stored.key)
+                put("updated_at", applied.appliedAtEpochMillis); put("report_json", applied.toJson().toString())
+                put("previous_json", previous?.toJson()?.toString())
+            }, SQLiteDatabase.CONFLICT_REPLACE)
+            db.update("teacher_reports", ContentValues().apply { put("report_json", applied.toJson().toString()) },
+                "fingerprint=?", arrayOf(stored.key))
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+        markChanged(db)
+        return true
+    }
+
+    private fun undoComparativeLesson(db: SQLiteDatabase, report: TeacherLearningReport): Boolean {
+        db.beginTransaction()
+        try {
+            val key = report.comparativeKey()
+            if (readComparativeLesson(db, key) != report || report.outcome != TeacherReviewOutcome.APPROVED) return false
+            val previousJson = db.query("verified_lessons", arrayOf("previous_json"), "lesson_key=?", arrayOf(key), null, null, null, "1").use {
+                if (it.moveToFirst() && !it.isNull(0)) it.getString(0) else null
+            }
+            if (previousJson == null && report.comparison?.expectedPreviousHash != comparativeVersionHash(null)) return false
+            if (previousJson == null) db.delete("verified_lessons", "lesson_key=?", arrayOf(key)) else {
+                val previous = TeacherLearningReport.fromJson(org.json.JSONObject(previousJson))
+                if (comparativeVersionHash(previous) != report.comparison?.expectedPreviousHash) return false
+                db.update("verified_lessons", ContentValues().apply {
+                    put("report_key", previous.key); put("report_json", previousJson); put("updated_at", previous.appliedAtEpochMillis)
+                    putNull("previous_json")
+                }, "lesson_key=?", arrayOf(key))
+            }
+            db.update("teacher_reports", ContentValues().apply { put("report_json", report.copy(outcome = TeacherReviewOutcome.UNDONE).toJson().toString()) },
+                "fingerprint=?", arrayOf(report.key))
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+        markChanged(db)
+        return true
+    }
+
+    /** Explicitly stop this context's correction, even when older rollback history was pruned. */
+    suspend fun deactivateComparativeLesson(report: TeacherLearningReport): Boolean = io {
+        if (report.comparison == null || report.outcome != TeacherReviewOutcome.APPROVED) return@io false
+        val db = database.writableDatabase
+        db.beginTransaction()
+        try {
+            val key = report.comparativeKey()
+            if (readComparativeLesson(db, key) != report) return@io false
+            db.delete("verified_lessons", "lesson_key=?", arrayOf(key))
+            db.update("teacher_reports", ContentValues().apply {
+                put("report_json", report.copy(outcome = TeacherReviewOutcome.UNDONE).toJson().toString())
+            }, "fingerprint=?", arrayOf(report.key))
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+        markChanged(db)
+        true
+    }
+
     suspend fun teacherReports(): List<TeacherLearningReport> = io {
-        database.readableDatabase.rawQuery("SELECT report_json FROM teacher_reports ORDER BY created_at DESC,fingerprint DESC LIMIT 200", null)
+        database.readableDatabase.rawQuery("SELECT report_json FROM (SELECT created_at AS stamp,fingerprint AS identity,report_json FROM teacher_reports " +
+            "UNION ALL SELECT updated_at AS stamp,report_key AS identity,report_json FROM verified_lessons " +
+            "WHERE report_key NOT IN (SELECT fingerprint FROM teacher_reports)) ORDER BY stamp DESC,identity DESC LIMIT 700", null)
             .use { cursor -> buildList { while (cursor.moveToNext()) add(TeacherLearningReport.fromJson(org.json.JSONObject(cursor.getString(0)))) } }
     }
 
@@ -149,6 +255,7 @@ class SentenceTranslationMemory(context: Context, databaseName: String = "senten
 
     suspend fun decideTeacherLearning(report: TeacherLearningReport, approve: Boolean): Boolean = io {
         val db = database.writableDatabase
+        if (report.comparison != null) return@io decideComparativeLesson(db, report, approve)
         var changed = false
         db.beginTransaction()
         try {
@@ -188,7 +295,7 @@ class SentenceTranslationMemory(context: Context, databaseName: String = "senten
         val db = database.writableDatabase
         // Imported metadata cannot mint a local approval/rollback receipt.
         val evidence = report.copy(outcome = TeacherReviewOutcome.IMPORTED, appliedAtEpochMillis = null)
-        if (db.rawQuery("SELECT COUNT(*) FROM teacher_reports", null).use { it.moveToFirst(); it.getInt(0) } >= 200) return@io false
+        if (db.rawQuery("SELECT COUNT(*) FROM teacher_reports", null).use { it.moveToFirst(); it.getInt(0) } >= 700) return@io false
         val inserted = db.insertWithOnConflict("teacher_reports", null, ContentValues().apply {
             put("fingerprint", report.key); put("created_at", report.createdAtEpochMillis); put("report_json", evidence.toJson().toString())
         }, SQLiteDatabase.CONFLICT_IGNORE) != -1L
@@ -199,6 +306,7 @@ class SentenceTranslationMemory(context: Context, databaseName: String = "senten
     /** Roll back only this still-unconfirmed AI correction; never erase subsequent or human edits. */
     suspend fun undoTeacherLearning(report: TeacherLearningReport): Boolean = io {
         val db = database.writableDatabase
+        if (report.comparison != null) return@io undoComparativeLesson(db, report)
         db.beginTransaction()
         val removed: Boolean
         try {
@@ -327,7 +435,7 @@ class SentenceTranslationMemory(context: Context, databaseName: String = "senten
         origin = SentenceMemoryOrigin.valueOf(getString(getColumnIndexOrThrow("origin"))),
         updatedAtEpochMillis = getLong(getColumnIndexOrThrow("updated_at")),
     )
-    private class MemoryDatabase(context: Context, name: String) : SQLiteOpenHelper(context, name, null, 2) {
+    private class MemoryDatabase(context: Context, name: String) : SQLiteOpenHelper(context, name, null, 3) {
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL("CREATE TABLE phrases(id INTEGER PRIMARY KEY AUTOINCREMENT,source_language TEXT NOT NULL," +
                 "target_language TEXT NOT NULL,register_name TEXT NOT NULL,normalized_original TEXT NOT NULL," +
@@ -336,8 +444,10 @@ class SentenceTranslationMemory(context: Context, databaseName: String = "senten
             db.execSQL("CREATE INDEX phrases_recent ON phrases(updated_at DESC,id DESC)")
             db.execSQL("CREATE INDEX phrases_confirmed ON phrases(source_language,target_language,normalized_original,origin,updated_at)")
             createTeacherReports(db)
+            createVerifiedLessons(db)
         }
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+            if (oldVersion < 3) createVerifiedLessons(db)
             if (oldVersion < 2) {
                 createTeacherReports(db)
                 db.execSQL("CREATE INDEX phrases_confirmed ON phrases(source_language,target_language,normalized_original,origin,updated_at)")
@@ -346,6 +456,10 @@ class SentenceTranslationMemory(context: Context, databaseName: String = "senten
         private fun createTeacherReports(db: SQLiteDatabase) {
             db.execSQL("CREATE TABLE teacher_reports(fingerprint TEXT PRIMARY KEY, created_at INTEGER NOT NULL,report_json TEXT NOT NULL)")
             db.execSQL("CREATE INDEX teacher_reports_recent ON teacher_reports(created_at DESC)")
+        }
+        private fun createVerifiedLessons(db: SQLiteDatabase) {
+            db.execSQL("CREATE TABLE verified_lessons(lesson_key TEXT PRIMARY KEY,report_key TEXT NOT NULL," +
+                "updated_at INTEGER NOT NULL,report_json TEXT NOT NULL,previous_json TEXT)")
         }
     }
     companion object {

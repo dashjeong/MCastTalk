@@ -511,14 +511,20 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
                 guideCastApplication.speechSynthesisProvider.voicePreferences, operatorSettings.state) { source, targets, enabled, voices, options ->
                 AutomaticPreparationRequest(source, targets.toSet(), voices.filterKeys { it in targets }.mapValues { it.value.name },
                     enabled && options.automaticPreparation)
-            }.prepareAutomatically(canPrepare = {
+            }.inTranslationWorkspace(guideCastApplication.translationWorkspaceActive).prepareAutomatically(canPrepare = {
                 modelJob?.isCompleted != false && !gemmaBusy.value &&
                     !guideCastApplication.broadcastRuntime.state.value.dataTransferUnavailable() &&
-                    !guideCastApplication.localFileWorkActive.value
+                    !guideCastApplication.localFileWorkActive.value && !guideCastApplication.localVoiceNoteWorkActive.value
             }) {
                 if (!operatorSettings.state.value.automaticPreparation) return@prepareAutomatically
                 prepareSelectedTranslationModels()
-                modelJob?.join()
+                val automaticJob = modelJob
+                try { automaticJob?.join() }
+                finally {
+                    if (!guideCastApplication.translationWorkspaceActive.value) {
+                        automaticJob?.cancel(CancellationException("Translation workspace closed"))
+                    }
+                }
             }
         }
     }
@@ -577,6 +583,7 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun startInput(mediaProjectionResultCode: Int? = null, mediaProjectionData: Intent? = null) {
+        if (voiceNoteBusy()) return
         BroadcastService.startInput(
             getApplication(),
             mediaProjectionResultCode,
@@ -592,6 +599,7 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
     fun stopInput() = BroadcastService.stopInput(getApplication())
 
     fun startTranslationTest(languageTag: String) {
+        if (voiceNoteBusy()) return
         if (languageTag !in selectedLanguageTags.value) {
             modelMessage.value = "시험할 언어를 먼저 선택하세요."
             return
@@ -910,6 +918,7 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
         speakerPin: CharArray? = null,
         runMode: BroadcastRunMode = BroadcastRunMode.NETWORK,
     ) {
+        if (voiceNoteBusy()) return
         val translationLanguages = if (translationBroadcastEnabled.value) {
             selectedLanguageTags.value.toTypedArray()
         } else {
@@ -929,6 +938,12 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun pauseBroadcast() = BroadcastService.pauseBroadcast(getApplication())
+
+    private fun voiceNoteBusy(): Boolean {
+        if (!guideCastApplication.localVoiceNoteWorkActive.value) return false
+        modelMessage.value = "음성노트의 녹음·변환·재생을 중지한 뒤 시작하세요."
+        return true
+    }
 
     fun resumeBroadcast() = BroadcastService.resumeBroadcast(getApplication())
 

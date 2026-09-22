@@ -68,9 +68,9 @@ internal fun BroadcastTranscriptArchivePanel(
     var throughDate by rememberSaveable { mutableStateOf("") }
     var fromEpochMillis by rememberSaveable { mutableStateOf<Long?>(null) }
     var beforeEpochMillis by rememberSaveable { mutableStateOf<Long?>(null) }
-    var settingsExpanded by remember { mutableStateOf(false) }
-    var draftFromDate by remember { mutableStateOf("") }
-    var draftThroughDate by remember { mutableStateOf("") }
+    var settingsExpanded by rememberSaveable { mutableStateOf(false) }
+    var draftFromDate by rememberSaveable { mutableStateOf("") }
+    var draftThroughDate by rememberSaveable { mutableStateOf("") }
     var draftPolicy by remember { mutableStateOf(archive.retentionPolicy) }
     var dateError by remember { mutableStateOf<String?>(null) }
     val filter = TranscriptArchiveFilter(sessionFilter, languageFilter, oldestFirst, pageIndex,
@@ -215,6 +215,8 @@ internal fun BroadcastTranscriptArchivePanel(
                     else -> "저장된 방송 스크립트가 없습니다."
                 }, color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
+                Text("문장 선택과 숨기기는 현재 페이지에 적용됩니다. 페이지나 조회 조건을 바꾸면 선택이 해제됩니다.",
+                    style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(modifier = Modifier.weight(1f), onClick = {
                         selectedKeys = if (visibleSelection.size == page.lines.size) emptySet()
@@ -245,7 +247,7 @@ internal fun BroadcastTranscriptArchivePanel(
                                 onCheckedChange = { checked ->
                                     selectedKeys = if (checked) selectedKeys + archived.key else selectedKeys - archived.key
                                 },
-                                modifier = Modifier.semantics { contentDescription = "문장 ${archived.key.sequence} 선택" },
+                                modifier = Modifier.semantics { contentDescription = "문장 ${archived.key.sequence} 선택 · ${archived.line.sourceText.take(160)}" },
                             )
                             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 SelectionContainer { Text(archived.line.sourceText) }

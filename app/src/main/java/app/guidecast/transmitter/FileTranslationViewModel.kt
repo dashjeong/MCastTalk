@@ -208,12 +208,15 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
                     if (!shouldTranslateFileTarget(entry, target, settings.translationEngine,
                             retryOnly = onlyFailed || uriToRetry != null)) continue
                     try {
-                        val translated = translateFileScript(app, entry, target, settings.translationEngine) { done, total ->
-                            mutableUi.update { it.copy(progressMessage = "번역·자동 검사 $done / $total", progress = done.toFloat() / total) }
+                        entry = translateFileTargetWithCheckpoints(entry, target, settings.translationEngine,
+                            save = { updated ->
+                                withContext(Dispatchers.IO) { library.save(updated) }
+                                entry = updated
+                            }) { pending, onLine ->
+                            translateFileScript(app, pending, target, settings.translationEngine, contextSegments = entry.segments, onLine = onLine) { done, total ->
+                                mutableUi.update { it.copy(progressMessage = "남은 문장 번역·자동 검사 $done / $total", progress = done.toFloat() / total.coerceAtLeast(1)) }
+                            }
                         }
-                        val updated = entry.copy(translations = entry.translations + (target to translated.lines), translationModes = entry.translationModes + (target to translated.engine), qualityNotes = (entry.qualityNotes.filterNot { it.startsWith("$target 번역을 완료하지 못했습니다.") } + translated.notes).distinct())
-                        withContext(Dispatchers.IO) { library.save(updated) }
-                        entry = updated
                     } catch (cancelled: CancellationException) { throw cancelled }
                     catch (_: Exception) {
                         entry = entry.copy(qualityNotes = (entry.qualityNotes + "$target 번역을 완료하지 못했습니다. 재생 화면에서 다시 요청할 수 있습니다.").distinct())
@@ -231,7 +234,7 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
                 val failed = mutableUi.value.selectedFiles.count(::retryableFileItem)
                 mutableUi.update { it.copy(progress = 1f, progressMessage = "${completed}개 완료 · ${failed}개 재작업 가능. 완료된 결과는 파일별로 보관했습니다.") }
             } catch (cancelled: CancellationException) {
-                mutableUi.update { it.copy(progressMessage = "파일 변환을 취소했습니다. 완료되어 저장된 결과는 보관함에 남습니다.",
+                mutableUi.update { it.copy(progressMessage = (cancelled.message ?: "파일 변환을 취소했습니다.") + " 완료되어 저장된 결과는 보관함에 남습니다.",
                     selectedFiles = it.selectedFiles.map { item -> if (item.status in setOf(FileConversionStatus.READY, FileConversionStatus.READING, FileConversionStatus.CONVERTING)) item.copy(status = FileConversionStatus.CANCELLED, message = "취소됨") else item }) }
                 throw cancelled
             } catch (error: Exception) {
@@ -245,7 +248,7 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
     }
 
     fun cancel(message: String = "파일 작업을 취소했습니다.") {
-        work?.cancel()
+        work?.cancel(CancellationException(message))
         ++request
         fileLoad?.cancel()
         mutableUi.update { it.copy(progressMessage = message, isLoading = false) }
@@ -298,7 +301,8 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
     fun translatePlayback(target: String?) {
         val current = mutablePlayback.value ?: return
         mutablePlayback.update { it?.copy(translationLanguageTag = target) }
-        if (target == null || target in current.entry.translations || work?.isActive == true) return
+        if (target == null || !shouldTranslateFileTarget(current.entry, target,
+                mutableUi.value.translationEngine, retryOnly = true) || work?.isActive == true) return
         if (mutableUi.value.unavailableReason != null) {
             mutablePlayback.update { it?.copy(errorMessage = mutableUi.value.unavailableReason) }; return
         }
@@ -306,11 +310,15 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
         mutablePlayback.update { it?.copy(isTranslating = true, errorMessage = null) }
         work = viewModelScope.launch {
             try {
-                val result = translateFileScript(app, current.entry, target, mutableUi.value.translationEngine) { done, total ->
-                    mutablePlayback.update { if (it?.entry?.id == id) it.copy(statusMessage = "번역·자동 검사 $done / $total") else it }
+                val updated = translateFileTargetWithCheckpoints(current.entry, target, mutableUi.value.translationEngine,
+                    save = { saved ->
+                        withContext(Dispatchers.IO) { library.save(saved) }
+                        mutablePlayback.update { if (it?.entry?.id == id) it.copy(entry = saved) else it }
+                    }) { pending, onLine ->
+                    translateFileScript(app, pending, target, mutableUi.value.translationEngine, contextSegments = current.entry.segments, onLine = onLine) { done, total ->
+                        mutablePlayback.update { if (it?.entry?.id == id) it.copy(statusMessage = "남은 문장 번역·자동 검사 $done / $total") else it }
+                    }
                 }
-                val updated = current.entry.copy(translations = current.entry.translations + (target to result.lines), translationModes = current.entry.translationModes + (target to result.engine), qualityNotes = (current.entry.qualityNotes + result.notes).distinct())
-                withContext(Dispatchers.IO) { library.save(updated) }
                 mutablePlayback.update { if (it?.entry?.id == id) it.copy(entry = updated, statusMessage = "번역을 저장했습니다.") else it }
                 refreshLibrary()
             } catch (cancelled: CancellationException) { throw cancelled }
@@ -329,6 +337,7 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
         }
     }
     private fun isBusy(): Boolean = work?.isCompleted == false || mutableUi.value.isConverting ||
+        app.localVoiceNoteWorkActive.value ||
         mutablePlayback.value?.isTranslating == true || mutableUi.value.isLoading
     private suspend fun refreshLibrary() {
         try { val entries = withContext(Dispatchers.IO) { library.list() }; mutableUi.update { it.copy(library = entries) } }

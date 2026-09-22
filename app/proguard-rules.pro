@@ -45,6 +45,8 @@
 -keep class androidx.compose.ui.unit.DensityKt { *; }
 -keep class androidx.compose.foundation.layout.SizeKt { *; }
 -keep class androidx.compose.foundation.layout.BoxKt { *; }
+-keep class androidx.compose.foundation.ScrollKt { *; }
+-keep class androidx.compose.foundation.ScrollState { *; }
 -keep class androidx.compose.material3.TextKt { *; }
 
 # GuideCast is open-source and its public app/provider surface is called from the separately

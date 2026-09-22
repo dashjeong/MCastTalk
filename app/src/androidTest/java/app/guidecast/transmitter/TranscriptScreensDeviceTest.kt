@@ -3,10 +3,15 @@ package app.guidecast.transmitter
 import android.content.Intent
 import android.os.SystemClock
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
@@ -79,6 +84,9 @@ class TranscriptScreensDeviceTest {
         instrumentation.runOnMainSync {
             requireNotNull(activity).setContent {
                 GuideCastTheme {
+                    // A single-child viewport needs no Column/Arrangement singleton ABI from
+                    // the independently optimized target APK. Match the other screen fixtures.
+                    Box(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
                     BroadcastTranscriptArchivePanel(
                         archive = TranscriptArchiveSnapshot(sessions = sessions, revision = 1L),
                         loadPage = { filter ->
@@ -89,6 +97,7 @@ class TranscriptScreensDeviceTest {
                         onDeleteSession = { error("Selection test must not delete saved sessions") },
                         onRetentionPolicyChange = {},
                     )
+                    }
                 }
             }
         }
@@ -100,7 +109,8 @@ class TranscriptScreensDeviceTest {
         assertTrue(device.wait(Until.hasObject(By.text(olderLabel)), 5_000L))
         device.findObject(By.text(olderLabel)).click()
         assertTrue(device.wait(Until.hasObject(By.text("선택 0개 숨기기")), 5_000L))
-        assertTrue(device.wait(Until.hasObject(By.text("검증 문장 10")), 5_000L))
+        assertTrue("Filtered archive row must be reachable by scrolling",
+            device.findTextByVerticalScroll("검증 문장 10") != null)
         assertNull(device.findObject(By.text("검증 문장 20")))
     }
 

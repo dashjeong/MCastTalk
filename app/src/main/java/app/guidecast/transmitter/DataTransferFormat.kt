@@ -27,11 +27,11 @@ internal object DataTransferFormat {
     const val MAX_COMPRESSED_BYTES = 2L * 1024 * 1024 * 1024
     const val MAX_RECORDS = 20_000_000L
     private const val MAX_EPOCH = 253_402_300_799_999L
-    val scriptTypes = setOf("session", "broadcast", "file", "segment", "translation")
+    val scriptTypes = setOf("session", "broadcast", "file", "segment", "translation", VoiceNoteTransfer.NOTE, VoiceNoteTransfer.SEGMENT)
     val dictionaryTypes = setOf("glossary", "correction", "memory", "teacherReport")
 
     fun manifest(kind: DataTransferKind, count: Long, sha256: String) = JSONObject().apply {
-        put("schema", SCHEMA); put("major", 1); put("minor", 2); put("kind", kind.name)
+        put("schema", SCHEMA); put("major", 1); put("minor", 3); put("kind", kind.name)
         put("createdAt", System.currentTimeMillis()); put("records", count); put("sha256", sha256)
         put("referenceDictionary", "public-20260905")
     }
@@ -76,6 +76,7 @@ internal object DataTransferFormat {
         }) { "백업 종류와 내용이 일치하지 않습니다." }
         fun id(field: String) = row.getLong(field).also { require(it in 1 until Long.MAX_VALUE) }.toString()
         return when (type) {
+            VoiceNoteTransfer.NOTE, VoiceNoteTransfer.SEGMENT -> VoiceNoteTransfer.validate(row)
             "teacherReport" -> {
                 val report = TeacherLearningReport.fromJson(row)
                 validateTeacherReport(report)
@@ -196,6 +197,8 @@ internal class DataTransferStage(private val file: File,
     private val maxFileContentChars: Long = FileTranscriptBudget.MAX_CONTENT_CHARS,
     private val maxFileWords: Long = FileTranscriptBudget.MAX_WORDS,
 ) : Closeable {
+    private val noteDirectory = File(file.parentFile, file.name + "-notes")
+    val voiceNotes by lazy { VoiceNoteRepository(noteDirectory) }
     private val db = SQLiteDatabase.openOrCreateDatabase(file, null).apply {
         execSQL("CREATE TABLE records(type TEXT NOT NULL,record_key TEXT NOT NULL,parent TEXT NOT NULL,ordinal INTEGER NOT NULL,group_name TEXT NOT NULL,content_chars INTEGER NOT NULL,word_count INTEGER NOT NULL,encoded_chars INTEGER NOT NULL,payload TEXT NOT NULL,PRIMARY KEY(type,record_key))")
         execSQL("CREATE INDEX record_parent ON records(type,parent,group_name,ordinal)")
@@ -208,6 +211,9 @@ internal class DataTransferStage(private val file: File,
             while (c.moveToNext()) yield(DataTransferFormat.parse(c.getString(0)))
         }
     }
+    private fun noteLines(id: String): List<VoiceNoteLine> = db.rawQuery(
+        "SELECT payload FROM records WHERE type=? AND parent=? ORDER BY ordinal", arrayOf(VoiceNoteTransfer.SEGMENT, id),
+    ).use { cursor -> buildList { while (cursor.moveToNext()) add(VoiceNoteTransfer.line(DataTransferFormat.parse(cursor.getString(0)))) } }
     fun add(row: JSONObject, kind: DataTransferKind) {
         val key = DataTransferFormat.validate(row, kind)
         require(++count <= DataTransferFormat.MAX_RECORDS)
@@ -230,6 +236,9 @@ internal class DataTransferStage(private val file: File,
             db.rawQuery("SELECT COUNT(*) FROM records WHERE type='memory'", null).use { it.moveToFirst(); require(it.getLong(0) <= SentenceTranslationMemory.MAX_ENTRIES) }
         }
         if (kind != DataTransferKind.SCRIPTS) return
+        db.rawQuery("SELECT COUNT(*) FROM records WHERE type='voiceNote'", null).use { it.moveToFirst(); require(it.getInt(0) <= 500) }
+        none("SELECT 1 FROM records s WHERE s.type='voiceNoteSegment' AND NOT EXISTS (SELECT 1 FROM records n WHERE n.type='voiceNote' AND n.record_key=s.parent) LIMIT 1")
+        none("SELECT 1 FROM records WHERE type='voiceNoteSegment' GROUP BY parent HAVING MIN(ordinal)<>0 OR MAX(ordinal)+1<>COUNT(*) OR COUNT(*)>2000 OR SUM(content_chars)>4194304 LIMIT 1")
         db.rawQuery("SELECT COUNT(*) FROM records WHERE type='file'", null).use {
             it.moveToFirst(); require(it.getLong(0) <= FileTranscriptBudget.MAX_LIBRARY_FILES) { FileTranscriptBudget.LIBRARY_FULL }
         }
@@ -260,7 +269,9 @@ internal class DataTransferStage(private val file: File,
                 while (true) {
                     coroutine.ensureActive()
                     val entry = zip.nextEntry ?: break
-                    require(!entry.isDirectory && entry.name in setOf("manifest.json", "records.jsonl") && seen.add(entry.name)) { "백업 파일 경로나 중복 항목이 올바르지 않습니다." }
+                    val audioId = if (kind == DataTransferKind.SCRIPTS) VoiceNoteTransfer.audioId(entry.name) else null
+                    require(!entry.isDirectory && (entry.name in setOf("manifest.json", "records.jsonl") || audioId != null) &&
+                        seen.add(entry.name) && seen.size <= 502) { "백업 파일 경로나 중복 항목이 올바르지 않습니다." }
                     val bytes = object : java.io.InputStream() {
                         override fun read(): Int = zip.read().also { n -> if (n >= 0) { expanded++; checkSize(); if (entry.name == "records.jsonl") digest.update(n.toByte()) } }
                         override fun read(b: ByteArray, off: Int, len: Int): Int = zip.read(b, off, len).also { n -> if (n > 0) {
@@ -268,30 +279,52 @@ internal class DataTransferStage(private val file: File,
                         } }
                         private fun checkSize() { require(expanded <= DataTransferFormat.MAX_EXPANDED_BYTES) { "백업이 지원 용량 8GB를 초과합니다." }; coroutine.ensureActive() }
                     }
-                    val decoder = Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT)
-                    val reader = InputStreamReader(bytes, decoder).buffered()
-                    if (entry.name == "manifest.json") {
-                        manifest = DataTransferFormat.parse(readLimitedLine(reader, 8_192) ?: error("백업 정보가 비어 있습니다."))
-                        require(readLimitedLine(reader, 8_192) == null)
+                    if (audioId != null) {
+                        voiceNotes.audio(audioId).outputStream().use { output ->
+                            VoiceNoteTransfer.copy(bytes, output) { coroutine.ensureActive() }
+                        }
                     } else {
-                        while (true) {
-                            val line = readLimitedLine(reader, DataTransferFormat.MAX_RECORD_CHARS) ?: break
-                            require(line.isNotBlank()); add(DataTransferFormat.parse(line), kind)
-                            if (count % 1_000 == 0L) progress(DataTransferProgress("백업 내용을 검사하고 있습니다.", count))
+                        val decoder = Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT)
+                        val reader = InputStreamReader(bytes, decoder).buffered()
+                        if (entry.name == "manifest.json") {
+                            manifest = DataTransferFormat.parse(readLimitedLine(reader, 8_192) ?: error("백업 정보가 비어 있습니다."))
+                            require(readLimitedLine(reader, 8_192) == null)
+                        } else {
+                            while (true) {
+                                val line = readLimitedLine(reader, DataTransferFormat.MAX_RECORD_CHARS) ?: break
+                                require(line.isNotBlank()); add(DataTransferFormat.parse(line), kind)
+                                if (count % 1_000 == 0L) progress(DataTransferProgress("백업 내용을 검사하고 있습니다.", count))
+                            }
                         }
                     }
                     zip.closeEntry()
                 }
             }
-            require(seen == setOf("manifest.json", "records.jsonl")) { "백업 파일이 불완전합니다." }
+            require(seen.containsAll(setOf("manifest.json", "records.jsonl"))) { "백업 파일이 불완전합니다." }
             val info = requireNotNull(manifest)
             DataTransferFormat.validateManifest(info, kind)
             require(info.getLong("records") == count && info.getString("sha256") == digest.digest().joinToString("") { "%02x".format(it) }) { "백업 무결성 확인에 실패했습니다. 기존 자료는 변경하지 않았습니다." }
             validateReferences(kind)
+            val expectedAudio = mutableSetOf<String>()
+            records(VoiceNoteTransfer.NOTE).forEach { row ->
+                coroutine.ensureActive()
+                val note = VoiceNoteTransfer.note(row, noteLines(row.getString("id")))
+                val audio = voiceNotes.audio(note.id)
+                if (row.getLong("audioBytes") > 0) {
+                    expectedAudio += "voice-notes/${note.id}.wav"
+                    require(audio.isFile && audio.length() == row.getLong("audioBytes")) { "노트에 연결된 녹음이 없거나 크기가 다릅니다." }
+                    require(audio.inputStream().use { VoiceNoteTransfer.copy(it, null) { coroutine.ensureActive() } } == row.getString("audioSha256")) {
+                        "녹음 무결성 확인에 실패했습니다. 기존 자료는 변경하지 않았습니다."
+                    }
+                    VoiceNoteTransfer.validateAudio(audio, note)
+                }
+                voiceNotes.save(note)
+            }
+            require(seen - setOf("manifest.json", "records.jsonl") == expectedAudio) { "연결되지 않은 녹음이 포함된 백업입니다." }
             db.setTransactionSuccessful()
         } finally { db.endTransaction() }
     }
-    override fun close() { db.close(); file.delete(); File(file.path + "-journal").delete() }
+    override fun close() { try { db.close() } finally { SQLiteDatabase.deleteDatabase(file); noteDirectory.deleteRecursively() } }
 }
 
 internal fun JSONObject.nullablePortableString(name: String): String? = if (!has(name) || isNull(name)) null else getString(name)
