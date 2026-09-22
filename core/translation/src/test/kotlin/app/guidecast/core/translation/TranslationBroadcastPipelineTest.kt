@@ -28,6 +28,72 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class TranslationBroadcastPipelineTest {
+    @Test fun `superseded stream does not load engines for later queued sentences`() = runTest {
+        val streams = AudioStreamRegistry()
+        val source = MutableSharedFlow<RecognizedUtterance>()
+        var translations = 0
+        var syntheses = 0
+        val targets = listOf(TranslationTarget("en", "English", "en", 24_000))
+        val running = TranslationBroadcastPipeline(streams, TranslationEngineProvider {
+            translations++
+            TextTranslationEngine { text, _, _ -> text }
+        }, SpeechSynthesisEngineProvider {
+            syntheses++
+            object : SpeechSynthesisEngine {
+                override fun synthesize(text: String, languageTag: String) =
+                    flowOf(PcmAudioFrame(ByteArray(640) { 8 }, 1L))
+            }
+        }).start(this, source, targets)
+        runCurrent()
+        source.emit(RecognizedUtterance(1, "현재 방송", "ko", true, 1L))
+        advanceUntilIdle()
+        assertEquals(1, translations)
+        assertEquals(1, syntheses)
+        val replacement = streams.configure(listOf(AudioChannelDescriptor("en", "English", "en", 24_000)))
+        repeat(30) {
+            source.emit(RecognizedUtterance(it + 2L, "종료된 방송의 문장", "ko", true, 1L))
+            runCurrent()
+        }
+        assertEquals(1, translations)
+        assertEquals(1, syntheses)
+        assertTrue(replacement.isActive())
+        running.close()
+        replacement.close()
+    }
+
+    @Test fun `default translation reserve isolates 32 sentence burst and retains newest guidance in order`() = runTest {
+        val source = MutableSharedFlow<RecognizedUtterance>()
+        val gate = CompletableDeferred<Unit>()
+        val completed = mutableMapOf("en" to mutableListOf<Int>(), "ja" to mutableListOf<Int>())
+        val running = TranslationBroadcastPipeline(AudioStreamRegistry(), TranslationEngineProvider { target ->
+            TextTranslationEngine { text, _, _ ->
+                if (target == "ja" && text == "1") gate.await()
+                completed.getValue(target).add(text.toInt())
+                text
+            }
+        }, SpeechSynthesisEngineProvider {
+            object : SpeechSynthesisEngine {
+                override fun synthesize(text: String, languageTag: String) =
+                    flowOf(PcmAudioFrame(ByteArray(640) { 8 }, 1L))
+            }
+        }).start(this, source, listOf("en", "ja").map { TranslationTarget(it, it, it, 24_000) })
+        runCurrent()
+        (1L..32L).forEach {
+            source.emit(RecognizedUtterance(it, "$it", "ko", true, it))
+            runCurrent()
+        }
+        assertEquals((1..32).toList(), completed.getValue("en"))
+        assertTrue(running.health.value.single { it.channelId == "ja" }.droppedUtterances > 0L)
+        gate.complete(Unit)
+        advanceUntilIdle()
+        val recovered = completed.getValue("ja")
+        assertEquals(32, recovered.last())
+        assertEquals(recovered.sorted(), recovered)
+        assertTrue(recovered.size < 32)
+        assertEquals(32L, running.health.value.single { it.channelId == "ja" }.lastCompletedSequence)
+        running.close()
+    }
+
     @Test fun `expression and translation style reach only their queued utterance with execution callbacks intact`() = runTest {
         val source = MutableSharedFlow<RecognizedUtterance>()
         val expressions = mutableListOf<SpeechExpressionProfile?>()

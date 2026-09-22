@@ -9,6 +9,7 @@ enum class TeacherReviewOutcome(val label: String) {
     REJECTED("보류 · 내용 검사 미통과"), NO_LESSON("보류 · 개선 근거 없음"),
     NOT_SAVED("미반영 · 사용자 확정 또는 저장 제한"), UNAVAILABLE("미반영 · 응답 없음/시간 초과"),
     UNDONE("사용자가 학습 취소"), IMPORTED("이관된 비교 기록 · 적용 권한 없음"),
+    DISAGREEMENT("검증 보류 · 모델 불일치/내용 검사"),
 }
 
 /** Only selected examples, never the complete transcript. This is user content, not diagnostic logging. */
@@ -19,6 +20,7 @@ data class TeacherLearningReport(
     val provider: CloudReviewProvider, val modelId: String,
     val createdAtEpochMillis: Long = System.currentTimeMillis(),
     val appliedAtEpochMillis: Long? = null,
+    val comparison: ComparativeTeacherEvidence? = null,
 ) {
     override fun toString() = "TeacherLearningReport(outcome=$outcome, text=redacted)"
     internal fun toJson() = JSONObject().put("id", key).put("createdAt", createdAtEpochMillis)
@@ -28,6 +30,7 @@ data class TeacherLearningReport(
         .put("lessons", JSONArray(lessons.map { it.name })).put("outcome", outcome.name)
         .put("provider", provider.name).put("model", modelId)
         .put("appliedAt", appliedAtEpochMillis ?: JSONObject.NULL)
+        .put("comparison", comparison?.toJson() ?: JSONObject.NULL)
 
     internal companion object {
         fun fromJson(row: JSONObject) = TeacherLearningReport(
@@ -40,6 +43,7 @@ data class TeacherLearningReport(
             outcome = TeacherReviewOutcome.valueOf(row.getString("outcome")), provider = CloudReviewProvider.valueOf(row.getString("provider")),
             modelId = row.getString("model"), createdAtEpochMillis = row.getLong("createdAt"),
             appliedAtEpochMillis = if (row.isNull("appliedAt")) null else row.getLong("appliedAt"),
+            comparison = row.optJSONObject("comparison")?.let(ComparativeTeacherEvidence::fromJson),
         )
     }
 }
@@ -65,6 +69,7 @@ internal fun teacherReportExport(rows: List<TeacherLearningReport>): String = JS
     })) })).toString(2)
 
 internal fun validateTeacherReport(report: TeacherLearningReport) {
+    report.comparison?.validate()
     require(report.key.matches(Regex("[a-f0-9]{64}")))
     normalizeMemoryLanguage(report.sourceLanguageTag); normalizeMemoryLanguage(report.targetLanguageTag)
     require(reviewTextWithinBounds(report.original, report.before))

@@ -738,7 +738,10 @@ class BroadcastService : Service() {
             // Input and broadcast have independent stop controls. If the server generation is
             // being replaced, its channel registry can disappear between two captured frames.
             // Drop only that obsolete output frame; never fail the microphone/input session.
-            val publicationLease = broadcastAudioPublicationCoordinator?.acquireChannel("source")
+            val publicationCoordinator = broadcastAudioPublicationCoordinator
+            val publicationLease = publicationCoordinator?.tryAcquireChannel("source")
+            // A tone may start after the early flag check. Do not suspend capture behind it.
+            if (publicationCoordinator != null && publicationLease == null) return
             try {
                 val latest = app.broadcastRuntime.state.value
                 // Recheck after acquiring the lease: a tone request can win the race while this
@@ -825,6 +828,9 @@ class BroadcastService : Service() {
     }
 
     private fun failInput(message: String) {
+        if (app.broadcastRuntime.state.value.translationTestActive) {
+            stopTranslationTest(preservePass = false)
+        }
         invalidateInputCapture()
         inputPaused.set(false)
         stopProjection()
@@ -1150,29 +1156,36 @@ class BroadcastService : Service() {
     }
 
     private fun startPreviewPlayback(languageTag: String, sessionId: Long) {
-        val track = createMonitorAudioTrack(
-            MoonshineSpeechSynthesisProvider.OUTPUT_SAMPLE_RATE_HZ,
-        )
         val channelId = languageTag.lowercase(Locale.ROOT)
         val subscription = translationPipeline?.streamSession?.subscribeLocalMonitor(channelId)
             ?: error("통역 음성 시험 세션이 종료되었습니다.")
-        track.play()
+        val track = try {
+            createMonitorAudioTrack(MoonshineSpeechSynthesisProvider.OUTPUT_SAMPLE_RATE_HZ)
+        } catch (error: Throwable) {
+            subscription.close()
+            throw error
+        }
+        val trackReleased = AtomicBoolean(false)
+        fun releaseTrackOnce() {
+            if (trackReleased.compareAndSet(false, true)) releaseMonitorAudioTrack(track)
+        }
         lateinit var playbackJob: Job
         playbackJob = serviceScope.launch(Dispatchers.IO, start = CoroutineStart.LAZY) {
             try {
+                track.play()
                 for (frame in subscription.frames) {
                     val frameStats = frame.bytes.pcmS16LeSignalStats()
-                    var offset = 0
-                    while (offset < frame.bytes.size) {
-                        val written = track.write(
-                            frame.bytes,
-                            offset,
-                            frame.bytes.size - offset,
-                            AudioTrack.WRITE_BLOCKING,
-                        )
-                        check(written > 0) { "통역 음성을 스피커로 재생하지 못했습니다." }
-                        offset += written
-                    }
+                    val complete = writeLocalMonitorPcm(
+                        frame.bytes,
+                        isCurrent = { isTranslationSessionCurrent(sessionId) },
+                        writeNonBlocking = { bytes, offset, count ->
+                            synchronized(translationResourceLock) {
+                                if (!isTranslationSessionCurrent(sessionId)) 0 else
+                                    track.write(bytes, offset, count, AudioTrack.WRITE_NON_BLOCKING)
+                            }
+                        },
+                    )
+                    if (!complete) break
                     if (frameStats.sampleCount > 0 &&
                         frameStats.nonZeroSamples > 0 &&
                         frameStats.rms > 0f &&
@@ -1206,8 +1219,11 @@ class BroadcastService : Service() {
                 )
             } finally {
                 subscription.close()
+                releaseTrackOnce()
             }
         }
+        // Also owns cleanup when a lazy job is cancelled before its body ever starts.
+        playbackJob.invokeOnCompletion { subscription.close(); releaseTrackOnce() }
         try {
             synchronized(translationResourceLock) {
                 ensureTranslationSessionCurrent(sessionId)
@@ -1219,8 +1235,6 @@ class BroadcastService : Service() {
         } catch (error: Throwable) {
             playbackJob.cancel()
             subscription.close()
-            runCatching { track.stop() }
-            track.release()
             throw error
         }
     }
@@ -1613,8 +1627,8 @@ class BroadcastService : Service() {
         previewSubscription?.close()
         previewSubscription = null
         previewAudioTrack?.let { track ->
-            runCatching { track.stop() }
-            track.release()
+            // The playback job releases only after its last write has returned.
+            stopMonitorAudioTrack(track)
         }
         previewAudioTrack = null
         translationHealthJob?.cancel()
@@ -2597,6 +2611,8 @@ class BroadcastService : Service() {
                                 } catch (cleanupError: Throwable) {
                                     Log.w(LOG_TAG, "Gemma worker cleanup failed", cleanupError)
                                     if (isTranslationSessionCurrent(sessionId)) {
+                                        gemmaPriorityRouteEnabled.set(false)
+                                        gemmaLiveActive.set(false)
                                         appendTranslationProviderWarning(
                                             "Gemma 작업 공간을 완전히 회수하지 못해 이 방송에서는 " +
                                                 "경량 번역을 유지합니다: " +

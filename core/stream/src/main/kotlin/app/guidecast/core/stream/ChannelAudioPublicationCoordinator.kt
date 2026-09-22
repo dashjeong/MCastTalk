@@ -30,6 +30,12 @@ class ChannelAudioPublicationCoordinator(channelIds: Collection<String>) {
         return MutexLease(listOf(mutex))
     }
 
+    /** Capture must keep draining AudioRecord even when a test tone owns the output. */
+    fun tryAcquireChannel(channelId: String): Closeable? {
+        val mutex = requireNotNull(mutexes[channelId]) { "Unknown audio channel: $channelId" }
+        return if (mutex.tryLock()) MutexLease(listOf(mutex)) else null
+    }
+
     /**
      * Acquires every channel atomically within [timeoutMillis].
      *

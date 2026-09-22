@@ -67,6 +67,7 @@ class GlossaryDeviceTest {
         val device = UiDevice.getInstance(instrumentation)
         val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
         try {
+            device.openServiceWorkspace(MCastService.MULTILINGUAL)
             assertTrue(device.wait(Until.hasObject(By.text("설정")), 15_000))
             device.findObject(By.text("설정")).click()
             assertTrue(device.wait(Until.hasObject(By.text("번역 용어 사전 · 검색 / 수정 / 일괄 등록")), 10_000))
@@ -101,6 +102,7 @@ class GlossaryDeviceTest {
         val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
         val fixture = GlossaryTerm("ko", "en", "퀀텀 시험정원", "Verification Garden", "quantum garden", "시험", "자동시험")
         try {
+            device.openServiceWorkspace(MCastService.MULTILINGUAL)
             assertTrue(device.wait(Until.hasObject(By.text("설정")), 15_000))
             device.findObject(By.text("설정")).click()
             assertTrue(device.wait(Until.hasObject(By.text("번역 용어 사전 · 검색 / 수정 / 일괄 등록")), 10_000))

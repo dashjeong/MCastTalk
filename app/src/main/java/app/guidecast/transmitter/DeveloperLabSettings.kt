@@ -26,6 +26,10 @@ data class DeveloperLabOptions(
     val hasApiKey: Boolean = false,
     val teacherLearningEnabled: Boolean = false,
     val authorizationRevision: Long = 0,
+    val comparisonEnabled: Boolean = false,
+    val secondaryModelId: String = defaultReviewModel(CloudReviewProvider.GOOGLE),
+    val comparisonSituation: String = "",
+    val hasComparisonKeys: Boolean = false,
 )
 
 fun defaultReviewModel(provider: CloudReviewProvider): String = when (provider) {
@@ -43,11 +47,22 @@ class DeveloperLabSettings internal constructor(
 
     private val lock = Any()
     private val mutableState = MutableStateFlow(preferences.read().let {
-        it.copy(hasApiKey = vault.read(it.provider) != null)
+        it.copy(hasApiKey = vault.read(it.provider) != null,
+            hasComparisonKeys = CloudReviewProvider.entries.all { provider -> vault.read(provider) != null })
     })
     val state = mutableState.asStateFlow()
 
     fun setExpressiveTtsEnabled(value: Boolean) = update { it.copy(expressiveTtsEnabled = value) }
+    fun setComparisonEnabled(value: Boolean) = update { it.copy(comparisonEnabled = value,
+        teacherLearningEnabled = it.teacherLearningEnabled || value, autoLearnEnabled = it.autoLearnEnabled || value,
+        authorizationRevision = it.authorizationRevision + 1) }
+    fun setComparisonDetails(model: String, situation: String): Boolean {
+        if (!validReviewModel(model) || situation.length > 300 || containsCredentialLikeText(situation) ||
+            situation.any { it == '\u0000' || (it.code < 32 && it !in "\n\r\t") }) return false
+        update { it.copy(secondaryModelId = model, comparisonSituation = situation.trim(), comparisonEnabled = false,
+            authorizationRevision = it.authorizationRevision + 1) }
+        return true
+    }
     internal fun invalidateAuthorization() = update { it.copy(authorizationRevision = it.authorizationRevision + 1) }
     fun setParaphraseEnabled(value: Boolean) = update { it.copy(paraphraseEnabled = value) }
     fun setTranslationRegister(value: TranslationRegister) = update { it.copy(translationRegister = value) }
@@ -58,6 +73,7 @@ class DeveloperLabSettings internal constructor(
         authorizationRevision = it.authorizationRevision + 1) }
     fun setProvider(value: CloudReviewProvider) = update {
         if (it.provider == value) it else it.copy(provider = value, modelId = defaultReviewModel(value),
+            secondaryModelId = defaultReviewModel(value.other()), comparisonEnabled = false,
             cloudReviewEnabled = false, hasApiKey = vault.read(value) != null, authorizationRevision = it.authorizationRevision + 1)
     }
     fun setModelId(value: String): Boolean {
@@ -69,12 +85,15 @@ class DeveloperLabSettings internal constructor(
     fun setApiKey(value: String): Boolean = synchronized(lock) {
         if (value.length !in 20..512 || value.any { it.code !in 33..126 }) return false
         if (!vault.write(mutableState.value.provider, value)) return false
-        mutableState.value = mutableState.value.copy(hasApiKey = true, authorizationRevision = mutableState.value.authorizationRevision + 1)
+        mutableState.value = mutableState.value.copy(hasApiKey = true,
+            hasComparisonKeys = CloudReviewProvider.entries.all { vault.read(it) != null },
+            authorizationRevision = mutableState.value.authorizationRevision + 1)
         true
     }
     fun clearApiKey(): Boolean = synchronized(lock) {
         val removed = vault.remove(mutableState.value.provider)
         update { it.copy(hasApiKey = if (removed) false else it.hasApiKey, cloudReviewEnabled = false,
+            hasComparisonKeys = CloudReviewProvider.entries.all { provider -> vault.read(provider) != null }, comparisonEnabled = false,
             authorizationRevision = it.authorizationRevision + 1) }
         removed
     }
@@ -82,10 +101,12 @@ class DeveloperLabSettings internal constructor(
 
     /** Import is configuration, never renewed permission to send speech-derived text externally. */
     fun portableOptions() = state.value.copy(hasApiKey = false, cloudReviewEnabled = false, autoLearnEnabled = false,
+        comparisonEnabled = false, hasComparisonKeys = false,
         teacherLearningEnabled = false, authorizationRevision = 0)
     fun importOptions(value: DeveloperLabOptions) = update {
         value.copy(modelId = value.modelId.takeIf(::validReviewModel) ?: defaultReviewModel(value.provider),
             cloudReviewEnabled = false, autoLearnEnabled = false, teacherLearningEnabled = false,
+            comparisonEnabled = false, hasComparisonKeys = CloudReviewProvider.entries.all { vault.read(it) != null },
             authorizationRevision = it.authorizationRevision + 1, hasApiKey = vault.read(value.provider) != null)
     }
     private fun update(transform: (DeveloperLabOptions) -> DeveloperLabOptions) = synchronized(lock) {
@@ -120,6 +141,9 @@ private class AndroidDeveloperLabPreferences(context: Context) : DeveloperLabPre
             autoLearnEnabled = prefs.getBoolean("auto_learn", false), provider = provider,
             teacherLearningEnabled = prefs.getBoolean("selective_teacher", prefs.getBoolean("auto_learn", false)),
             modelId = prefs.getString("model", null)?.takeIf(::validReviewModel) ?: defaultReviewModel(provider),
+            comparisonEnabled = prefs.getBoolean("cross_review", false),
+            secondaryModelId = prefs.getString("secondary_model", null)?.takeIf(::validReviewModel) ?: defaultReviewModel(provider.other()),
+            comparisonSituation = prefs.getString("comparison_situation", "").orEmpty().take(300),
         )
     }
     override fun write(options: DeveloperLabOptions) {
@@ -127,6 +151,8 @@ private class AndroidDeveloperLabPreferences(context: Context) : DeveloperLabPre
             .putBoolean("paraphrase", options.paraphraseEnabled).putString("register", options.translationRegister.name)
             .putBoolean("cloud_review", options.cloudReviewEnabled).putBoolean("auto_learn", options.autoLearnEnabled)
             .putBoolean("selective_teacher", options.teacherLearningEnabled)
+            .putBoolean("cross_review", options.comparisonEnabled).putString("secondary_model", options.secondaryModelId)
+            .putString("comparison_situation", options.comparisonSituation)
             .putString("provider", options.provider.name).putString("model", options.modelId).apply()
     }
 }

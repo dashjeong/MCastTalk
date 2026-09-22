@@ -239,6 +239,9 @@ class TranslationBroadcastPipeline(
             isolatedScope.launch {
                 try {
                     for (utterance in requireNotNull(translationQueues[target])) {
+                        // This immutable stream generation can never become current again.
+                        // Drain obsolete work without loading translation/TTS engines.
+                        if (!activeStreamSession.isActive()) continue
                         try {
                             mutableHealth.updateChannel(target.channelId) {
                                 it.copy(translationState = TranslationWorkerState.ACTIVE)
@@ -372,6 +375,7 @@ class TranslationBroadcastPipeline(
         val speechWorkers = targets.map { target ->
             isolatedScope.launch {
                 for (work in requireNotNull(speechQueues[target])) {
+                    if (!activeStreamSession.isActive()) continue
                     val utterance = work.utterance
                     var publicationLease: Closeable? = null
                     try {

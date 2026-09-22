@@ -11,10 +11,44 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.*
 import org.junit.Test
 
 class TeacherLearningScreenDeviceTest {
+    @Test fun userApprovesComparativeEvidenceAndCanConfirmDeactivation(): Unit = runBlocking {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        val name = "comparison-ui-${System.nanoTime()}.db"
+        val memory = SentenceTranslationMemory(context, name)
+        val report = TeacherLearningReport("d".repeat(64), "ko", "en", TranslationRegister.AUTO,
+            "11시에 만나요", "We meet at 12.", "We meet at 11.", setOf(TeacherLearningSignal.NUMBERS), setOf(TeacherLesson.NUMBERS),
+            TeacherReviewOutcome.PROPOSED, CloudReviewProvider.OPENAI, "synthetic-openai",
+            comparison = ComparativeTeacherEvidence("만날 시간", "약속 안내", CloudReviewProvider.GOOGLE,
+                "synthetic-gemini", "We meet at 11.", "We meet at 11.", "We meet at 11.", true, comparativeVersionHash(null)))
+        memory.recordTeacherReport(report) { true }
+        val activity = instrumentation.startActivitySync(Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)) as MainActivity
+        try {
+            instrumentation.runOnMainSync { activity.setContent { GuideCastTheme { TeacherLearningReportScreen(memory) {} } } }
+            val device = UiDevice.getInstance(instrumentation)
+            assertTrue(device.wait(Until.hasObject(By.text("학습 전후 비교 리포트")), 5_000))
+            reveal(device, "승인·적용"); device.clickTextControl("승인·적용")
+            withTimeout(5_000) { while (memory.comparativeLesson(report.comparativeKey()) == null) delay(50) }
+            assertNull(memory.lookup("ko", "en", TranslationRegister.AUTO, report.original))
+            reveal(device, "이 문맥 교정 사용 해제"); device.clickTextControl("이 문맥 교정 사용 해제")
+            assertTrue(device.wait(Until.hasObject(By.text("이 문맥의 교정을 끌까요?")), 5_000))
+            device.clickTextControl("유지")
+            assertNotNull(memory.comparativeLesson(report.comparativeKey()))
+            device.clickTextControl("이 문맥 교정 사용 해제")
+            assertTrue(device.wait(Until.hasObject(By.text("사용 해제")), 5_000))
+            device.clickTextControl("사용 해제")
+            withTimeout(5_000) { while (memory.comparativeLesson(report.comparativeKey()) != null) delay(50) }
+            device.takeScreenshot(java.io.File(context.getExternalFilesDir(null), "synthetic-comparison-deactivated.png"))
+        } finally { instrumentation.runOnMainSync { activity.finish() }; memory.close(); context.deleteDatabase(name) }
+    }
+
     private fun reveal(device: UiDevice, text: String) {
         repeat(12) {
             if (device.hasObject(By.text(text))) return

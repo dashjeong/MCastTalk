@@ -112,6 +112,7 @@ class GuideCastApplication : Application() {
     }
     val speechRecognitionEngine by speechRecognitionEngineDelegate
     val broadcastRuntime = BroadcastRuntime()
+    internal val translationWorkspaceActive = kotlinx.coroutines.flow.MutableStateFlow(false)
     private val transcriptArchiveDelegate = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         BroadcastTranscriptArchive(this)
     }
@@ -133,6 +134,7 @@ class GuideCastApplication : Application() {
     val microphoneNoiseSettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { MicrophoneNoiseSettings(this) }
     val diagnosticExportState = kotlinx.coroutines.flow.MutableStateFlow(DiagnosticExportState())
     val localFileWorkActive = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val localVoiceNoteWorkActive = kotlinx.coroutines.flow.MutableStateFlow(false)
     val localModelWorkActive = kotlinx.coroutines.flow.MutableStateFlow(false)
 
     /** Owns the short export independently of screen recreation; keeps only application context. */

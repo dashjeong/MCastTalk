@@ -7,8 +7,8 @@ agreement or certification that all vulnerabilities have been removed:
 
 | Version | Supported |
 |---|---|
-| `0.2.42-alpha` | Current Alpha; experimental |
-| `0.2.41-alpha` | Previous public Alpha |
+| `0.2.43-alpha` | Current Alpha; experimental |
+| `0.2.42-alpha` | Previous public Alpha |
 | `0.2.40-alpha` | Superseded: continuous transcript buffer recovery fix in 0.2.41 |
 | `0.2.39-alpha` | Previous public Alpha |
 | `< 0.2.39` | :x: |
@@ -62,14 +62,19 @@ MCastTalk is designed with offline-first and privacy-focused principles:
 - User-initiated settings, dictionary and script exports create ZIP files only in
   the device's `Download/MCastTalk/Backups` folder. They are not automatically sent
   to a server. These portable files are not encrypted and can contain private
-  sentences and file metadata. Credentials, certificates and original audio are
-  excluded. Existing backups are not overwritten; incomplete new exports are
+  sentences, file metadata and local voice-note recordings. Credentials, certificates
+  and externally selected source audio are excluded. Existing backups are not overwritten; incomplete new exports are
   kept pending until complete and cleaned up on cancellation or failure.
 - File conversion stores transcripts, translations, timing and the selected
   file's name, location and SHA-256 in the private library. The source audio stays
   at its selected location. Imported locations require explicit file selection
   and matching SHA-256 before playback. Sentence memory stores up to 50,000 entries;
   AI entries cannot overwrite user-confirmed wording.
+- Local voice notes store recordings, edited transcripts, translations and speaker labels
+  in app-private files. Explicit script backups now include these recordings and restore
+  them with their notes after format, size, hash and reference validation. Existing notes
+  win on an identifier collision. Loose document exports are not migration backups.
+  Voice notes are excluded from diagnostic exports and automatic Android backup.
 - Authorized listeners receive audio/text and may retain their own copies.
   Consider consent before broadcasting or sharing content.
 - Processing uses audio buffers and may use temporary synthesis files. Offline
