@@ -99,16 +99,16 @@ internal fun FileTranslationScreen(
     val readyCount = queued.count { it.status == FileConversionStatus.READY || fileConversionCanRetry(it.status) }
     val retryCount = queued.count { fileConversionCanRetry(it.status) }
     val conversionPreflight = fileConversionPreflight(state)
-    Surface(modifier.fillMaxSize().safeDrawingPadding().semantics { paneTitle = "파일 번역 시험" }) {
+    Surface(modifier.fillMaxSize().safeDrawingPadding().semantics { paneTitle = MCastService.FILES.title }) {
         Column(Modifier.fillMaxSize()) {
-            TextButton(onClick = onBack, modifier = Modifier.padding(horizontal = 8.dp)) { Text("시험 화면으로") }
+            TextButton(onClick = onBack, modifier = Modifier.padding(horizontal = 8.dp)) { Text("이전 화면으로") }
             LazyColumn(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
                 item {
-                    Text("파일 번역 시험", style = MaterialTheme.typography.headlineSmall,
+                    Text(MCastService.FILES.title, style = MaterialTheme.typography.headlineSmall,
                         fontWeight = FontWeight.Bold, modifier = Modifier.semantics { heading() })
                     Text("음성 파일을 문장으로 변환하고, 번역을 나란히 보며 원본 음성을 재생합니다.",
                         style = MaterialTheme.typography.bodyMedium)
@@ -227,6 +227,8 @@ internal fun FileTranslationScreen(
                             }
                         }
                     } else {
+                        Text("일반 변환은 현재 설정으로 번역을 갱신합니다. 실패 항목 재작업은 완료된 언어와 문장을 보존하며 이어서 처리합니다.",
+                            style = MaterialTheme.typography.bodySmall)
                         Button(onClick = onConvert,
                             enabled = (readyCount > 0 || (queued.isEmpty() && state.selectedFileName != null)) && conversionPreflight == null,
                             modifier = Modifier.fillMaxWidth().sizeIn(minHeight = 56.dp)) {
