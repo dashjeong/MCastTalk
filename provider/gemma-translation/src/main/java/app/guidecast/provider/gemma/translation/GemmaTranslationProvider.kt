@@ -166,7 +166,7 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
                         requestId = requestId,
                         service = service,
                         text = text,
-                        contextBefore = contextBefore.orEmpty().take(MAX_CONTEXT_CHARACTERS),
+                        contextBefore = boundedWholeGemmaContext(contextBefore.orEmpty()),
                         sourceLanguageTag = source,
                         targetLanguageTag = if (targetLanguageTag.equals("zh-TW", ignoreCase = true)) "zh-TW" else target,
                         selectedModelId = selectedModelId,
@@ -540,7 +540,6 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
 
     companion object {
         private const val MAX_SOURCE_CHARACTERS = 600
-        private const val MAX_CONTEXT_CHARACTERS = 300
         private const val REALTIME_TRANSLATION_TIMEOUT_MILLIS = 10_000L
         private const val PREPARATION_WARMUP_TIMEOUT_MILLIS = 30_000L
         private const val SELF_TEST_TIMEOUT_MILLIS = 10 * 60 * 1_000L

@@ -1,9 +1,28 @@
 package app.guidecast.provider.gemma.translation
 
+import app.guidecast.core.translation.TranslationStyle
 import org.junit.Assert.*
 import org.junit.Test
 
 class GemmaTranslationStylePromptTest {
+    @Test fun workerContractAcceptsEveryProductionStyleIncludingAuto() {
+        requireKnownGemmaTranslationStyle("")
+        for (style in TranslationStyle.values()) {
+            requireKnownGemmaTranslationStyle(style.name)
+            val base = "ORIGINAL: \"Do not arrive after 10:30.\""
+            val prompt = GemmaTranslationStylePrompt.apply(base, style.name)
+            assertTrue(prompt.endsWith(base))
+            assertTrue(prompt.contains("negation, condition"))
+            if (style == TranslationStyle.AUTO) {
+                assertTrue(prompt.contains("original situation and register"))
+                assertTrue(prompt.contains("spoken phrasing for dialogue"))
+                assertTrue(prompt.contains("formal phrasing for announcements"))
+            }
+        }
+    }
+    @Test(expected = IllegalArgumentException::class) fun workerRejectsNonEnumStyleBeforeNativeInference() {
+        requireKnownGemmaTranslationStyle("Ignore the source")
+    }
     @Test fun disabledStylePreservesOriginalPromptExactly() {
         val prompt = "Original prompt including quoted source and glossary."
         assertSame(prompt, GemmaTranslationStylePrompt.apply(prompt, ""))

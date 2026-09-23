@@ -5,6 +5,16 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class GemmaStreamingAllocationRegressionTest {
+    @Test fun echoedPromptAndOriginalFieldsCannotBeParsedAsTranslation() {
+        val prompt = GemmaTranslationReviewPrompt.build("Korean", "English", "이전 안내입니다.",
+            "회의가 연기되었습니다.", "", "The meeting has been postponed.")
+        assertNull(completeGemmaJsonTranslation(prompt))
+        assertNull(completeGemmaJsonTranslation("{\"ORIGINAL\":\"회의가 연기되었습니다.\",\"translation\":\"The meeting was postponed.\"}"))
+        val generated = StringBuilder()
+        generated.mergeLiteRtChunk("{\"translation\":\"The meeting")
+        generated.mergeLiteRtChunk(" was postponed.\"}")
+        assertEquals("The meeting was postponed.", completeGemmaJsonTranslation(generated))
+    }
     @Test
     fun `parser reads growing buffer without materializing a complete snapshot`() {
         val buffer = StringBuilder("{\"translation\":\"Welcome")
