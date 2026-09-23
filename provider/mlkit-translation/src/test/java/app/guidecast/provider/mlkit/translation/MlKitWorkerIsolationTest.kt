@@ -20,7 +20,7 @@ import org.junit.Test
 class MlKitWorkerIsolationTest {
     @Test
     fun nativeWarmupUsesShortNonBlankTextForEverySupportedSource() {
-        setOf("ar", "en", "es", "ja", "ko", "zh").forEach { source ->
+        setOf("ar", "de", "en", "es", "fr", "ja", "ko", "zh").forEach { source ->
             val warmup = mlKitWarmupSourceText(source)
             assertTrue(warmup.isNotBlank())
             assertTrue(warmup.length <= 16)

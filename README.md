@@ -1,24 +1,24 @@
 # MCastTalk
 
-> **0.2.43-alpha 공개 철회 · 보수 전용 브랜치**
-> 음성 송출·시험 기능 실패 및 음성노트 요구 누락 보고로 2026-09-23 배포를 철회했습니다.
-> 이 브랜치의 APK를 공개하거나 설치 권장하지 않습니다.
-> 현재 공개본은 [0.2.42-alpha](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.42-alpha)입니다.
-> [확인된 문제·보수 우선순위·재검증 기준](docs/MAINTENANCE_0_2_43.md)
+> **0.2.44-alpha — 음성 처리·문맥 검토 보수판**
+> 철회한 0.2.43과 구분하는 Alpha 업데이트입니다. 숫자 표기, 사람·시간 구분,
+> 공개 사전의 뜻 충돌과 검토 시간 제한을 보완했습니다.
+> 연차 관계 등 알려진 오역은 남아 있습니다. [실제 검증·남은 제한](docs/MISTRANSLATION_REVIEW_2026_09_24.md)을 확인하세요.
+> 0.2.43은 계속 철회 상태이며 [이전 0.2.42](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.42-alpha)도 보존합니다.
 
 **실시간 다국어 통역방송(feat. DMZ peace walk)**
 
-**0.2.43-alpha — 서비스 홈·음성노트·문맥 검토**
+**0.2.44-alpha — 서비스 홈·음성노트·문맥 검토 보완**
 
 녹톡(음성노트) / 라이브톡(원음 방송) / 통역톡(다국어 방송) /
 스크립톡(파일 전사)를 독립된 작업 공간으로
-구분했습니다. 음성노트는 녹음 후 받아쓰기, 원문과 괄호 번역, 원음 재생,
+구분했습니다. 음성노트는 녹음 중 전사와 저장 후 확인, 원문과 괄호 번역, 원음 재생,
 TXT·SRT·Markdown·JSON·WAV 저장과 녹음까지 포함하는 백업·가져오기를 제공합니다.
 [사용 방법과 지원 범위](docs/VOICE_NOTES.md) · [문맥 교차 검토](docs/COMPARATIVE_LEARNING.md)
 
-[현재 공개 APK: 0.2.42](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.42-alpha) ·
-[철회 전 시험 기록과 그 한계](docs/TEST_REPORT.md)
-(`0.2.43-alpha`, `versionCode 49`). 기존 공개 앱과 같은 배포자 서명을 사용합니다.
+[공개 APK: 0.2.44 Alpha](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.44-alpha) ·
+[실행한 시험과 그 한계](docs/TEST_REPORT.md)
+(`0.2.44-alpha`, `versionCode 50`). 기존 공개 앱과 같은 배포자 서명을 사용합니다.
 
 아스트라 미니미는 기기 상태를 진단하고 개선안을 안내합니다. 실험실에서는 필요한 문장만
 스승 API와 비교하고, 전후 리포트를 확인한 사용자가 승인·보류합니다. 승인 전에는 기존

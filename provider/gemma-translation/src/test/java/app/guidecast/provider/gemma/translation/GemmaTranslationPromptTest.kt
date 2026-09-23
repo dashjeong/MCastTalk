@@ -6,6 +6,21 @@ import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class GemmaTranslationPromptTest {
+    @Test fun `human classifier hint is separate while current speech stays byte for byte`() {
+        val source = "회의실에는 몇 분이 계신가요?"
+        val prompt = GemmaTranslationPrompt.build("Korean", "English", "참석자를 안내합니다.", source)
+        assertTrue(prompt.contains("SOURCE_GRAMMAR: \"The quantified 분 subject denotes people"))
+        assertTrue(prompt.endsWith("CURRENT: \"$source\""))
+        assertFalse(prompt.contains("CURRENT: \"회의실에는 몇 사람이"))
+    }
+
+    @Test fun `prior person context cannot relabel current minutes`() {
+        val source = "몇 분 동안 기다리세요."
+        val prompt = GemmaTranslationPrompt.build("Korean", "English", "두 분이 서 계십니다.", source)
+        assertFalse(prompt.contains("SOURCE_GRAMMAR:"))
+        assertTrue(prompt.endsWith("CURRENT: \"$source\""))
+    }
+
     @Test
     fun `full valid context retains latest negation beyond old prefix limit`() {
         val recentQualification = "이전 허가는 취소되었고 지금은 입장하면 안 됩니다."

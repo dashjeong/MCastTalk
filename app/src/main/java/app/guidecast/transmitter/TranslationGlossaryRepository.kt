@@ -86,7 +86,12 @@ class TranslationGlossaryRepository(private val context: Context) {
                     database().rawQuery(
                         "SELECT * FROM effective WHERE src=? AND lang=? AND enabled=1 AND prefix IN (${chunk.joinToString { "?" }})",
                         (listOf(language(source), language(target)) + chunk).toTypedArray(),
-                    ).use { cursor -> while (cursor.moveToNext()) found.add(cursor.row().term) }
+                    ).use { cursor -> while (cursor.moveToNext()) {
+                        val row = cursor.row()
+                        if (PublicGlossaryHintPolicy.permits(normalized, row.term, row.edited)) {
+                            found.add(row.term)
+                        }
+                    } }
                 }
                 found.distinctBy { it.sourceTerm }
             }

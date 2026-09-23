@@ -6,6 +6,8 @@ import android.os.Build
 import android.os.SystemClock
 import androidx.test.platform.app.InstrumentationRegistry
 import app.guidecast.core.translation.SelectiveRefinementReason
+import app.guidecast.core.translation.GlossaryTerms
+import app.guidecast.core.translation.TranslationGlossaryContext
 import app.guidecast.core.translation.currentNativeColdLoadTicket
 import app.guidecast.core.translation.TranslationReviewContext
 import app.guidecast.core.translation.TranslationStyle
@@ -48,6 +50,8 @@ class ContextualTranslationQualityDeviceTest {
         val requestedRoute = args.getString("contextualQualityRoute") ?: "review"
         require(requestedRoute in setOf("review", "direct-context-control")) { "INVALID_QUALITY_ROUTE" }
         val noDraftControl = requestedRoute == "direct-context-control"
+        val glossaryMode = args.getString("contextualQualityGlossary") ?: "none"
+        require(glossaryMode in setOf("none", "packaged")) { "INVALID_GLOSSARY_MODE" }
         val app = instrumentation.targetContext.applicationContext as GuideCastApplication
         val base = File(checkNotNull(app.getExternalFilesDir(null)), "benchmark").canonicalFile
         val manifestName = args.getString("contextualQualityManifest") ?: "contextual-quality-round12.json"
@@ -58,17 +62,17 @@ class ContextualTranslationQualityDeviceTest {
         }
         val bytes = fixtureFile.readBytes()
         val fixtureHash = sha256(bytes)
-        check(fixtureHash == FIXTURE_SHA256) { "PUBLIC_FIXTURE_SHA256_MISMATCH" }
+        val expectedCases = APPROVED_FIXTURES[fixtureHash] ?: error("PUBLIC_FIXTURE_SHA256_MISMATCH")
         val fixture = JSONObject(bytes.toString(Charsets.UTF_8))
         check(fixture.getInt("schemaVersion") == 1)
         check(fixture.getString("sourceLanguage") == "ko" && fixture.getString("targetLanguage") == "en")
         val cases = fixture.getJSONArray("cases")
-        check(cases.length() == 10 && (0 until cases.length()).count {
+        check(cases.length() == expectedCases && (0 until cases.length()).count {
             cases.getJSONObject(it).getString("kind") == "recorded-asr-output"
         } == 5)
         check((0 until cases.length()).count {
             cases.getJSONObject(it).getString("kind") == "authored-counterexample"
-        } == 5)
+        } == expectedCases - 5)
         val rows = JSONArray()
         val failures = JSONArray()
         val output = File(base, "contextual-quality-results-${System.currentTimeMillis()}.json")
@@ -80,6 +84,7 @@ class ContextualTranslationQualityDeviceTest {
                 else "ML_KIT_DIRECT_DRAFT_THEN_GEMMA_PROVIDER_WITH_TRANSLATION_REVIEW_CONTEXT")
             .put("noDraftControl", noDraftControl).put("requestedRoute", requestedRoute)
             .put("draftPassedToGemma", !noDraftControl)
+            .put("glossaryMode", glossaryMode)
             .put("comparisonLimit", "Omitting review context selects the production direct-translation prompt; this is a route contrast, not proof of a single anchoring cause")
             .put("sourceLanguage", "ko").put("targetLanguage", "en")
             .put("audioRecognitionExecuted", false).put("humanMeaningAssessment", false)
@@ -98,6 +103,12 @@ class ContextualTranslationQualityDeviceTest {
         save()
         val gemma = app.gemmaTranslationProvider
         try {
+            if (glossaryMode == "packaged") {
+                // A dedicated public-fixture run must not disclose or alter user corrections.
+                var overrides = 0
+                app.glossary.exportOverrides { overrides++ }
+                check(overrides == 0) { "PUBLIC_FIXTURE_REQUIRES_NO_USER_GLOSSARY_OVERRIDES" }
+            }
             app.withTranslationBackendUse {
                 withTimeout(600_000L) {
                     val mlKit = MlKitTranslationProvider(app, "ko", requireWifiForModels = false)
@@ -186,11 +197,15 @@ class ContextualTranslationQualityDeviceTest {
                             check(gemma.hasActivePreparedWorker() && !gemma.isAutomaticRetryBlocked()) {
                                 "PREPARED_REVIEWER_UNAVAILABLE"
                             }
-                            val requestContext = if (noDraftControl) TranslationStyleContext(TranslationStyle.AUTO)
+                            val terms = if (glossaryMode == "packaged") app.glossary.matching(original, "ko", "en")
+                                else emptyList()
+                            row.put("matchedGlossaryTerms", terms.size)
+                            val routeContext = if (noDraftControl) TranslationStyleContext(TranslationStyle.AUTO)
                                 else TranslationReviewContext(original, draft, "ko", "en",
                                     setOf(SelectiveRefinementReason.STYLE_REQUESTED)) + TranslationStyleContext(TranslationStyle.AUTO)
+                            val requestContext = routeContext + TranslationGlossaryContext(GlossaryTerms.hints(terms))
                             row.put("reviewStage", "ACQUIRE_NATIVE_ADMISSION")
-                            val reviewed = withTimeout(15_000L) {
+                            val rawReviewed = withTimeout(15_000L) {
                                 app.withProcessNativeColdLoadLease(ProcessNativeColdLoadKeys.GEMMA_MODEL, true) {
                                     withContext(requestContext) {
                                         row.put("reviewStage", "CALL_GEMMA_PROVIDER")
@@ -198,6 +213,7 @@ class ContextualTranslationQualityDeviceTest {
                                     }
                                 }
                             }
+                            val reviewed = GlossaryTerms.correct(rawReviewed, terms)
                             check(reviewed.isNotBlank() && reviewed.length <= 1_200) { "MALFORMED_REVIEW" }
                             val assessment = assess(item, reviewed)
                             row.put("reviewState", "COMPLETED").put("reviewedTranslation", reviewed)
@@ -222,7 +238,8 @@ class ContextualTranslationQualityDeviceTest {
                 rows.getJSONObject(it).optJSONObject("reviewAssets")?.optBoolean("passed") == true
             }
             result.put("completedReviews", completed).put("passedSemanticAssetCases", passed)
-            val success = rows.length() == 10 && completed == 10 && passed == 10 && failures.length() == 0
+            val success = rows.length() == expectedCases && completed == expectedCases &&
+                passed == expectedCases && failures.length() == 0
             result.put("state", if (success) "SEMANTIC_ASSET_GATES_PASSED" else "SEMANTIC_ASSET_GATES_FAILED")
         } catch (error: Throwable) {
             result.put("failedStage", result.optString("state")).put("state", "FAILED")
@@ -290,6 +307,9 @@ class ContextualTranslationQualityDeviceTest {
     }
 
     private companion object {
-        const val FIXTURE_SHA256 = "0350057708c2043bf954a72d827fb320d7a476fbe2098ec17d398077a707a708"
+        val APPROVED_FIXTURES = mapOf(
+            "0350057708c2043bf954a72d827fb320d7a476fbe2098ec17d398077a707a708" to 10,
+            "c94c5ac80d72531f79a1d6219fba0d9f1f11e7596e28e50e0eb0f06f52522ac8" to 26,
+        )
     }
 }

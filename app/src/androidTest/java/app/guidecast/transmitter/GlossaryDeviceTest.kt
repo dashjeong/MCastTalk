@@ -20,6 +20,21 @@ class GlossaryDeviceTest {
     private val context = instrumentation.targetContext
     private val repository get() = (context.applicationContext as GuideCastApplication).glossary
 
+    @Test fun ambiguousPublicSenseIsOptionalButOperatorOverrideIsPreserved(): Unit = runBlocking {
+        val base = repository.search("ko", "en", "정전").single { it.term.sourceTerm == "정전" }
+        check(!base.edited) { "DEDICATED_GLOSSARY_TEST_REQUIRES_UNEDITED_ENTRY" }
+        val military = "우리는 여전히 정전이라는 이름의 시간을 살고 있습니다."
+        assertTrue(repository.matching(military, "ko", "en").none { it.sourceTerm == "정전" })
+        assertTrue(repository.matching("정전 때문에 신호등이 꺼졌습니다.", "ko", "en")
+            .any { it.sourceTerm == "정전" && it.preferredTerm == "power outage" })
+        val override = base.term.copy(preferredTerm = "operator-chosen reference")
+        try {
+            repository.save(listOf(override))
+            assertEquals(override, repository.matching(military, "ko", "en").single { it.sourceTerm == "정전" })
+        } finally { repository.restore(base.term) }
+        assertTrue(repository.matching(military, "ko", "en").none { it.sourceTerm == "정전" })
+    }
+
     @Test fun bundledLanguagesMatchAndEachExportRoundTripsWithoutLoss(): Unit = runBlocking {
         for ((lang, count) in mapOf("en" to 48524, "ja" to 24361, "zh" to 24486)) {
             assertEquals(count, repository.count("ko", lang))

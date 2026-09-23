@@ -1,5 +1,14 @@
 # Maintenance validation follow-up — 2026-09-24
 
+> **Later correction / scope update:** the user explicitly accepted emulator validation in
+> place of multilingual/physical-device validation. A missing physical Galaxy is therefore
+> not itself a release blocker under the revised scope; actual emulator outcomes and remaining
+> failures still must be reported. Earlier categorical statements that `56년째` requires only
+> an ordinal English translation were incorrect: Korean `-째` can also express duration.
+> Historical outputs, fixture hashes and failed JUnit results below are retained unchanged.
+> See [round18 mistranslation review](MISTRANSLATION_REVIEW_2026_09_24.md) for the versioned
+> oracle correction, new execution and remaining limits.
+
 Status: **VALIDATION RECORDED / RELEASE HELD — QUALITY GATES NOT MET**. The user's release
 authorization remains valid; it does not turn failed verification into a pass. This record follows the
 maintenance baseline `2dc5142eea10a1d37ee44bdfffe9b15e83818b35`; it does not replace

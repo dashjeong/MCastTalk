@@ -366,17 +366,6 @@ private class MlKitWorkerRuntime : Closeable {
     }
 }
 
-internal fun mlKitWarmupSourceText(sourceLanguageTag: String): String = requireNotNull(
-    mapOf(
-        "ar" to "مرحبا",
-        "en" to "Hello",
-        "es" to "Hola",
-        "ja" to "こんにちは",
-        "ko" to "안녕하세요",
-        "zh" to "你好",
-    )[sourceLanguageTag.toMlKitLanguage()],
-) { "ML Kit warm-up source is unavailable for $sourceLanguageTag" }
-
 private class MlKitServiceRequest(
     private val work: Job,
     private val callbackBinder: IBinder,
