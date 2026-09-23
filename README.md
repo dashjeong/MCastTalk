@@ -1,18 +1,21 @@
 # MCastTalk
 
+> **현재 공개 배포는 [0.2.42-alpha](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.42-alpha)입니다.**
+> 2026-09-23: 0.2.43의 기능·초기 화면 문제 보고에 따라 공개 APK와 태그를 철회했습니다.
+> 제품 소스도 0.2.42로 복구했으며, 0.2.43은 별도 보수 브랜치에서 재검토합니다.
+> [철회 안내와 재검토 범위](docs/RELEASE_0_2_43_WITHDRAWAL.md)
+
+이미 0.2.43을 설치했다면 **백업·호환 복구 확인 전에 앱을 삭제하지 마세요.**
+GitHub 롤백은 설치된 앱을 자동으로 되돌리지 않습니다. Android가 낮은 버전의 덮어 설치를
+거부할 수 있고, 0.2.43의 녹음 노트는 0.2.42가 완전 복원한다고 보장하지 않습니다.
+
 **실시간 다국어 통역방송(feat. DMZ peace walk)**
 
-**0.2.43-alpha — 서비스 홈·음성노트·문맥 검토**
+**0.2.42-alpha — 아스트라 미니미·승인형 선별 학습·API 번역·언어 자동 준비**
 
-녹톡(음성노트) / 라이브톡(원음 방송) / 통역톡(다국어 방송) /
-스크립톡(파일 전사)를 독립된 작업 공간으로
-구분했습니다. 음성노트는 녹음 후 받아쓰기, 원문과 괄호 번역, 원음 재생,
-TXT·SRT·Markdown·JSON·WAV 저장과 녹음까지 포함하는 백업·가져오기를 제공합니다.
-[사용 방법과 지원 범위](docs/VOICE_NOTES.md) · [문맥 교차 검토](docs/COMPARATIVE_LEARNING.md)
-
-[APK 다운로드](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.43-alpha) ·
+[APK 다운로드](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.42-alpha) ·
 [검증 결과와 미검증 환경](docs/TEST_REPORT.md)
-(`0.2.43-alpha`, `versionCode 49`). 기존 공개 앱과 같은 배포자 서명을 사용합니다.
+(`versionCode 48`). 기존 공개 APK와 같은 서명키를 사용하는 업데이트입니다.
 
 아스트라 미니미는 기기 상태를 진단하고 개선안을 안내합니다. 실험실에서는 필요한 문장만
 스승 API와 비교하고, 전후 리포트를 확인한 사용자가 승인·보류합니다. 승인 전에는 기존

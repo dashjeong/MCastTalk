@@ -7,7 +7,6 @@ import java.util.Locale
 enum class TeacherLearningSignal(val label: String) {
     NUMBERS("숫자 불일치"), UNTRANSLATED("원문 그대로 출력"), TARGET_SCRIPT("목표 언어 확인 필요"),
     LENGTH("누락·과도한 확장 의심"), UNSTABLE("동일 원문의 번역 변동"), USER_REQUEST("사용자 재검토 요청"),
-    CONTEXT("문맥·상황 비교 표본"),
 }
 
 enum class TeacherLesson(val label: String) {
@@ -43,7 +42,6 @@ internal class SelectiveTeacherLearning(private val clockMillis: () -> Long) {
         val draft = normalizeMemorySource(request.draft)
         val result = linkedSetOf<TeacherLearningSignal>()
         if (explicitlyRequested) result += TeacherLearningSignal.USER_REQUEST
-        if (request.comparisonMode && source.count(Char::isLetter) >= 2) result += TeacherLearningSignal.CONTEXT
         if (numbers(source) != numbers(draft)) result += TeacherLearningSignal.NUMBERS
         val differentLanguage = normalizeMemoryLanguage(request.sourceLanguageTag) != normalizeMemoryLanguage(request.targetLanguageTag)
         if (differentLanguage && source.count(Char::isLetter) >= 8 && source.equals(draft, true)) result += TeacherLearningSignal.UNTRANSLATED
@@ -80,8 +78,7 @@ internal class SelectiveTeacherLearning(private val clockMillis: () -> Long) {
 
     internal fun key(request: CloudReviewRequest) = hash(listOf(request.provider.name, request.modelId,
         request.sourceLanguageTag, request.targetLanguageTag, request.translationRegister.name,
-        normalizeMemorySource(request.original), normalizeMemorySource(request.draft),
-        request.comparisonMode.toString(), request.contextBefore, request.situation, request.secondaryModelId, request.baselineVersion))
+        normalizeMemorySource(request.original), normalizeMemorySource(request.draft)))
 
     private fun <T> trim(map: MutableMap<String, T>) { while (map.size > 512) map.remove(map.keys.first()) }
     private fun hash(parts: List<String>): String = MessageDigest.getInstance("SHA-256")

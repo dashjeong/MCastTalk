@@ -5,7 +5,7 @@
   <img src="https://img.shields.io/badge/Platform-Android_11%2B_(API_30%2B)-green.svg" alt="Android 11+">
   <img src="https://img.shields.io/badge/Arch-ARM64--v8a-orange.svg" alt="ARM64">
   <img src="https://img.shields.io/badge/AI-On--Device-purple.svg" alt="On-Device AI">
-  <img src="https://img.shields.io/badge/Release-0.2.43--alpha_(code_49)-brightgreen.svg" alt="Version 0.2.43-alpha">
+  <img src="https://img.shields.io/badge/Release-0.2.42--alpha_(code_48)-brightgreen.svg" alt="Version 0.2.42-alpha">
 </p>
 
 > **MCastTalk** — 실시간 다국어 통역방송 (feat. DMZ peace walk)  

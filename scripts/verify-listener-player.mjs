@@ -423,9 +423,9 @@ function createListenerHarness({
       search: "",
     },
     sessionStorage: {
-      getItem: (key) => { if (storageThrows) throw new Error("Storage unavailable"); return sessionValues.get(key) || null; },
-      removeItem: (key) => { if (storageThrows) throw new Error("Storage unavailable"); return sessionValues.delete(key); },
-      setItem: (key, value) => { if (storageThrows) throw new Error("Storage unavailable"); return sessionValues.set(key, value); },
+      getItem: (key) => sessionValues.get(key) || null,
+      removeItem: (key) => sessionValues.delete(key),
+      setItem: (key, value) => sessionValues.set(key, value),
     },
     localStorage: {
       getItem: (key) => {
@@ -853,8 +853,6 @@ async function verifyClosedSocketReconnectsAndStopCancelsRetry() {
 
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const disconnectedSocket = harness.sockets[harness.sockets.length - 1];
-    disconnectedSocket.onmessage({ data: JSON.stringify({ type: "error", message: "denied" }) });
-    disconnectedSocket.onmessage({ data: JSON.stringify({ type: "config", sampleRate: -1 }) });
     const closeCallback = disconnectedSocket.onclose;
     closeCallback();
     closeCallback();
@@ -1480,35 +1478,6 @@ async function verifyEmptyCacheScopeChangeClearsBackoffEvenWithoutSnapshot() {
   assert.match(collectText(harness.element("#transcript-list")), /새 토큰 성공/);
 }
 
-async function verifyRestrictedStorageStillAllowsQrAndPinEntry() {
-  for (const locationHash of ["", "#token=synthetic-qr"]) {
-    const requests = [];
-    const harness = createListenerHarness({ storageThrows: true, locationHash,
-      fetchImpl: async (url, options = {}) => {
-        if (url === "/api/session") return mockJsonResponse({ access: "pin" });
-        if (url === "/api/join") return { ok: true, status: 200, text: async () => "synthetic-pin" };
-        if (url.startsWith("/api/status")) {
-          requests.push(options.headers?.Authorization);
-          return mockJsonResponse({ channels: [{ id: "en", name: "English", languageTag: "en-US" }] });
-        }
-        throw new Error(`Unexpected request: ${url}`);
-      },
-    });
-    await harness.flush();
-    if (locationHash) assert.equal(requests[0], "Bearer synthetic-qr");
-    else assert.equal(harness.element("#pin-dialog").open, true);
-    harness.element("#pin").value = "1234";
-    const [joined] = harness.element("#pin-form").dispatch("submit");
-    await joined;
-    await harness.flush();
-    assert.equal(requests.at(-1), "Bearer synthetic-pin");
-    assert.equal(harness.element("#pin-dialog").open, false);
-    assert.equal(harness.element("#pin-error").textContent, "");
-    assert.equal(harness.element("#play").disabled, false);
-  }
-}
-
-await verifyRestrictedStorageStillAllowsQrAndPinEntry();
 await verifyDeveloperInformationIsOptInAndDoesNotRefetchOrHideErrors();
 await verifyPinnedLanguageCanSwitchToOriginal();
 await verifyDelayedResumeCannotUndoPause();
