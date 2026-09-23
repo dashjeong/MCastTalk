@@ -199,6 +199,7 @@ internal fun FilePlaybackTranscriptScreen(
                     val translated = state.translationLanguageTag?.let { tag ->
                         originalIndex?.let { entry.translations[tag]?.getOrNull(it) }
                     }
+                    val sameLanguage = state.translationLanguageTag?.let { fileSegmentMatchesTarget(segment, entry.sourceLanguageTag, it) } == true
                     Surface(
                         color = if (active) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLow,
                         shape = MaterialTheme.shapes.medium,
@@ -226,9 +227,9 @@ internal fun FilePlaybackTranscriptScreen(
                                 else -> "단어 시각 기준 표시"
                             }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             if (state.translationLanguageTag != null) {
-                                Text("번역 · ${fileLanguageLabel(state.translationLanguageTag, state.languageOptions)}",
+                                Text((if (sameLanguage) "원문과 같은 언어 · " else "번역 · ") + fileLanguageLabel(state.translationLanguageTag, state.languageOptions),
                                     style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
-                                SelectionContainer { Text(translated ?: "이 문장의 번역이 없습니다.",
+                                SelectionContainer { Text(translated ?: if (sameLanguage) "위 원문을 그대로 사용합니다. 번역·AI 검토는 실행하지 않았습니다." else "이 문장의 번역이 없습니다.",
                                     style = if (largeText) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleMedium) }
                             }
                         }

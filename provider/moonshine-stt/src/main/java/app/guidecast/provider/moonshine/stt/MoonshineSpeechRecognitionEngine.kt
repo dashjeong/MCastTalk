@@ -142,7 +142,7 @@ class MoonshineSpeechRecognitionEngine(
             capability().reason ?: "Moonshine 음성인식을 사용할 수 없습니다."
         }
         assetPreparationMutex.withLock {
-            withContext(Dispatchers.IO) {
+            runMoonshineAssetPreparation {
                 MoonshineSttModelCacheMigration(applicationContext).prepare { progress, file ->
                     if (!closed.get()) {
                         updateStatus(
@@ -229,6 +229,7 @@ class MoonshineSpeechRecognitionEngine(
                 ) = Unit
                 override fun onPcmConsumed(sessionId: Long, frameId: Long) = Unit
                 override fun onSessionStopped(sessionId: Long) = Unit
+                override fun onSessionFinished(sessionId: Long) = Unit
                 override fun onFinished(reportedOperationId: Long) {
                     if (reportedOperationId == operationId) {
                         finishPendingPreparation(operationId, pending)
@@ -359,6 +360,10 @@ class MoonshineSpeechRecognitionEngine(
                         remoteSession.sendPcm(worker, chunk)
                     }
                 }
+                // Only a normal finite-source EOF takes this path. Cancellation/error cleanup
+                // stops immediately without claiming that the native transcript was finalized.
+                currentCoroutineContext().ensureActive()
+                remoteSession.finishInput(worker)
             }.also { job ->
                 job.invokeOnCompletion { error ->
                     if (error != null && error !is CancellationException) {
@@ -801,15 +806,38 @@ class MoonshineSpeechRecognitionEngine(
         private val onStatus: (Int, String, Float, String) -> Unit,
     ) : IGuideCastMoonshineSttCallback.Stub() {
         private val ready = CompletableDeferred<Unit>()
+        private val inputFinished = CompletableDeferred<Unit>()
+        private val finishRequested = AtomicBoolean(false)
         private val terminated = AtomicBoolean(false)
         private val nextSequence = AtomicLong(0)
         private val nextFrameId = AtomicLong(1)
         private val sequencesByLine = ConcurrentHashMap<Long, Long>()
         private val capturedAtByLine = ConcurrentHashMap<Long, Long>()
         private val lastTextByLine = ConcurrentHashMap<Long, String>()
+        private val nativeLineCompletion = MoonshineNativeLineCompletionGate()
         private val pendingPcm = AtomicReference<PendingPcm?>(null)
 
         suspend fun awaitReady() = ready.await()
+
+        suspend fun finishInput(worker: IGuideCastMoonshineStt) {
+            check(pendingPcm.get() == null) { "Moonshine EOF must follow the final PCM acknowledgement" }
+            check(finishRequested.compareAndSet(false, true)) { "Moonshine EOF was requested twice" }
+            try {
+                withTimeout(FINISH_ACK_TIMEOUT_MILLIS) {
+                    worker.finishRecognition(id)
+                    inputFinished.await()
+                }
+            } catch (timeout: TimeoutCancellationException) {
+                throw MoonshineSttWorkerException(
+                    "Moonshine 마지막 음성 인식 결과의 확정 응답이 지연되었습니다. 완료 처리하지 않았습니다.",
+                    cause = timeout,
+                )
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Throwable) {
+                throw error.asWorkerFailure("Moonshine 마지막 음성 인식 결과를 확정하지 못했습니다.")
+            }
+        }
 
         suspend fun sendPcm(worker: IGuideCastMoonshineStt, bytes: ByteArray) {
             if (terminated.get()) {
@@ -867,12 +895,21 @@ class MoonshineSpeechRecognitionEngine(
         ) {
             if (sessionId != id || terminated.get()) return
             val normalized = text.trim().takeIf(String::isNotEmpty) ?: return
+            // The SDK can emit a changed-text event before its own completed-line check. Keep
+            // native identity terminal even after the app-sequence mapping has been released.
+            val accepted = try {
+                nativeLineCompletion.shouldAccept(lineId, isFinal)
+            } catch (error: IllegalStateException) {
+                fail(error.asWorkerFailure("Moonshine 완료 발화 식별자를 안전하게 보존하지 못했습니다."))
+                return
+            }
+            if (!accepted) return
             if (!isFinal && lastTextByLine.put(lineId, normalized) == normalized) return
             val sequence = sequencesByLine.getOrPut(lineId) { nextSequence.getAndIncrement() }
             val capturedAt = capturedAtByLine.getOrPut(lineId) {
                 capturedAtElapsedRealtimeNanos
             }
-            producer.trySend(
+            val delivered = producer.trySend(
                 RecognizedUtterance(
                     sequence = sequence,
                     text = normalized.take(MAX_UTTERANCE_CHARACTERS),
@@ -882,6 +919,10 @@ class MoonshineSpeechRecognitionEngine(
                     recognizedAtElapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos(),
                 ),
             )
+            if (delivered.isFailure && !terminated.get()) {
+                fail(MoonshineSttWorkerException("Moonshine 인식 결과 수신이 밀려 중단했습니다. 누락된 결과를 완료 처리하지 않았습니다."))
+                return
+            }
             if (isFinal) {
                 sequencesByLine.remove(lineId)
                 capturedAtByLine.remove(lineId)
@@ -898,13 +939,21 @@ class MoonshineSpeechRecognitionEngine(
         }
 
         override fun onSessionStopped(sessionId: Long) {
-            if (sessionId == id && terminated.compareAndSet(false, true)) {
-                val error = MoonshineSttWorkerException("Moonshine 음성인식 세션이 종료되었습니다.")
-                ready.completeExceptionally(error)
-                pendingPcm.getAndSet(null)?.completion?.completeExceptionally(error)
-                clearLineState()
-                producer.close()
+            if (sessionId == id) fail(MoonshineSttWorkerException("Moonshine 음성인식 세션이 확정 완료 전에 중지되었습니다."))
+        }
+
+        override fun onSessionFinished(sessionId: Long) {
+            if (sessionId != id || terminated.get()) return
+            if (!finishRequested.get()) {
+                fail(MoonshineSttWorkerException("Moonshine 입력 종료 요청 없이 완료 응답을 받았습니다."))
+                return
             }
+            if (!terminated.compareAndSet(false, true)) return
+            inputFinished.complete(Unit)
+            clearLineState()
+            // close drains transcripts already accepted by trySend; cancellation never replaces
+            // this ACK. Same-Binder callback ordering keeps all native final events ahead of EOF.
+            producer.close()
         }
 
         override fun onFinished(operationId: Long) = Unit
@@ -918,6 +967,7 @@ class MoonshineSpeechRecognitionEngine(
         fun fail(error: Throwable) {
             if (!terminated.compareAndSet(false, true)) return
             ready.completeExceptionally(error)
+            inputFinished.completeExceptionally(error)
             pendingPcm.getAndSet(null)?.completion?.completeExceptionally(error)
             clearLineState()
             producer.close(error)
@@ -927,11 +977,13 @@ class MoonshineSpeechRecognitionEngine(
             if (!terminated.compareAndSet(false, true)) return
             val cancellation = CancellationException("Moonshine 음성인식 수신이 취소되었습니다.")
             ready.completeExceptionally(cancellation)
+            inputFinished.completeExceptionally(cancellation)
             pendingPcm.getAndSet(null)?.completion?.completeExceptionally(cancellation)
             clearLineState()
         }
 
         private fun clearLineState() {
+            nativeLineCompletion.clear()
             sequencesByLine.clear()
             capturedAtByLine.clear()
             lastTextByLine.clear()
@@ -965,6 +1017,7 @@ class MoonshineSpeechRecognitionEngine(
         // already-prepared Android on-device recognizer.
         private const val SESSION_READY_TIMEOUT_MILLIS = 30_000L
         private const val PCM_ACK_TIMEOUT_MILLIS = 30_000L
+        private const val FINISH_ACK_TIMEOUT_MILLIS = 30_000L
         private val NEXT_IPC_ID = AtomicLong(1)
 
         private fun nextIpcId(): Long {

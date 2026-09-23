@@ -114,6 +114,9 @@ internal class FileTranscriptLibrary(context: Context, databaseName: String = "f
         db.beginTransaction()
         try {
             if (!contains(db, entry.id)) require(fileCount(db) < maximumFiles) { FileTranscriptBudget.LIBRARY_FULL }
+            // v1 libraries can lack REFERENCES ... ON DELETE CASCADE. Clear only this file's
+            // children explicitly, in the replacement transaction, including old orphan rows.
+            deleteChildren(db, entry.id)
             db.delete("files", "id=?", arrayOf(entry.id))
             db.insertOrThrow("files", null, ContentValues().apply {
                 put("id", entry.id); put("name", entry.displayName.take(500)); put("uri", entry.uri)
@@ -146,7 +149,16 @@ internal class FileTranscriptLibrary(context: Context, databaseName: String = "f
         }, "id=?", arrayOf(id)) == 1) { "보관함에서 파일을 찾을 수 없습니다." }
     }
 
-    @Synchronized fun delete(id: String) { requireHash(id); helper.writableDatabase.delete("files", "id=?", arrayOf(id)) }
+    @Synchronized fun delete(id: String) {
+        requireHash(id)
+        val db = helper.writableDatabase
+        db.beginTransaction()
+        try {
+            deleteChildren(db, id)
+            db.delete("files", "id=?", arrayOf(id))
+            db.setTransactionSuccessful()
+        } finally { db.endTransaction() }
+    }
 
     /** Portable, per-row output keeps even large translations below CursorWindow/RAM limits. */
     @Synchronized internal fun exportPortable(emit: (JSONObject) -> Unit) {
@@ -190,6 +202,9 @@ internal class FileTranscriptLibrary(context: Context, databaseName: String = "f
                     put("requires_relink", 1)
                 }, SQLiteDatabase.CONFLICT_IGNORE)
                 if (count != -1L) {
+                    // An older parent-only deletion may have left rows for this newly imported
+                    // ID. Existing entries (including user edits) never enter this branch.
+                    deleteChildren(db, id)
                     inserted++
                     db.execSQL("INSERT INTO imported_files VALUES(?)", arrayOf(id))
                 }
@@ -236,6 +251,10 @@ internal class FileTranscriptLibrary(context: Context, databaseName: String = "f
         }
     }
     private fun requireHash(id: String) { require(id.matches(Regex("[a-f0-9]{64}"))) }
+    private fun deleteChildren(db: SQLiteDatabase, id: String) {
+        db.delete("translations", "file_id=?", arrayOf(id))
+        db.delete("segments", "file_id=?", arrayOf(id))
+    }
     private fun contains(db: SQLiteDatabase, id: String) = db.rawQuery("SELECT 1 FROM files WHERE id=?", arrayOf(id)).use { it.moveToFirst() }
     private fun fileCount(db: SQLiteDatabase) = db.rawQuery("SELECT COUNT(*) FROM files", null).use { it.moveToFirst(); it.getLong(0) }
     private fun Cursor.metadata() = FileLibraryEntry(

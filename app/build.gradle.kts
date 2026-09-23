@@ -28,6 +28,7 @@ val requiredStaticLicenseAssetNames = setOf(
     "PUBLIC-TERMINOLOGY-NOTICES.txt",
     "RNNOISE-BSD-3-CLAUSE.txt",
     "MOONSHINE-0.1.5-LICENSE.txt",
+    "MOONSHINE-MCASTTALK-PATCH.txt",
     "MOONSHINE-CPP-ANNOTE-MIT.txt",
     "MOONSHINE-CPP-ANNOTE-README.txt",
     "MOONSHINE-EIGEN-MPL-2.0.txt",
@@ -209,6 +210,10 @@ android {
         // current Kokoro model. Prefer the pinned full ORT 1.23.2 binary from
         // provider:moonshine-tts until the upstream AAR ships that operator.
         jniLibs.pickFirsts += "lib/arm64-v8a/libonnxruntime.so"
+        // These reviewed replacements are already stripped. Preserve their exact reviewed
+        // bytes so the APK gate can reject any stale or accidentally substituted runtime.
+        jniLibs.keepDebugSymbols += "lib/arm64-v8a/libmoonshine.so"
+        jniLibs.keepDebugSymbols += "lib/arm64-v8a/libmoonshine-jni.so"
     }
 }
 
@@ -257,8 +262,25 @@ dependencies {
     testImplementation(libs.kotlinx.coroutines.test)
 }
 
+val verifyMoonshineDependency by tasks.registering {
+    group = "verification"
+    description = "Checks the reviewed local Moonshine AAR and source patch hashes."
+    doLast {
+        val manifest = groovy.json.JsonSlurper().parse(
+            rootProject.file("third_party/moonshine/0.1.5-mcasttalk1/provenance.json"),
+        ) as Map<*, *>
+        for (field in listOf("packagedAar", "sourcePatch")) {
+            val item = manifest[field] as Map<*, *>
+            val file = rootProject.file(item["path"] as String)
+            val sha = MessageDigest.getInstance("SHA-256").digest(file.readBytes())
+                .joinToString("") { "%02x".format(it) }
+            check(sha == item["sha256"]) { "Reviewed Moonshine $field SHA-256 changed" }
+        }
+    }
+}
+
 tasks.named("preBuild").configure {
-    dependsOn(generateThirdPartyLicenseAssets, verifyThirdPartyLicenseAssets)
+    dependsOn(generateThirdPartyLicenseAssets, verifyThirdPartyLicenseAssets, verifyMoonshineDependency)
 }
 
 val verifyPackagedThirdPartyLicenseAssets by tasks.registering {
@@ -289,6 +311,31 @@ val verifyPackagedThirdPartyLicenseAssets by tasks.registering {
             addAll(requiredGeneratedLicenseAssetNames.map { "assets/licenses/$it" })
         }
         ZipFile(apk).use { zip ->
+            val nativeManifest = groovy.json.JsonSlurper().parse(
+                rootProject.file("third_party/moonshine/0.1.5-mcasttalk1/provenance.json"),
+            ) as Map<*, *>
+            val expectedNative = nativeManifest["apkNativeEntries"] as Map<*, *>
+            val nativeNames = setOf("libmoonshine.so", "libmoonshine-jni.so", "libonnxruntime.so")
+            val actualNative = zip.entries().asSequence().filterNot { it.isDirectory }
+                .filter { it.name.startsWith("lib/") && it.name.substringAfterLast('/') in nativeNames }
+                .map { it.name }.toList()
+            check(actualNative.size == expectedNative.size && actualNative.toSet() == expectedNative.keys) {
+                "APK contains missing, duplicate, or unreviewed Moonshine/ONNX native entries"
+            }
+            expectedNative.forEach { (path, expectedSha) ->
+                val entry = requireNotNull(zip.getEntry(path as String))
+                val sha = zip.getInputStream(entry).use { input ->
+                    val digest = MessageDigest.getInstance("SHA-256")
+                    val buffer = ByteArray(32 * 1024)
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        digest.update(buffer, 0, count)
+                    }
+                    digest.digest().joinToString("") { "%02x".format(it) }
+                }
+                check(sha == expectedSha) { "Packaged native runtime SHA-256 changed: $path" }
+            }
             // AAPT expands source .gz assets and strips .gz. Verify the actual runtime path,
             // not merely the source-tree file: a mismatch left the first device trial empty.
             val glossary = requireNotNull(zip.getEntry("assets/glossary/public-20260905.db")) {

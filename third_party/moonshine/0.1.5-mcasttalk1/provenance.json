@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "coordinate": "app.guidecast.thirdparty:moonshine-voice:0.1.5-mcasttalk1",
+  "upstreamCoordinate": "ai.moonshine:moonshine-voice:0.1.5",
+  "upstreamSourceCommit": "234f60faa0eb388b01cdf7e60aca232af37aefda",
+  "upstreamAar": {
+    "url": "https://repo.maven.apache.org/maven2/ai/moonshine/moonshine-voice/0.1.5/moonshine-voice-0.1.5.aar",
+    "sha256": "ee2d95c21150683c743db8f3aef66281fd5408bcefc94be3ca1d2545ada1f571",
+    "bytes": 24321396
+  },
+  "sourcePatch": {
+    "path": "third_party/moonshine/0.1.5-mcasttalk1/moonshine-0.1.5-mcasttalk-reliability.patch",
+    "sha256": "b499277412c9e70039ff07f8888a85d3fdae742ba74150fb4073fe526ae46a47"
+  },
+  "replacementEntries": [
+    {
+      "aarPath": "jni/arm64-v8a/libmoonshine.so",
+      "fileName": "libmoonshine.so",
+      "originalSha256": "922eddb6a0316f94091f40c5304db152e1b33ac4ad36db97823157dd402e19e0",
+      "sha256": "ef0fac9f27cd7382939b869afbe4222969c73bd8350c6611f41c847fa95e6309",
+      "bytes": 11112904
+    },
+    {
+      "aarPath": "jni/arm64-v8a/libmoonshine-jni.so",
+      "fileName": "libmoonshine-jni.so",
+      "originalSha256": "08f81c6f173df3929a5a4977db7fa8488358038dafdadd3ac0b17df233f2d357",
+      "sha256": "184671708a5f815930018818d5d87c413701e49853a4233cabc8a91ccb3a526b",
+      "bytes": 114376
+    }
+  ],
+  "packagedAar": {
+    "path": "third_party/maven/app/guidecast/thirdparty/moonshine-voice/0.1.5-mcasttalk1/moonshine-voice-0.1.5-mcasttalk1.aar",
+    "sha256": "e66ad3653a9b3a597796c8001abed72e2e1890eacb786930cfbc1b969b19fca9",
+    "bytes": 8294737
+  },
+  "aarNativeEntries": {
+    "jni/arm64-v8a/libmoonshine.so": "ef0fac9f27cd7382939b869afbe4222969c73bd8350c6611f41c847fa95e6309",
+    "jni/arm64-v8a/libmoonshine-jni.so": "184671708a5f815930018818d5d87c413701e49853a4233cabc8a91ccb3a526b",
+    "jni/arm64-v8a/libonnxruntime.so": "86e85022fc539963177e478c8e9a8a8219bc3b0d7515bf5297a62986dbc45e7a"
+  },
+  "apkNativeEntries": {
+    "lib/arm64-v8a/libmoonshine.so": "ef0fac9f27cd7382939b869afbe4222969c73bd8350c6611f41c847fa95e6309",
+    "lib/arm64-v8a/libmoonshine-jni.so": "184671708a5f815930018818d5d87c413701e49853a4233cabc8a91ccb3a526b",
+    "lib/arm64-v8a/libonnxruntime.so": "e40f09d07dc53726b8bfbf48a7907673b8f86718a057655a62790a39874a7302"
+  },
+  "preservedNonNativeEntrySha256": {
+    "R.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "AndroidManifest.xml": "b9613390a444dbe25a01b0b0a010fc2200ed52c831f1a9378135e27d86704d4f",
+    "classes.jar": "8df6b3dbec3010159fdeffd4c19715b48703c67c62170e169d194074f26b8b10",
+    "META-INF/com/android/build/gradle/aar-metadata.properties": "9cc8517bbdf06d879f57a2cfd6f8c6914e48800d443421cd850971945f98e7b2"
+  },
+  "supportedAbis": [
+    "arm64-v8a"
+  ],
+  "upstreamArtifactVersion": "0.1.5",
+  "nativeCApiVersion": 30000,
+  "modelWeightsAdded": false,
+  "nativeRebuildByteIdentityGuaranteed": false,
+  "packageInputAndOutputHashesEnforced": true,
+  "onnxOverride": {
+    "coordinate": "com.microsoft.onnxruntime:onnxruntime-android:1.23.2",
+    "sourcePath": "provider/moonshine-tts/src/main/jniLibs/arm64-v8a/libonnxruntime.so",
+    "preserved": true
+  }
+}

@@ -19,6 +19,77 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class SentenceStagingPipelineTest {
     @Test
+    fun `meaning corpus preserves conditions negation and quantities through translation and speech`() = runTest {
+        // Authored regression corpus, not a score for native recognition or translation quality.
+        val corpus = listOf(
+            "이번 전시회는" to "조선 후기의 역사를 소개합니다",
+            "비가 오면" to "실내에서 기다려 주세요",
+            "표지판을 확인하고," to "안내에 따라 이동하세요",
+            "이곳에 들어가면 안" to "됩니다",
+            "출발 시각은 오후 세" to "시입니다",
+            "입장 요금은 15" to "달러입니다",
+        )
+        val assembler = ProviderTranscriptSemanticAssembler()
+        val source = MutableSharedFlow<RecognizedUtterance>()
+        val inputs = mutableListOf<Pair<String, String?>>()
+        val spoken = mutableListOf<String>()
+        val expected = corpus.map { (head, tail) -> "${head.trimEnd(',')} $tail" }
+        val translator = object : ContextualTextTranslationEngine {
+            override suspend fun translateWithContext(
+                text: String, contextBefore: String?, sourceLanguageTag: String, targetLanguageTag: String,
+            ): String {
+                inputs.add(text to contextBefore)
+                return "translated:$text"
+            }
+        }
+        val running = TranslationBroadcastPipeline(
+            AudioStreamRegistry(), TranslationEngineProvider { translator },
+            SpeechSynthesisEngineProvider { object : SpeechSynthesisEngine {
+                override fun synthesize(text: String, languageTag: String) = flow {
+                    spoken.add(text)
+                    emit(PcmAudioFrame(ByteArray(640) { if (it % 4 == 1) 32 else 0 }, 1))
+                }
+            } },
+        ).start(this, source, listOf(TranslationTarget("en", "English", "en", 16_000)), "ko")
+        try {
+            runCurrent()
+            suspend fun publish(events: List<RecognizedUtterance>) {
+                events.forEach { source.emit(it) }
+                advanceUntilIdle()
+            }
+            corpus.forEachIndexed { index, (head, tail) ->
+                val start = index * 20_000L
+                fun line(id: Long, text: String, at: Long) = RecognizedUtterance(
+                    id, text, "ko", true, at * 1_000_000, at * 1_000_000,
+                )
+                assembler.observeSpeechActivity(true, start * 1_000_000)
+                publish(assembler.accept(line(index * 2L, head, start + 100)))
+                // Sustained, freshly observed quiet; a stale VAD observation would not reproduce
+                // the former three-second fragment-finalization bug.
+                for (ms in 200L..8_000L step 200) {
+                    assembler.observeSpeechActivity(false, (start + ms) * 1_000_000)
+                    publish(assembler.tick((start + ms) * 1_000_000))
+                }
+                assertEquals("Unfinished corpus item $index must stay visible as preview only", index, inputs.size)
+                assertEquals(index, spoken.size)
+                assembler.observeSpeechActivity(true, (start + 8_100) * 1_000_000)
+                publish(assembler.accept(line(index * 2L + 1, tail, start + 8_200)))
+                for (ms in 8_400L..10_400L step 200) {
+                    assembler.observeSpeechActivity(false, (start + ms) * 1_000_000)
+                    publish(assembler.tick((start + ms) * 1_000_000))
+                }
+                assertEquals("Complete unit must commit without stopping input", index + 1, inputs.size)
+                assertEquals(expected[index], inputs.last().first)
+                if (index > 0) assertTrue(inputs.last().second.orEmpty().contains(expected[index - 1]))
+            }
+            publish(assembler.finish(130_000_000_000))
+            assertEquals(expected, inputs.map { it.first })
+            assertEquals(expected.map { "translated:$it" }, spoken)
+            assertTrue(running.health.value.all { it.droppedUtterances == 0L })
+        } finally { running.close() }
+    }
+
+    @Test
     fun `assembler capacity recovery continues translated speech and original audio on the same session`() = runTest {
         val streams = AudioStreamRegistry()
         val session = streams.configure(listOf(
@@ -69,7 +140,7 @@ class SentenceStagingPipelineTest {
     }
 
     @Test
-    fun `long utterance pause releases one unit to three language queues and keeps order`() = runTest {
+    fun `long hesitation keeps subject with predicate across three language queues`() = runTest {
         val assembler = ProviderTranscriptSemanticAssembler()
         val source = MutableSharedFlow<RecognizedUtterance>()
         val translated = mutableMapOf<String, MutableList<String>>()
@@ -114,10 +185,8 @@ class SentenceStagingPipelineTest {
             assertTrue(spoken.isEmpty())
             assembler.observeSpeechActivity(false, 3_200_000_000)
             publish(assembler.tick(3_200_000_000))
-            languages.forEach { language ->
-                assertEquals(listOf("이번 전시회는"), translated[language])
-                assertEquals(listOf("이번 전시회는"), spoken[language])
-            }
+            assertTrue("A pause must not turn a subject into a sentence", translated.isEmpty())
+            assertTrue(spoken.isEmpty())
 
             assembler.observeSpeechActivity(true, 3_300_000_000)
             publish(assembler.accept(line(1, "조선 후기의 역사를 소개합니다", 3_400)))
@@ -135,8 +204,7 @@ class SentenceStagingPipelineTest {
             publish(assembler.finish(6_500_000_000))
 
             val expected = listOf(
-                "이번 전시회는",
-                "조선 후기의 역사를 소개합니다",
+                "이번 전시회는 조선 후기의 역사를 소개합니다",
                 "이곳은 사진을 찍으면 안 됩니다",
             )
             languages.forEach { language ->

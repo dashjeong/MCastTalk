@@ -5,6 +5,14 @@
       <verify-signatures>false</verify-signatures>
    </configuration>
    <components>
+      <component group="app.guidecast.thirdparty" name="moonshine-voice" version="0.1.5-mcasttalk1">
+         <artifact name="moonshine-voice-0.1.5-mcasttalk1.aar">
+            <sha256 value="e66ad3653a9b3a597796c8001abed72e2e1890eacb786930cfbc1b969b19fca9" origin="Reviewed local native patch; third_party/moonshine/0.1.5-mcasttalk1/provenance.json"/>
+         </artifact>
+         <artifact name="moonshine-voice-0.1.5-mcasttalk1.pom">
+            <sha256 value="30ce8360c8624cdd6a8ba7a248ccd68a7d832efe0849e39ab1e727f42497a9c2" origin="Reviewed local coordinate; upstream runtime dependencies preserved"/>
+         </artifact>
+      </component>
       <component group="ai.moonshine" name="moonshine-voice" version="0.1.5">
          <artifact name="moonshine-voice-0.1.5.aar">
             <sha256 value="ee2d95c21150683c743db8f3aef66281fd5408bcefc94be3ca1d2545ada1f571" origin="Maven Central, independently verified 2026-09-03"/>

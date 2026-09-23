@@ -383,6 +383,13 @@ class ProviderTranscriptSemanticAssemblerTest {
             "매일 오후 세 시에",
             "이번 전시회는.",
             "역사와 생태를,",
+            "표지판을 확인하고,",
+            "도착하면.",
+            "밥을 먹었으면.",
+            "도착했다면.",
+            "사진을 찍으면 안.",
+            "입장 요금은 15.",
+            "방송은 오후 세.",
         )
             .forEachIndexed { index, fragment ->
                 val assembler = ProviderTranscriptSemanticAssembler()
@@ -390,11 +397,277 @@ class ProviderTranscriptSemanticAssemblerTest {
                 val accepted = assembler.accept(providerFinal(index.toLong(), fragment, 100))
                 assembler.observeSpeechActivity(isSpeech = false, capturedAtNanos = 200L.ms)
 
-                val afterLongPause = assembler.tick(2_500L.ms)
+                // Keep supplying real quiet PCM observations. A single old VAD observation only
+                // tests stale-data protection and previously hid the three-second fragment bug.
+                assembler.observeContinuousQuiet(fromMillis = 450, throughMillis = 12_200)
+                val afterLongPause = assembler.tick(12_200L.ms)
 
                 assertFalse(fragment, accepted.any(RecognizedUtterance::isFinal))
                 assertFalse(fragment, afterLongPause.any(RecognizedUtterance::isFinal))
             }
+    }
+
+    @Test
+    fun `breaths and long hesitations preserve complete Korean meaning across provider lines`() {
+        val cases = listOf(
+            "이번 전시회는." to "역사를 소개합니다",
+            "표지판을 확인하고," to "안내를 따라 이동하세요",
+            "비가 오면." to "안쪽에서 기다리세요",
+            "촬영하면 안." to "됩니다",
+            "비용은 15." to "만원입니다",
+            "방송은 오후 세." to "시에 시작합니다",
+        )
+        for (pause in listOf(100L, 300L, 500L, 800L, 1_200L, 3_200L, 8_000L)) {
+            cases.forEach { (prefix, suffix) ->
+                val assembler = ProviderTranscriptSemanticAssembler()
+                assembler.observeSpeechActivity(true, 0)
+                val outputs = mutableListOf<RecognizedUtterance>()
+                outputs += assembler.accept(providerFinal(0, prefix, 100))
+                assembler.observeContinuousQuiet(200, 200 + pause)
+                outputs += assembler.tick((200 + pause).ms)
+                assertFalse("$prefix after $pause ms", outputs.any { it.isFinal })
+                assembler.observeSpeechActivity(true, (250 + pause).ms)
+                outputs += assembler.accept(providerFinal(1, suffix, 300 + pause))
+                assembler.observeContinuousQuiet(400 + pause, 1_600 + pause)
+                outputs += assembler.tick((1_600 + pause).ms)
+                assertEquals(listOf("${prefix.trimEnd('.', ',')} $suffix"),
+                    outputs.filter { it.isFinal }.map { it.text })
+                assertTrue(assembler.finish((1_700 + pause).ms).isEmpty())
+            }
+        }
+    }
+
+    @Test
+    fun `English conditions reasons contrast and negation are joined before translation`() {
+        val cases = listOf(
+            Triple("If it rains.", "we will wait indoors.", "If it rains we will wait indoors."),
+            Triple("Because the door is locked.", "please use the next entrance.",
+                "Because the door is locked please use the next entrance."),
+            Triple("It is not only beautiful.", "but also practical.",
+                "It is not only beautiful but also practical."),
+            Triple("You must not.", "enter this room.", "You must not enter this room."),
+            Triple("The price is three point.", "five dollars.", "The price is three point five dollars."),
+        )
+        cases.forEach { (prefix, suffix, expected) ->
+            val assembler = ProviderTranscriptSemanticAssembler()
+            assembler.observeSpeechActivity(true, 0)
+            assembler.accept(providerFinal(0, prefix, 100).copy(sourceLanguageTag = "en-US"))
+            assembler.observeContinuousQuiet(200, 8_200)
+            assertFalse(prefix, assembler.tick(8_200L.ms).any { it.isFinal })
+            assembler.observeSpeechActivity(true, 8_300L.ms)
+            assembler.accept(providerFinal(1, suffix, 8_400).copy(sourceLanguageTag = "en-US"))
+            assembler.observeContinuousQuiet(8_500, 9_700)
+            assertEquals(expected, assembler.tick(9_700L.ms).single { it.isFinal }.text)
+            assertTrue(assembler.finish(10_000L.ms).isEmpty())
+        }
+    }
+
+    @Test
+    fun `English complete sentence can be released while the following condition remains pending`() {
+        val assembler = ProviderTranscriptSemanticAssembler()
+        assembler.observeSpeechActivity(true, 0)
+        val outputs = assembler.accept(providerFinal(0, "We have arrived. If it rains.", 100)
+            .copy(sourceLanguageTag = "en-US"))
+        assertEquals(listOf("We have arrived."), outputs.filter { it.isFinal }.map { it.text })
+        assembler.observeContinuousQuiet(200, 8_200)
+        assertFalse(assembler.tick(8_200L.ms).any { it.isFinal })
+        assembler.observeSpeechActivity(true, 8_300L.ms)
+        assembler.accept(providerFinal(1, "we will wait indoors.", 8_400).copy(sourceLanguageTag = "en-US"))
+        assembler.observeContinuousQuiet(8_500, 9_700)
+        val completed = assembler.tick(9_700L.ms).single { it.isFinal }
+        assertEquals("If it rains we will wait indoors.", completed.text)
+        assertEquals("We have arrived.", completed.contextBefore)
+    }
+
+    @Test
+    fun `common complete informal responses still commit naturally without waiting for input stop`() {
+        listOf("응", "아니요", "아니야", "괜찮아", "고마워", "기분이 좋아", "집에 갈 거야", "내가 할게")
+            .forEach { text ->
+                val assembler = ProviderTranscriptSemanticAssembler()
+                assembler.observeSpeechActivity(true, 0)
+                assembler.accept(providerFinal(0, text, 100))
+                assembler.observeContinuousQuiet(200, 1_400)
+                assertEquals(text, assembler.tick(1_400L.ms).single { it.isFinal }.text)
+            }
+    }
+
+    @Test
+    fun `completed English object pronouns and inverted questions do not remain stuck`() {
+        listOf(
+            "Thank you.",
+            "I can hear you.",
+            "We will wait for you.",
+            "We found it.",
+            "I spoke with her.",
+            "Who are they?",
+            "Where were you?",
+        ).forEach { text ->
+            val assembler = ProviderTranscriptSemanticAssembler()
+            assembler.observeSpeechActivity(true, 0)
+            val outputs = assembler.accept(providerFinal(0, text, 100)
+                .copy(sourceLanguageTag = "en-US"))
+            assertFalse(text, outputs.any { it.isFinal })
+            assembler.observeContinuousQuiet(200, 1_400)
+            assertEquals(text, assembler.tick(1_400L.ms).single { it.isFinal }.text)
+            assertTrue(text, assembler.finish(1_500L.ms).isEmpty())
+        }
+    }
+
+    @Test
+    fun `Korean number before a counter is not mistaken for affirmative reply`() {
+        val assembler = ProviderTranscriptSemanticAssembler()
+        assembler.observeSpeechActivity(true, 0)
+        val first = assembler.accept(providerFinal(0, "팁 한 네.", 100))
+        assembler.observeContinuousQuiet(200, 8_200)
+        assertFalse((first + assembler.tick(8_200L.ms)).any { it.isFinal })
+        assembler.observeSpeechActivity(true, 8_300L.ms)
+        val second = assembler.accept(providerFinal(1, "가지 정도를 설명해 드릴게요", 8_400))
+        assembler.observeContinuousQuiet(8_500, 9_700)
+        assertEquals(listOf("팁 한 네 가지 정도를 설명해 드릴게요"),
+            (second + assembler.tick(9_700L.ms)).filter { it.isFinal }.map { it.text })
+        assertTrue(assembler.finish(9_800L.ms).isEmpty())
+
+        val counterFirst = ProviderTranscriptSemanticAssembler()
+        counterFirst.observeSpeechActivity(true, 0)
+        val counterOutputs = counterFirst.accept(providerFinal(0, "네 가지 안내를 설명합니다", 100))
+        assertFalse(counterOutputs.any { it.isFinal })
+        counterFirst.observeContinuousQuiet(200, 1_400)
+        assertEquals("네 가지 안내를 설명합니다", counterFirst.tick(1_400L.ms).single { it.isFinal }.text)
+    }
+
+    @Test
+    fun `standalone affirmative and affirmative followed by complete response remain usable`() {
+        listOf("네" to listOf("네"), "예," to listOf("예,"),
+            "네, 알겠습니다" to listOf("네,", "알겠습니다"))
+            .forEach { (text, expected) ->
+                val assembler = ProviderTranscriptSemanticAssembler()
+                assembler.observeSpeechActivity(true, 0)
+                val outputs = assembler.accept(providerFinal(0, text, 100))
+                assembler.observeContinuousQuiet(200, 1_400)
+                assertEquals(expected, (outputs + assembler.tick(1_400L.ms))
+                    .filter { it.isFinal }.map { it.text })
+                assertTrue(assembler.finish(1_500L.ms).isEmpty())
+            }
+    }
+
+    @Test
+    fun `common retrospective and promissive predicates complete without input stop`() {
+        listOf("이 방법이 좋더라고요", "해 보니 생각보다 쉽더군요", "다음에 다시 알려 드릴게요")
+            .forEach { text ->
+                val assembler = ProviderTranscriptSemanticAssembler()
+                assembler.observeSpeechActivity(true, 0)
+                assembler.accept(providerFinal(0, text, 100))
+                assembler.observeContinuousQuiet(200, 1_400)
+                assertEquals(text, assembler.tick(1_400L.ms).single { it.isFinal }.text)
+                assertTrue(assembler.finish(1_500L.ms).isEmpty())
+            }
+    }
+
+    @Test
+    fun `English subject only and missing auxiliary complements remain pending`() {
+        listOf("You.", "They.", "It.", "Did you?", "I know that you.", "You must not.")
+            .forEach { text ->
+                val assembler = ProviderTranscriptSemanticAssembler()
+                assembler.observeSpeechActivity(true, 0)
+                val outputs = assembler.accept(providerFinal(0, text, 100)
+                    .copy(sourceLanguageTag = "en-US"))
+                assembler.observeContinuousQuiet(200, 8_200)
+                assertFalse(text, (outputs + assembler.tick(8_200L.ms)).any { it.isFinal })
+            }
+    }
+
+    @Test
+    fun `Korean past tense informal and written predicates complete during live recognition`() {
+        listOf(
+            "밥 먹었어.",
+            "정말 맛있었어.",
+            "친구를 만났어.",
+            "여기가 내 학교였어.",
+            "새로운 방법을 배웠다.",
+            "우리는 여기서 만났다.",
+        ).forEach { text ->
+            val assembler = ProviderTranscriptSemanticAssembler()
+            assembler.observeSpeechActivity(true, 0)
+            assembler.accept(providerFinal(0, text, 100))
+            assembler.observeContinuousQuiet(200, 1_400)
+            assertEquals(text, assembler.tick(1_400L.ms).single { it.isFinal }.text)
+            assertTrue(text, assembler.finish(1_500L.ms).isEmpty())
+        }
+    }
+
+    @Test
+    fun `one provider callback drains separate confirmed sentences while retaining dependent tail`() {
+        val assembler = ProviderTranscriptSemanticAssembler()
+        assembler.observeSpeechActivity(true, 0)
+        val sentences = listOf(
+            "첫 장소에 도착했습니다",
+            "안내 사항을 확인합니다",
+            "다음 장소로 이동합니다",
+        )
+        val outputs = assembler.accept(providerFinal(0,
+            sentences.joinToString(" ") + " 다음 장소에서는 우리가", 100))
+        assertEquals(sentences, outputs.filter { it.isFinal }.map { it.text })
+        assertEquals("다음 장소에서는 우리가", outputs.last { !it.isFinal }.text)
+        assertEquals(sentences[0], outputs.filter { it.isFinal }[1].contextBefore)
+        assertEquals(sentences.take(2).joinToString(" "), outputs.filter { it.isFinal }[2].contextBefore)
+        assertEquals(3, outputs.filter { it.isFinal }.map { it.sequence }.toSet().size)
+
+        assembler.observeContinuousQuiet(200, 8_200)
+        assertFalse(assembler.tick(8_200L.ms).any { it.isFinal })
+        assembler.observeSpeechActivity(true, 8_300L.ms)
+        assembler.accept(providerFinal(1, "쉬어갑니다", 8_400))
+        assembler.observeContinuousQuiet(8_500, 9_700)
+        val tail = assembler.tick(9_700L.ms).single { it.isFinal }
+        assertEquals("다음 장소에서는 우리가 쉬어갑니다", tail.text)
+        assertFalse(tail.sequence in outputs.filter { it.isFinal }.map { it.sequence })
+        assertTrue(assembler.finish(9_800L.ms).isEmpty())
+    }
+
+    @Test
+    fun `verified silence releases short confirmed sentences separately instead of merging residual`() {
+        val assembler = ProviderTranscriptSemanticAssembler()
+        assembler.observeSpeechActivity(true, 0)
+        assertFalse(assembler.accept(providerFinal(0, "도착했습니다 끝났습니다", 100)).any { it.isFinal })
+        assembler.observeContinuousQuiet(200, 2_400)
+        assertEquals(listOf("도착했습니다", "끝났습니다"),
+            assembler.tick(2_400L.ms).filter { it.isFinal }.map { it.text })
+        assertTrue(assembler.finish(2_500L.ms).isEmpty())
+    }
+
+    @Test
+    fun `sentence draining keeps detached reported speech and decimal value together`() {
+        val cases = listOf(
+            "ko" to listOf("그는 내가 할게 라고 말했습니다", "우리는 다음 장소로 이동합니다"),
+            "en-US" to listOf("The amount is 3.14 dollars.", "We can pay it tomorrow."),
+        )
+        cases.forEach { (language, sentences) ->
+            val assembler = ProviderTranscriptSemanticAssembler()
+            assembler.observeSpeechActivity(true, 0)
+            val outputs = assembler.accept(providerFinal(0, sentences.joinToString(" "), 100)
+                .copy(sourceLanguageTag = language)).toMutableList()
+            assembler.observeContinuousQuiet(200, 1_400)
+            outputs += assembler.tick(1_400L.ms)
+            assertEquals(language, sentences, outputs.filter { it.isFinal }.map { it.text })
+            assertTrue(assembler.finish(1_500L.ms).isEmpty())
+        }
+    }
+
+    @Test
+    fun `real repeated instructions remain two units while late provider callbacks cannot repeat them`() {
+        val assembler = ProviderTranscriptSemanticAssembler()
+        val finals = mutableListOf<RecognizedUtterance>()
+        for (sequence in 0L..1L) {
+            val start = sequence * 10_000
+            assembler.observeSpeechActivity(true, start.ms)
+            val event = providerFinal(sequence, "들어가면 안 됩니다", start + 100)
+            finals += assembler.accept(event).filter { it.isFinal }
+            assembler.observeContinuousQuiet(start + 200, start + 1_400)
+            finals += assembler.tick((start + 1_400).ms).filter { it.isFinal }
+            assertTrue(assembler.accept(event.copy(recognizedAtElapsedRealtimeNanos = (start + 1_500).ms)).isEmpty())
+        }
+        assertEquals(listOf("들어가면 안 됩니다", "들어가면 안 됩니다"), finals.map { it.text })
+        assertEquals(2, finals.map { it.sequence }.toSet().size)
+        assertTrue(assembler.finish(20_000L.ms).isEmpty())
     }
 
     @Test

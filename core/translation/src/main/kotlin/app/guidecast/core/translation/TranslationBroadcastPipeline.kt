@@ -530,6 +530,10 @@ class TranslationBroadcastPipeline(
             val processedFinalSequences = LinkedHashSet<Long>()
             try {
                 utterances.collect { utterance ->
+                    // Once committed, the displayed source, translation and spoken text must
+                    // remain the same snapshot. Late provider revisions/retractions cannot
+                    // rewrite only the source side of an already translated meaning unit.
+                    if (utterance.sequence in processedFinalSequences) return@collect
                     observer.onSourceRecognized(utterance)
                     if (utterance.isRetracted || !utterance.isFinal) return@collect
                     if (!processedFinalSequences.add(utterance.sequence)) return@collect

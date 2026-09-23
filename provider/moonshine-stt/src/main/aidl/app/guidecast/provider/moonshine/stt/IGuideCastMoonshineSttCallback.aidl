@@ -22,4 +22,6 @@ oneway interface IGuideCastMoonshineSttCallback {
     void onError(long operationId, int errorCode, String message);
     /** Terminal acknowledgement for a prepare request after JNI work has really returned. */
     void onFinished(long operationId);
+    /** Every native EOF transcript callback precedes this acknowledgement on the same Binder. */
+    void onSessionFinished(long sessionId);
 }

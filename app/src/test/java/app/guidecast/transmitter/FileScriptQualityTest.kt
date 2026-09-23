@@ -4,6 +4,11 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class FileScriptQualityTest {
+    @Test fun spokenIntegerAmountsCannotDisappearWithoutReview() {
+        assertTrue(translationNumbersNeedReview("기간은 이십칠 년입니다.", "This is the period."))
+        assertTrue(translationNumbersNeedReview("기간은 이십칠 년입니다.", "It is 7 years."))
+        assertFalse(translationNumbersNeedReview("기간은 이십칠 년입니다.", "It is 27 years."))
+    }
     @Test fun checksKeepOriginalAndExposeEstimatedTimingAndNumericDifferences() {
         val line = FileSpeechSegment(0, 100, 1_000, "가격은 1200원입니다.", "ko-KR")
         val notes = inspectFileTranscript(listOf(line), 1_000)

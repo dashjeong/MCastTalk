@@ -10,8 +10,8 @@ import java.util.TreeMap
  * before a Korean particle/connective. Those provider finals are useful stability evidence, but
  * they are not translation finals. This assembler retains the bounded, ordered provider lines and
  * lets [RealtimeInterpretationSegmenter] decide the semantic boundary. A continuously observed
- * 2-second acoustic pause may close usable text (3 seconds for known incomplete tails,
- * 5 seconds when no voice was detected); otherwise only real input EOF (or an explicit
+ * acoustic pause may confirm a linguistically complete unit; it never completes a known dependent
+ * phrase merely because more time passed. Otherwise only real input EOF (or an explicit
  * owner finish using [finish]) flushes an incomplete tail. A bounded capacity recovery also
  * finishes the usable tail at a provider boundary and accepts the triggering next line.
  */
@@ -76,10 +76,8 @@ class ProviderTranscriptSemanticAssembler(
             resetIfAllProviderLinesConsumed(allowCommittedPartialLines = true)
         }
         val proposed = ProviderLine(
-            text = if (utterance.isFinal &&
-                utterance.sourceLanguageTag.substringBefore('-').equals("ko", ignoreCase = true)
-            ) {
-                utterance.text.withoutSpeculativeIncompleteKoreanPunctuation()
+            text = if (utterance.isFinal) {
+                utterance.text.withoutSpeculativeIncompletePunctuation(utterance.sourceLanguageTag)
             } else {
                 utterance.text
             },
@@ -167,11 +165,7 @@ class ProviderTranscriptSemanticAssembler(
             } else {
                 changed = true
                 line.copy(
-                    text = if (line.sourceLanguageTag.substringBefore('-').equals("ko", ignoreCase = true)) {
-                        line.text.withoutSpeculativeIncompleteKoreanPunctuation()
-                    } else {
-                        line.text
-                    },
+                    text = line.text.withoutSpeculativeIncompletePunctuation(line.sourceLanguageTag),
                     isProviderFinal = true,
                 )
             }
@@ -250,9 +244,7 @@ class ProviderTranscriptSemanticAssembler(
 
     private fun remap(events: List<RecognizedUtterance>): List<RecognizedUtterance> = events.map { event ->
         val outputSequence = outputSequences.getOrPut(event.sequence) { nextOutputSequence++ }
-        val context = committedContext.joinToString(" ")
-            .takeLast(MAX_CONTEXT_CHARACTERS)
-            .ifBlank { null }
+        val context = wholeMeaningContext(committedContext)
         event.copy(sequence = outputSequence, contextBefore = context).also { mapped ->
             if (mapped.isFinal) {
                 committedContext.addLast(mapped.text)
@@ -308,10 +300,16 @@ class ProviderTranscriptSemanticAssembler(
         const val DEFAULT_MAX_PENDING_PROVIDER_LINES = 32
         const val MAX_COMPLETED_PROVIDER_SEQUENCES = 256
         const val MAX_ASSEMBLED_CHARACTERS = 2_000
-        const val MAX_CONTEXT_CHARACTERS = 300
         const val MAX_CONTEXT_SEGMENTS = 2
     }
 }
+
+private fun String.withoutSpeculativeIncompletePunctuation(languageTag: String): String =
+    when (languageTag.substringBefore('-').lowercase()) {
+        "ko" -> withoutSpeculativeIncompleteKoreanPunctuation()
+        "en" -> withoutSpeculativeIncompleteEnglishPunctuation()
+        else -> this
+    }
 
 private fun elapsedMillis(startNanos: Long, nowNanos: Long): Long =
     ((nowNanos - startNanos) / 1_000_000L).coerceAtLeast(0L)

@@ -13,6 +13,22 @@ internal suspend fun translateFileTargetWithCheckpoints(
     save: suspend (FileLibraryEntry) -> Unit,
     translate: suspend (FileLibraryEntry, suspend (Int, String) -> Unit) -> FileScriptTranslation,
 ): FileLibraryEntry {
+    sourceOnlyFileTranslation(entry, target)?.let { sourceOnly ->
+        // Source display needs no translation row or invented engine value. Remove only an
+        // exact duplicate produced by older versions; retain any distinct saved wording.
+        val redundantCopy = entry.translations[target] == sourceOnly.lines
+        val discardLegacyCompletion = redundantCopy && entry.translations.keys.all { it == target }
+        val result = entry.copy(
+            translations = if (redundantCopy) entry.translations - target else entry.translations,
+            translationModes = if (redundantCopy || target !in entry.translations) entry.translationModes - target else entry.translationModes,
+            qualityNotes = (entry.qualityNotes.filterNot {
+                it.startsWith("$target 번역을 완료하지 못했습니다.") || (discardLegacyCompletion &&
+                    (it.startsWith("Google ML Kit 번역") || it.startsWith("설정한 API 경로") || it == "일부 구간은 기기 내 번역으로 대체했습니다."))
+            } + sourceOnly.notes).distinct(),
+        )
+        save(result)
+        return result
+    }
     val previous = entry.translations[target]
     val resume = previous?.takeIf {
         entry.translationModes[target] == mode && it.size == entry.segments.size && it.any(String::isBlank)
@@ -43,7 +59,9 @@ internal suspend fun translateFileTargetWithCheckpoints(
             if (mayCheckpoint && ++sinceSave >= 8) checkpoint()
         }
         check(lines.all(String::isNotBlank)) { "완료되지 않은 번역 문장이 있습니다." }
-        val completed = snapshot(result.engine, result.notes)
+        // A resumed mixed-language target may have only same-language source lines left.
+        // Preserve the already saved engine for translated lines without claiming a new run.
+        val completed = snapshot(result.engine ?: requireNotNull(entry.translationModes[target]), result.notes)
         save(completed)
         dirty = false
         return completed

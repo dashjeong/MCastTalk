@@ -14,13 +14,22 @@ class FileTranscriptPresentationTest {
         assertNull(fileConversionPreflight(FileTranslationUiState(automaticLanguageSupported = true)))
     }
 
-    @Test fun olderAndroidAndActiveBroadcastExplanationsAreBothPreserved() {
+    @Test fun unavailableRecognizerAndActiveBroadcastExplanationsAreBothPreserved() {
         val state = FileTranslationUiState(automaticLanguageSupported = false, fileTranscriptionSupported = false,
             unavailableReason = "방송을 중지한 뒤 변환하세요.")
         val reason = fileConversionPreflight(state).orEmpty()
-        org.junit.Assert.assertTrue(reason.contains("Android 13 이상"))
+        org.junit.Assert.assertTrue(reason.contains("인식기가 없습니다"))
         org.junit.Assert.assertTrue(reason.contains("방송을 중지"))
         org.junit.Assert.assertTrue(reason.contains("저장된 스크립트 재생"))
+    }
+
+    @Test fun manualAppRecognitionDoesNotRequirePlatformAutoLanguageOrAndroid13Gate() {
+        val noPlatform = FileTranslationUiState(automaticLanguageSupported = false, fileTranscriptionSupported = true,
+            automaticLanguageUnavailableReason = "기기의 자동 파일 음성 인식을 사용할 수 없습니다.")
+        org.junit.Assert.assertTrue(fileConversionPreflight(noPlatform).orEmpty().contains("원문 언어를 직접 선택"))
+        assertNull(fileConversionPreflight(noPlatform.copy(sourceLanguageTag = "ko-KR")))
+        assertEquals("선택한 언어는 지원되지 않습니다.", fileConversionPreflight(noPlatform.copy(sourceLanguageTag = "fr-FR",
+            sourceLanguageUnavailableReason = "선택한 언어는 지원되지 않습니다.")))
     }
 
     @Test fun wordHighlightMatchesCaseDifferencesWithoutLosingRepeatedWordPosition() {

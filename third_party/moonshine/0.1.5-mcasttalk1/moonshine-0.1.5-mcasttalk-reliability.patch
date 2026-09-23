@@ -1,0 +1,738 @@
+--- a/core/silero-vad.cpp
++++ b/core/silero-vad.cpp
+@@ -1,4 +1,9 @@
+ #include "silero-vad.h"
++
++#include <cmath>
++#include <memory>
++#include <stdexcept>
++#include <string>
+ 
+ #include "ort-utils.h"
+ #include "silero-vad-model-data.h"
+@@ -72,102 +77,89 @@
+   // allocator is owned by ORT, do not release
+ }
+ 
+-// Inference: runs inference on one chunk of input data.
+-// data_chunk is expected to have window_size_samples samples (e.g., 512 for
+-// 16kHz).
++// Inference failures must reach the transcriber instead of becoming zero
++// probability (silence). Keep every ORT allocation scoped on every exit path.
+ void SileroVad::predict(const std::vector<float> &data_chunk,
+                         float *out_probability, int *out_flag) {
+-  // Build input by prepending context (64 samples) to data_chunk (512 samples)
+-  // = 576 total
++  if (ort_api == nullptr || session == nullptr || memory_info == nullptr) {
++    throw std::runtime_error("Silero VAD is not initialized");
++  }
++  if (data_chunk.size() != static_cast<size_t>(window_size_samples)) {
++    throw std::invalid_argument("Silero VAD input has an invalid sample count");
++  }
++  const auto check_status = [this](OrtStatus *status, const char *stage) {
++    if (status != nullptr) {
++      const int code = static_cast<int>(ort_api->GetErrorCode(status));
++      ort_api->ReleaseStatus(status);
++      // Stage and numeric code only: no paths, audio, or transcript text.
++      throw std::runtime_error(std::string("Silero VAD ") + stage +
++                               " failed, ORT code " + std::to_string(code));
++    }
++  };
++  const auto release_value = [this](OrtValue *value) {
++    if (value != nullptr) ort_api->ReleaseValue(value);
++  };
++  using OwnedValue = std::unique_ptr<OrtValue, decltype(release_value)>;
++
+   input.resize(effective_window_size);
+   std::copy(_context.begin(), _context.end(), input.begin());
+   std::copy(data_chunk.begin(), data_chunk.end(),
+             input.begin() + context_samples);
+ 
+-  // Create input tensor
+-  OrtValue *input_ort = nullptr;
+-  OrtValue *state_ort = nullptr;
+-  OrtValue *sr_ort = nullptr;
++  OrtValue *raw_input = nullptr;
++  OrtStatus *status = ort_api->CreateTensorWithDataAsOrtValue(
++      memory_info, input.data(), input.size() * sizeof(float), input_node_dims,
++      2, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &raw_input);
++  OwnedValue input_value(raw_input, release_value);
++  check_status(status, "input tensor");
+ 
+-  OrtStatus *status = nullptr;
++  OrtValue *raw_state = nullptr;
++  status = ort_api->CreateTensorWithDataAsOrtValue(
++      memory_info, _state.data(), _state.size() * sizeof(float),
++      state_node_dims, 3, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &raw_state);
++  OwnedValue state_value(raw_state, release_value);
++  check_status(status, "state tensor");
+ 
++  OrtValue *raw_rate = nullptr;
+   status = ort_api->CreateTensorWithDataAsOrtValue(
+-      memory_info, input.data(), input.size() * sizeof(float), input_node_dims,
+-      2, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &input_ort);
+-  if (status != nullptr) {
+-    const char *msg = ort_api->GetErrorMessage(status);
+-    fprintf(stderr, "CreateTensorWithDataAsOrtValue (input) failed: %s\n", msg);
+-    ort_api->ReleaseStatus(status);
+-    return;
++      memory_info, &sr, sizeof(int64_t), nullptr, 0,
++      ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64, &raw_rate);
++  OwnedValue rate_value(raw_rate, release_value);
++  check_status(status, "sample rate tensor");
++
++  const OrtValue *inputs[] = {
++      input_value.get(), state_value.get(), rate_value.get()};
++  OrtValue *raw_outputs[2] = {nullptr, nullptr};
++  status = ort_api->Run(session, nullptr, input_node_names.data(), inputs, 3,
++                        output_node_names.data(), 2, raw_outputs);
++  OwnedValue probability_value(raw_outputs[0], release_value);
++  OwnedValue next_state_value(raw_outputs[1], release_value);
++  check_status(status, "inference");
++  if (!probability_value || !next_state_value) {
++    throw std::runtime_error("Silero VAD returned missing output tensors");
+   }
+ 
+-  status = ort_api->CreateTensorWithDataAsOrtValue(
+-      memory_info, _state.data(), _state.size() * sizeof(float),
+-      state_node_dims, 3, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &state_ort);
+-  if (status != nullptr) {
+-    const char *msg = ort_api->GetErrorMessage(status);
+-    fprintf(stderr, "CreateTensorWithDataAsOrtValue (state) failed: %s\n", msg);
+-    ort_api->ReleaseStatus(status);
+-    ort_api->ReleaseValue(input_ort);
+-    return;
++  float *probability = nullptr;
++  check_status(ort_api->GetTensorMutableData(
++                   probability_value.get(), reinterpret_cast<void **>(&probability)),
++               "probability output");
++  float *next_state = nullptr;
++  check_status(ort_api->GetTensorMutableData(
++                   next_state_value.get(), reinterpret_cast<void **>(&next_state)),
++               "state output");
++  if (probability == nullptr || next_state == nullptr ||
++      !std::isfinite(probability[0]) || probability[0] < 0.0f ||
++      probability[0] > 1.0f) {
++    throw std::runtime_error("Silero VAD returned invalid probability");
++  }
++  for (unsigned int i = 0; i < size_state; ++i) {
++    if (!std::isfinite(next_state[i])) {
++      throw std::runtime_error("Silero VAD returned invalid recurrent state");
++    }
+   }
+ 
+-  // Create scalar tensor for sample rate (empty shape = scalar)
+-  status = ort_api->CreateTensorWithDataAsOrtValue(
+-      memory_info, &sr, sizeof(int64_t), nullptr, 0,
+-      ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64, &sr_ort);
+-  if (status != nullptr) {
+-    const char *msg = ort_api->GetErrorMessage(status);
+-    fprintf(stderr, "CreateTensorWithDataAsOrtValue (sr) failed: %s\n", msg);
+-    ort_api->ReleaseStatus(status);
+-    ort_api->ReleaseValue(input_ort);
+-    ort_api->ReleaseValue(state_ort);
+-    return;
+-  }
+-
+-  ort_inputs.clear();
+-  ort_inputs.push_back(input_ort);
+-  ort_inputs.push_back(state_ort);
+-  ort_inputs.push_back(sr_ort);
+-
+-  // Prepare output OrtValue* array
+-  OrtValue *output_ort[2] = {nullptr, nullptr};
+-  status =
+-      ort_api->Run(session, nullptr, input_node_names.data(), ort_inputs.data(),
+-                   ort_inputs.size(), output_node_names.data(),
+-                   output_node_names.size(), output_ort);
+-
+-  if (status != nullptr) {
+-    const char *msg = ort_api->GetErrorMessage(status);
+-    fprintf(stderr, "Run failed: %s\n", msg);
+-    ort_api->ReleaseStatus(status);
+-    ort_api->ReleaseValue(input_ort);
+-    ort_api->ReleaseValue(state_ort);
+-    ort_api->ReleaseValue(sr_ort);
+-    return;
+-  }
+-
+-  float *speech_prob_ptr = nullptr;
+-  LOG_ORT_ERROR(ort_api, ort_api->GetTensorMutableData(
+-                             output_ort[0], (void **)&speech_prob_ptr));
+-  float speech_prob = speech_prob_ptr[0];
+-
+-  float *stateN = nullptr;
+-  LOG_ORT_ERROR(ort_api,
+-                ort_api->GetTensorMutableData(output_ort[1], (void **)&stateN));
+-  std::memcpy(_state.data(), stateN, size_state * sizeof(float));
+-
+-  // Update context with last context_samples samples of the full input
++  std::memcpy(_state.data(), next_state, size_state * sizeof(float));
+   std::copy(input.end() - context_samples, input.end(), _context.begin());
+-
+-  // Set output values
+-  if (out_probability) *out_probability = speech_prob;
+-  if (out_flag) *out_flag = (speech_prob >= threshold) ? 1 : 0;
+-
+-  // Release OrtValues
+-  ort_api->ReleaseValue(input_ort);
+-  ort_api->ReleaseValue(state_ort);
+-  ort_api->ReleaseValue(sr_ort);
+-  ort_api->ReleaseValue(output_ort[0]);
+-  ort_api->ReleaseValue(output_ort[1]);
++  if (out_probability != nullptr) *out_probability = probability[0];
++  if (out_flag != nullptr) *out_flag = (probability[0] >= threshold) ? 1 : 0;
+ }
+--- a/core/transcriber.cpp
++++ b/core/transcriber.cpp
+@@ -711,8 +711,11 @@
+ 
+ void Transcriber::free_stream(int32_t stream_id) {
+   std::lock_guard<std::mutex> lock(this->streams_mutex);
+-  TranscriberStream *stream = this->streams[stream_id];
+-  this->streams.erase(stream_id);
++  auto it = this->streams.find(stream_id);
++  if (it == this->streams.end()) return;
++  TranscriberStream *stream = it->second;
++  this->streams.erase(it);
++  if (stream == nullptr) return;
+   if (this->speaker_diarizer != nullptr && stream->diarizer_stream_id >= 0) {
+     this->speaker_diarizer->free_stream(stream->diarizer_stream_id);
+   }
+@@ -721,7 +724,11 @@
+ 
+ void Transcriber::start_stream(int32_t stream_id) {
+   std::lock_guard<std::mutex> lock(this->streams_mutex);
+-  TranscriberStream *stream = this->streams[stream_id];
++  auto it = this->streams.find(stream_id);
++  if (it == this->streams.end() || it->second == nullptr) {
++    throw std::runtime_error("Invalid stream handle");
++  }
++  TranscriberStream *stream = it->second;
+   // Starting a stream invalidates any pointers to stream data (audio, strings)
+   // that have been returned to the client during prior sessions.
+   {
+@@ -740,7 +747,11 @@
+ 
+ void Transcriber::stop_stream(int32_t stream_id) {
+   std::lock_guard<std::mutex> lock(this->streams_mutex);
+-  TranscriberStream *stream = this->streams[stream_id];
++  auto it = this->streams.find(stream_id);
++  if (it == this->streams.end() || it->second == nullptr) {
++    throw std::runtime_error("Invalid stream handle");
++  }
++  TranscriberStream *stream = it->second;
+   {
+     // Refuse further add_audio_to_stream calls, but keep leftover samples and
+     // the current VAD utterance open so the next transcribe_stream can drain
+@@ -766,7 +777,11 @@
+                                       uint64_t audio_length,
+                                       int32_t sample_rate) {
+   std::lock_guard<std::mutex> lock(this->streams_mutex);
+-  TranscriberStream *stream = this->streams[stream_id];
++  auto it = this->streams.find(stream_id);
++  if (it == this->streams.end() || it->second == nullptr) {
++    throw std::runtime_error("Invalid stream handle");
++  }
++  TranscriberStream *stream = it->second;
+   if (!stream->vad->is_active()) {
+     std::string error_message =
+         "Adding new audio for stream with ID " + std::to_string(stream_id) +
+--- /dev/null
++++ b/core/vad-duration-scale.h
+@@ -0,0 +1,19 @@
++#ifndef VAD_DURATION_SCALE_H
++#define VAD_DURATION_SCALE_H
++
++#include <cstddef>
++
++// The duration bound is a decoder resource limit, not a semantic sentence end.
++// Keep full confidence through the first two thirds, then decrease continuously
++// to zero. Zero must be reached even when voice detection is disabled.
++inline float vad_duration_scale(size_t sample_count, size_t maximum_samples) {
++  if (maximum_samples == 0) return 1.0f;
++  const size_t fade_start =
++      (maximum_samples / 3) * 2 + ((maximum_samples % 3) * 2) / 3;
++  if (sample_count <= fade_start) return 1.0f;
++  if (sample_count >= maximum_samples) return 0.0f;
++  return static_cast<float>(maximum_samples - sample_count) /
++         static_cast<float>(maximum_samples - fade_start);
++}
++
++#endif
+--- a/core/voice-activity-detector-test.cpp
++++ b/core/voice-activity-detector-test.cpp
+@@ -1,5 +1,7 @@
+ #include "voice-activity-detector.h"
+-
++#include "vad-duration-scale.h"
++
++#include <algorithm>
+ #include <cstdlib>
+ #include <filesystem>
+ #include <memory>
+@@ -9,6 +11,72 @@
+ 
+ #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
+ #include <doctest.h>
++
++struct VoiceActivityDetectorRestartTestAccess {
++  static void seed_previous_session(VoiceActivityDetector &vad) {
++    std::fill(vad.probability_window.begin(), vad.probability_window.end(), 0.9f);
++    std::fill(vad.look_behind_audio_buffer.begin(),
++              vad.look_behind_audio_buffer.end(), 0.25f);
++  }
++  static bool windows_are_zero(const VoiceActivityDetector &vad) {
++    const auto is_zero = [](float value) { return value == 0.0f; };
++    return std::all_of(vad.probability_window.begin(),
++                       vad.probability_window.end(), is_zero) &&
++           std::all_of(vad.look_behind_audio_buffer.begin(),
++                       vad.look_behind_audio_buffer.end(), is_zero);
++  }
++};
++
++TEST_CASE("vad-restart-clears-prior-session-confidence-and-audio") {
++  constexpr size_t hop = 512;
++  // With an eight-hop window, a single prediction cannot exceed threshold
++  // after reset, regardless of the shared Silero model's recurrent state.
++  VoiceActivityDetector vad(0.5f, 8, hop, 4 * hop, 12 * 16000);
++  vad.start();
++  VoiceActivityDetectorRestartTestAccess::seed_previous_session(vad);
++  REQUIRE_FALSE(VoiceActivityDetectorRestartTestAccess::windows_are_zero(vad));
++  vad.stop();
++  vad.start();
++  CHECK(VoiceActivityDetectorRestartTestAccess::windows_are_zero(vad));
++  const std::vector<float> silence(hop, 0.0f);
++  vad.process_audio(silence.data(), silence.size(), 16000);
++  CHECK(vad.get_segments()->empty());
++  vad.stop();
++}
++
++TEST_CASE("vad-duration-scale-decreases-without-discontinuity") {
++  constexpr size_t maximum = 12 * 16000;
++  constexpr size_t fade_start = 8 * 16000;
++  CHECK(vad_duration_scale(0, maximum) == 1.0f);
++  CHECK(vad_duration_scale(fade_start, maximum) == 1.0f);
++  CHECK(vad_duration_scale(fade_start + 512, maximum) ==
++        doctest::Approx(0.992f));
++  CHECK(vad_duration_scale(10 * 16000, maximum) ==
++        doctest::Approx(0.5f));
++  CHECK(vad_duration_scale(maximum, maximum) == 0.0f);
++  CHECK(vad_duration_scale(maximum + 512, maximum) == 0.0f);
++  CHECK(vad_duration_scale(maximum + 512, 0) == 1.0f);
++}
++
++TEST_CASE("vad-disabled-still-closes-bounded-segments") {
++  constexpr size_t hop = 512;
++  constexpr size_t maximum = 8 * hop;
++  VoiceActivityDetector vad(0.0f, 1, hop, hop, maximum);
++  const std::vector<float> audio(40 * hop, 0.25f);
++  vad.start();
++  for (size_t offset = 0; offset < audio.size(); offset += hop) {
++    vad.process_audio(audio.data() + offset, hop, 16000);
++  }
++  vad.stop();
++  const auto *segments = vad.get_segments();
++  REQUIRE(segments->size() >= 4);
++  for (const auto &segment : *segments) {
++    CHECK(segment.is_complete);
++    CHECK_FALSE(segment.audio_data.empty());
++    // A boundary is checked once per hop; at most one extra hop is retained.
++    CHECK(segment.audio_data.size() <= maximum + hop);
++  }
++}
+ 
+ TEST_CASE("voice-activity-detector-test") {
+   if (!std::filesystem::exists("output")) {
+--- a/core/voice-activity-detector.cpp
++++ b/core/voice-activity-detector.cpp
+@@ -3,6 +3,7 @@
+ #include <cassert>
+ #include <mutex>
+ #include <numeric>
++#include "vad-duration-scale.h"
+ 
+ #include "debug-utils.h"
+ #include "resampler.h"
+@@ -52,9 +53,9 @@
+   samples_processed_count = 0;
+   segments.clear();
+   current_segment_audio_buffer.resize(0);
+-  look_behind_audio_buffer.resize(look_behind_sample_count, 0.0f);
++  look_behind_audio_buffer.assign(look_behind_sample_count, 0.0f);
+   processing_remainder_audio_buffer.resize(0);
+-  probability_window.resize(window_size, 0.0f);
++  probability_window.assign(window_size, 0.0f);
+   probability_window_index = 0;
+   previous_is_voice = false;
+ }
+@@ -169,15 +170,8 @@
+   // If the voice audio buffer is too long, linearly decrease the effective
+   // score so that it reaches 0 at the max_segment_sample_count, and so ensures
+   // that the voice end event is triggered.
+-  const size_t fade_sample_count = (max_segment_sample_count * 2) / 3;
+-  if (max_segment_sample_count &&
+-      (current_segment_audio_buffer.size() > fade_sample_count)) {
+-    const float fade_factor =
+-        static_cast<float>(current_segment_audio_buffer.size() -
+-                           fade_sample_count) /
+-        fade_sample_count;
+-    smoothed_probability = smoothed_probability * fade_factor;
+-  }
++  smoothed_probability *= vad_duration_scale(
++      current_segment_audio_buffer.size(), max_segment_sample_count);
+   bool current_is_voice = smoothed_probability > threshold;
+   if (current_is_voice && !previous_is_voice) {
+     // Make sure we don't "look back" to before the start of the stream.
+--- a/core/voice-activity-detector.h
++++ b/core/voice-activity-detector.h
+@@ -20,6 +20,9 @@
+ };
+ 
+ class VoiceActivityDetector {
++  // The regression accessor is defined only in the native test executable.
++  friend struct VoiceActivityDetectorRestartTestAccess;
++
+  private:
+   const float threshold;
+   const int32_t window_size;
+@@ -76,4 +79,4 @@
+   void process_audio_chunk(const float *audio_data, size_t audio_data_size);
+ };
+ 
+-#endif
+\ No newline at end of file
++#endif
+--- a/language-bindings/android/moonshine-jni/moonshine-jni.cpp
++++ b/language-bindings/android/moonshine-jni/moonshine-jni.cpp
+@@ -2,10 +2,12 @@
+ 
+ #include <algorithm>
+ #include <cstdint>
++#include <cstdio>
+ #include <cstdlib>
+ #include <memory>
+ #include <mutex>
+ #include <string>
++#include <stdexcept>
+ #include <unordered_map>
+ #include <utility>
+ #include <vector>
+@@ -15,6 +17,56 @@
+ 
+ #include "moonshine-c-api.h"
+ #include "utf8.h"
++
++// GetFloatArrayElements may allocate or pin. Every successful acquisition must
++// be released even when a native call fails or throws. Input PCM is read-only.
++class ScopedInputFloatArray {
++ public:
++  ScopedInputFloatArray(JNIEnv *env, jfloatArray array)
++      : env_(env), array_(array),
++        data_(env->GetFloatArrayElements(array, nullptr)) {}
++  ~ScopedInputFloatArray() {
++    if (data_ != nullptr) env_->ReleaseFloatArrayElements(array_, data_, JNI_ABORT);
++  }
++  ScopedInputFloatArray(const ScopedInputFloatArray &) = delete;
++  ScopedInputFloatArray &operator=(const ScopedInputFloatArray &) = delete;
++  float *get() const { return data_; }
++
++ private:
++  JNIEnv *env_;
++  jfloatArray array_;
++  jfloat *data_;
++};
++
++class ScopedInputUtf {
++ public:
++  ScopedInputUtf(JNIEnv *env, jstring text)
++      : env_(env), text_(text),
++        data_(text != nullptr ? env->GetStringUTFChars(text, nullptr) : nullptr) {}
++  ~ScopedInputUtf() {
++    if (data_ != nullptr) env_->ReleaseStringUTFChars(text_, data_);
++  }
++  ScopedInputUtf(const ScopedInputUtf &) = delete;
++  ScopedInputUtf &operator=(const ScopedInputUtf &) = delete;
++  const char *get() const { return data_; }
++
++ private:
++  JNIEnv *env_;
++  jstring text_;
++  const char *data_;
++};
++
++static void throw_transcription_error(JNIEnv *env, const char *operation,
++                                      int error) {
++  if (env->ExceptionCheck()) return;
++  jclass exception = env->FindClass("java/lang/IllegalStateException");
++  if (exception == nullptr) return;  // Preserve FindClass's pending exception.
++  char message[160];
++  std::snprintf(message, sizeof(message), "%s failed, native code %d", operation,
++                error);
++  env->ThrowNew(exception, message);
++  env->DeleteLocalRef(exception);
++}
+ 
+ static jclass get_class(JNIEnv *env, const char *className) {
+   jclass clazz = env->FindClass(className);
+@@ -43,7 +95,14 @@
+   return method;
+ }
+ 
+-static std::unique_ptr<transcript_t> c_transcript_from_jobject(
++struct OwnedInputTranscript {
++  transcript_t value{};
++  std::vector<transcript_line_t> lines;
++  std::vector<std::string> texts;
++  std::vector<std::vector<float>> audio;
++};
++
++static std::unique_ptr<OwnedInputTranscript> c_transcript_from_jobject(
+     JNIEnv *env, jobject javaTranscript) {
+   jclass transcriptClass = env->GetObjectClass(javaTranscript);
+   jfieldID linesField =
+@@ -74,21 +133,37 @@
+       get_field(env, lineClass, "haveSpeakersChanged", "Z");
+ 
+   jsize lineCount = env->CallIntMethod(linesList, sizeMethod);
+-  std::unique_ptr<transcript_t> transcript(new transcript_t());
+-  transcript->line_count = lineCount;
+-  transcript->lines = new transcript_line_t[lineCount];
++  auto transcript = std::make_unique<OwnedInputTranscript>();
++  transcript->value.line_count = lineCount;
++  transcript->lines.resize(lineCount);
++  transcript->texts.resize(lineCount);
++  transcript->audio.resize(lineCount);
++  transcript->value.lines = transcript->lines.data();
+   for (int i = 0; i < lineCount; i++) {
+     jobject line = env->CallObjectMethod(linesList, getMethod, i);
++    if (env->ExceptionCheck()) return nullptr;
++    if (line == nullptr) throw std::invalid_argument("Transcript line is null");
+     jstring text = (jstring)env->GetObjectField(line, textField);
+     // Mirror the C→Java direction: a null Java String stays null on the C side
+     // rather than being fed to GetStringUTFChars (which is undefined for null).
+-    transcript->lines[i].text =
+-        (text != nullptr) ? env->GetStringUTFChars(text, nullptr) : nullptr;
++    ScopedInputUtf text_chars(env, text);
++    if (text != nullptr && text_chars.get() == nullptr) return nullptr;
++    if (text_chars.get() != nullptr) {
++      transcript->texts[i] = text_chars.get();
++      transcript->lines[i].text = transcript->texts[i].c_str();
++    }
+     jfloatArray audioData =
+         (jfloatArray)env->GetObjectField(line, audioDataField);
+-    transcript->lines[i].audio_data =
+-        env->GetFloatArrayElements(audioData, nullptr);
+-    transcript->lines[i].audio_data_count = env->GetArrayLength(audioData);
++    if (audioData != nullptr) {
++      const jsize count = env->GetArrayLength(audioData);
++      transcript->audio[i].resize(count);
++      if (count > 0) {
++        env->GetFloatArrayRegion(audioData, 0, count, transcript->audio[i].data());
++        if (env->ExceptionCheck()) return nullptr;
++      }
++      transcript->lines[i].audio_data = transcript->audio[i].data();
++      transcript->lines[i].audio_data_count = count;
++    }
+     transcript->lines[i].start_time = env->GetFloatField(line, startTimeField);
+     transcript->lines[i].duration = env->GetFloatField(line, durationField);
+     transcript->lines[i].id = env->GetLongField(line, idField);
+@@ -339,15 +414,20 @@
+ extern "C" JNIEXPORT jstring JNICALL
+ Java_ai_moonshine_voice_JNI_moonshineTranscriptToString(
+     JNIEnv *env, jobject /* this */, jobject javaTranscript) {
+-  std::unique_ptr<transcript_t> transcript =
+-      c_transcript_from_jobject(env, javaTranscript);
+-  if (transcript == nullptr) {
+-    return env->NewStringUTF("");
+-  }
+-  jstring result =
+-      env->NewStringUTF(moonshine_transcript_to_string(transcript.get()));
+-  delete[] transcript->lines;
+-  return result;
++  try {
++    if (javaTranscript == nullptr) {
++      throw_transcription_error(env, "transcriptToString", MOONSHINE_ERROR_INVALID_ARGUMENT);
++      return nullptr;
++    }
++    auto transcript = c_transcript_from_jobject(env, javaTranscript);
++    if (transcript == nullptr) {
++      return env->ExceptionCheck() ? nullptr : env->NewStringUTF("");
++    }
++    return env->NewStringUTF(moonshine_transcript_to_string(&transcript->value));
++  } catch (const std::exception &) {
++    throw_transcription_error(env, "transcriptToString", MOONSHINE_ERROR_UNKNOWN);
++    return nullptr;
++  }
+ }
+ 
+ extern "C" JNIEXPORT int JNICALL
+@@ -361,24 +441,31 @@
+     jfieldID valueField =
+         get_field(env, optionClass, "value", "Ljava/lang/String;");
+ 
+-    std::vector<moonshine_option_t> coptions;
++    std::vector<std::pair<std::string, std::string>> owned_options;
+     if (joptions != nullptr) {
+       for (int i = 0; i < env->GetArrayLength(joptions); i++) {
+         jobject joption = env->GetObjectArrayElement(joptions, i);
++        if (joption == nullptr) return MOONSHINE_ERROR_INVALID_ARGUMENT;
+         jstring jname = (jstring)env->GetObjectField(joption, nameField);
+         jstring jvalue = (jstring)env->GetObjectField(joption, valueField);
+-        coptions.push_back({env->GetStringUTFChars(jname, nullptr),
+-                            env->GetStringUTFChars(jvalue, nullptr)});
+-      }
+-    }
+-    const char *path_str;
+-    if (path != nullptr) {
+-      path_str = env->GetStringUTFChars(path, nullptr);
+-    } else {
+-      path_str = nullptr;
+-    }
++        ScopedInputUtf name_chars(env, jname);
++        if (name_chars.get() == nullptr) {
++          return MOONSHINE_ERROR_INVALID_ARGUMENT;
++        }
++        ScopedInputUtf value_chars(env, jvalue);
++        if (value_chars.get() == nullptr) return MOONSHINE_ERROR_INVALID_ARGUMENT;
++        owned_options.emplace_back(name_chars.get(), value_chars.get());
++      }
++    }
++    std::vector<moonshine_option_t> coptions;
++    coptions.reserve(owned_options.size());
++    for (const auto &option : owned_options) {
++      coptions.push_back({option.first.c_str(), option.second.c_str()});
++    }
++    ScopedInputUtf path_str(env, path);
++    if (path != nullptr && path_str.get() == nullptr) return MOONSHINE_ERROR_UNKNOWN;
+     return moonshine_load_transcriber_from_files(
+-        path_str, model_arch, coptions.data(), coptions.size(),
++        path_str.get(), model_arch, coptions.data(), coptions.size(),
+         MOONSHINE_HEADER_VERSION);
+   } catch (const std::exception &e) {
+     ALOGE("moonshineLoadTranscriberFromFiles: %s\n", e.what());
+@@ -532,18 +619,30 @@
+     JNIEnv *env, jobject /* this */, jint transcriber_handle,
+     jfloatArray audio_data, jint sample_rate, jint flags) {
+   try {
+-    float *audio_data_ptr = env->GetFloatArrayElements(audio_data, nullptr);
++    if (audio_data == nullptr) {
++      throw_transcription_error(env, "transcribeWithoutStreaming",
++                                MOONSHINE_ERROR_INVALID_ARGUMENT);
++      return nullptr;
++    }
++    ScopedInputFloatArray audio_data_ptr(env, audio_data);
++    if (audio_data_ptr.get() == nullptr) {
++      throw_transcription_error(env, "transcribeWithoutStreaming",
++                                MOONSHINE_ERROR_UNKNOWN);
++      return nullptr;
++    }
+     size_t audio_data_size = env->GetArrayLength(audio_data);
+     struct transcript_t *transcript = nullptr;
+     int transcription_error = moonshine_transcribe_without_streaming(
+-        transcriber_handle, audio_data_ptr, audio_data_size, sample_rate, flags,
++        transcriber_handle, audio_data_ptr.get(), audio_data_size, sample_rate, flags,
+         &transcript);
+     if (transcription_error != 0) {
++      throw_transcription_error(env, "transcribeWithoutStreaming", transcription_error);
+       return nullptr;
+     }
+     return c_transcript_to_jobject(env, transcript);
+   } catch (const std::exception &e) {
+-    ALOGE("moonshineTranscribeWithoutStreaming: %s\n", e.what());
++    (void)e;
++    throw_transcription_error(env, "transcribeWithoutStreaming", MOONSHINE_ERROR_UNKNOWN);
+     return nullptr;
+   }
+ }
+@@ -573,27 +672,35 @@
+ }
+ 
+ extern "C" JNIEXPORT int JNICALL
+-Java_ai_moonshine_voice_JNI_moonshineStartStream(JNIEnv * /* env */,
++Java_ai_moonshine_voice_JNI_moonshineStartStream(JNIEnv *env,
+                                                  jobject /* this */,
+                                                  jint transcriber_handle,
+                                                  jint stream_handle) {
+   try {
+-    return moonshine_start_stream(transcriber_handle, stream_handle);
+-  } catch (const std::exception &e) {
+-    ALOGE("moonshineStartStream: %s\n", e.what());
++    const int result = moonshine_start_stream(transcriber_handle, stream_handle);
++    if (result != 0) {
++      throw_transcription_error(env, "startStream", result);
++    }
++    return result;
++  } catch (const std::exception &) {
++    throw_transcription_error(env, "startStream", MOONSHINE_ERROR_UNKNOWN);
+     return MOONSHINE_ERROR_UNKNOWN;
+   }
+ }
+ 
+ extern "C" JNIEXPORT int JNICALL
+-Java_ai_moonshine_voice_JNI_moonshineStopStream(JNIEnv * /* env */,
++Java_ai_moonshine_voice_JNI_moonshineStopStream(JNIEnv *env,
+                                                 jobject /* this */,
+                                                 jint transcriber_handle,
+                                                 jint stream_handle) {
+   try {
+-    return moonshine_stop_stream(transcriber_handle, stream_handle);
+-  } catch (const std::exception &e) {
+-    ALOGE("moonshineStopStream: %s\n", e.what());
++    const int result = moonshine_stop_stream(transcriber_handle, stream_handle);
++    if (result != 0) {
++      throw_transcription_error(env, "stopStream", result);
++    }
++    return result;
++  } catch (const std::exception &) {
++    throw_transcription_error(env, "stopStream", MOONSHINE_ERROR_UNKNOWN);
+     return MOONSHINE_ERROR_UNKNOWN;
+   }
+ }
+@@ -645,15 +752,25 @@
+     jint stream_handle, jfloatArray audio_data, jint sample_rate, jint flags) {
+   try {
+     if (audio_data == nullptr) {
++      throw_transcription_error(env, "addAudioToStream",
++                                MOONSHINE_ERROR_INVALID_ARGUMENT);
+       return MOONSHINE_ERROR_INVALID_ARGUMENT;
+     }
+-    float *audio_data_ptr = env->GetFloatArrayElements(audio_data, nullptr);
++    ScopedInputFloatArray audio_data_ptr(env, audio_data);
++    if (audio_data_ptr.get() == nullptr) {
++      throw_transcription_error(env, "addAudioToStream", MOONSHINE_ERROR_UNKNOWN);
++      return MOONSHINE_ERROR_UNKNOWN;
++    }
+     size_t audio_data_size = env->GetArrayLength(audio_data);
+-    return moonshine_transcribe_add_audio_to_stream(
+-        transcriber_handle, stream_handle, audio_data_ptr, audio_data_size,
++    const int result = moonshine_transcribe_add_audio_to_stream(
++        transcriber_handle, stream_handle, audio_data_ptr.get(), audio_data_size,
+         sample_rate, flags);
+-  } catch (const std::exception &e) {
+-    ALOGE("moonshineAddAudioToStream: %s\n", e.what());
++    if (result != 0) {
++      throw_transcription_error(env, "addAudioToStream", result);
++    }
++    return result;
++  } catch (const std::exception &) {
++    throw_transcription_error(env, "addAudioToStream", MOONSHINE_ERROR_UNKNOWN);
+     return MOONSHINE_ERROR_UNKNOWN;
+   }
+ }
+@@ -674,12 +791,14 @@
+     if (transcription_error != 0) {
+       ALOGE("moonshineTranscribeStream: transcription error: %d",
+             transcription_error);
++      throw_transcription_error(env, "transcribeStream", transcription_error);
+       return nullptr;
+     }
+     ALOGD("moonshineTranscribeStream: transcript=%p", (void *)transcript);
+     return c_transcript_to_jobject(env, transcript);
+   } catch (const std::exception &e) {
+-    ALOGE("moonshineTranscribeStream: %s\n", e.what());
++    (void)e;
++    throw_transcription_error(env, "transcribeStream", MOONSHINE_ERROR_UNKNOWN);
+     return nullptr;
+   }
+ }

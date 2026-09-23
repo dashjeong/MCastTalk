@@ -3,6 +3,8 @@ package app.guidecast.transmitter
 import app.guidecast.provider.gemma.translation.GemmaModelReadiness
 import app.guidecast.provider.gemma.translation.GemmaBroadcastCapability
 import app.guidecast.core.translation.SelectiveRefinementReason
+import app.guidecast.core.translation.ContextualTextTranslationEngine
+import app.guidecast.core.translation.TextTranslationEngine
 import app.guidecast.core.translation.TranslationReviewContext
 import app.guidecast.core.translation.TranslationStyle
 import app.guidecast.core.translation.TranslationStyleContext
@@ -13,7 +15,16 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
-internal data class FileScriptTranslation(val lines: List<String>, val notes: List<String>, val engine: FileTranslationEngine)
+/** A null engine means source text was used without running translation or review. */
+internal data class FileScriptTranslation(val lines: List<String>, val notes: List<String>, val engine: FileTranslationEngine?)
+
+internal fun fileSegmentMatchesTarget(segment: FileSpeechSegment, sourceLanguage: String?, target: String): Boolean =
+    (segment.languageTag ?: sourceLanguage)?.let(::fileBaseLanguage) == fileBaseLanguage(target)
+
+internal fun sourceOnlyFileTranslation(entry: FileLibraryEntry, target: String): FileScriptTranslation? =
+    entry.segments.takeIf { segments -> segments.isNotEmpty() && segments.all { fileSegmentMatchesTarget(it, entry.sourceLanguageTag, target) } }
+        ?.let { segments -> FileScriptTranslation(segments.map { it.text },
+            listOf("$target · 원문과 같은 언어입니다. 원문을 사용하며 번역·AI·API 검토를 실행하지 않았습니다."), engine = null) }
 
 /** Local translation with separately consented, bounded text-only developer review. */
 internal suspend fun translateFileScript(
@@ -25,7 +36,17 @@ internal suspend fun translateFileScript(
     contextSegments: List<FileSpeechSegment> = entry.segments,
     onLine: suspend (Int, String) -> Unit = { _, _ -> },
     onProgress: (Int, Int) -> Unit,
-): FileScriptTranslation = app.withTranslationBackendUse {
+): FileScriptTranslation {
+    require(entry.segments.isNotEmpty()) { "번역할 원문이 없습니다." }
+    sourceOnlyFileTranslation(entry, target)?.let { sourceOnly ->
+        sourceOnly.lines.forEachIndexed { index, text ->
+            currentCoroutineContext().ensureActive()
+            onLine(index, text)
+            onProgress(index + 1, sourceOnly.lines.size)
+        }
+        return sourceOnly
+    }
+    return app.withTranslationBackendUse {
     val notes = linkedSetOf<String>()
     val results = MutableList(entry.segments.size) { "" }
     val contexts = fileTranslationContexts(contextSegments)
@@ -39,9 +60,11 @@ internal suspend fun translateFileScript(
             ?: error("음성 언어를 확인한 뒤 다시 변환하세요.")
     }
     var completed = 0
+    var sourceOnlySegments = 0
     for ((source, indexes) in grouped) {
         currentCoroutineContext().ensureActive()
         if (source == target.substringBefore('-')) {
+            sourceOnlySegments += indexes.size
             indexes.forEach { index ->
                 results[index] = entry.segments[index].text
                 onLine(index, results[index])
@@ -74,13 +97,18 @@ internal suspend fun translateFileScript(
                 // Long recognizer segments are translated in bounded, word-aware pieces. Source
                 // text and its word timing remain untouched in the saved transcript.
                 val chunks = fileTranslationChunks(original)
-                val translated = chunks.map { chunk ->
+                val translated = chunks.mapIndexed { chunkIndex, chunk ->
+                    val contextBefore = fileWholeTranslationContext(
+                        listOfNotNull(contexts[entry.segments[index]]) + chunks.take(chunkIndex),
+                    )
                     val lab = app.developerLabSettings.state.value
                     val style = if (app.uiDisplaySettings.developerInfo.value && lab.paraphraseEnabled)
                         TranslationStyleContext(TranslationStyle.valueOf(lab.translationRegister.name))
                     else TranslationStyleContext(app.translationApiSettings.state.value.tone)
                     withContext(style) {
-                    val draft = withTimeout(20_000) { draftEngine.translate(chunk, source, target) }
+                    val draft = withTimeout(20_000) {
+                        translateFileChunkWithContext(draftEngine, chunk, contextBefore, source, target)
+                    }
                     if (mode == FileTranslationEngine.API && app.translationApiService.states.value[target] != TranslationApiState.READY) allApiCompleted = false
                     check(draft.isNotBlank()) { "번역 결과가 비어 있습니다." }
                     val localResult = if (!reviewAvailable || !TranslationReviewContext.canRepresent(chunk, draft)) {
@@ -93,7 +121,8 @@ internal suspend fun translateFileScript(
                                 app.withProcessNativeColdLoadLease(ProcessNativeColdLoadKeys.GEMMA_MODEL, true) {
                                     withContext(TranslationReviewContext(chunk, draft, source, target,
                                         setOf(SelectiveRefinementReason.LONG_COMPLETE_SENTENCE))) {
-                                        app.gemmaTranslationProvider.engineFor(target).translate(chunk, source, target)
+                                        translateFileChunkWithContext(app.gemmaTranslationProvider.engineFor(target),
+                                            chunk, contextBefore, source, target)
                                     }
                                 }
                             }
@@ -117,7 +146,7 @@ internal suspend fun translateFileScript(
                         } else reviewed
                     }
                     val refined = if (allowCloudReview) app.cloudTranslationReviewer.refine(source, target, chunk, localResult,
-                        contextBefore = contexts[entry.segments[index]]) else localResult
+                        contextBefore = contextBefore) else localResult
                     if (refined != localResult) notes += "문장 사전 또는 사용자가 활성화한 API 검토 보정을 반영했습니다."
                     if (target.equals("zh-TW", true)) convertToTraditionalChinese(refined) else refined
                     }
@@ -129,18 +158,47 @@ internal suspend fun translateFileScript(
             }
         } finally { app.endPreparation(owner) }
     }
+    if (sourceOnlySegments > 0) notes += "$target · 원문과 같은 언어인 ${sourceOnlySegments}개 구간은 원문을 사용했습니다. 번역·검토 결과는 나머지 구간에 해당합니다."
     if (mode != FileTranslationEngine.API) notes += if (!allReviewsCompleted) "Google ML Kit 번역 · 자동 검사는 의미 정확성을 보증하지 않습니다."
         else "Google ML Kit 번역 + 준비된 AI 모델 검토 · 최종 내용은 원음과 대조하세요."
     if (mode == FileTranslationEngine.API) notes += "설정한 API 경로 · " + (app.translationApiService.states.value[target]?.label ?: "기기 내 번역")
     if (mode == FileTranslationEngine.API && !allApiCompleted) notes += "일부 구간은 기기 내 번역으로 대체했습니다."
     FileScriptTranslation(results, notes.toList(), if (allApiCompleted) FileTranslationEngine.API else if (allReviewsCompleted) FileTranslationEngine.GEMMA else FileTranslationEngine.MLKIT)
+    }
 }
 
 /** Resolve against the full transcript, including already translated sentences during a retry. */
 internal fun fileTranslationContexts(segments: List<FileSpeechSegment>): Map<FileSpeechSegment, String> =
     segments.mapIndexed { index, segment ->
-        segment to segments.subList(maxOf(0, index - 2), index).joinToString(" ") { it.text }.takeLast(1_000)
+        segment to fileWholeTranslationContext(segments.subList(maxOf(0, index - 2), index).map { it.text }).orEmpty()
     }.toMap()
+
+/** Use complete preceding units within the smallest reviewer budget; never cut off a negation. */
+internal fun fileWholeTranslationContext(prior: List<String>, maximum: Int = 300): String? {
+    require(maximum in 1..300)
+    val selected = ArrayDeque<String>()
+    var size = 0
+    for (unit in prior.asReversed()) {
+        if (unit.isBlank()) continue
+        val added = unit.length + if (selected.isEmpty()) 0 else 1
+        if (size + added > maximum) break
+        selected.addFirst(unit)
+        size += added
+    }
+    return selected.joinToString(" ").ifBlank { null }
+}
+
+internal suspend fun translateFileChunkWithContext(
+    engine: TextTranslationEngine,
+    text: String,
+    contextBefore: String?,
+    source: String,
+    target: String,
+): String = if (engine is ContextualTextTranslationEngine) {
+    engine.translateWithContext(text, contextBefore, source, target)
+} else {
+    engine.translate(text, source, target)
+}
 
 internal fun fileTranslationChunks(text: String, maximum: Int = 500): List<String> {
     require(maximum >= 2)

@@ -1,0 +1,44 @@
+MCastTalk local reliability patch to Moonshine Voice 0.1.5
+
+Upstream: https://github.com/moonshine-ai/moonshine
+Source commit: 234f60faa0eb388b01cdf7e60aca232af37aefda
+Original Maven coordinate: ai.moonshine:moonshine-voice:0.1.5
+Original AAR SHA-256: ee2d95c21150683c743db8f3aef66281fd5408bcefc94be3ca1d2545ada1f571
+
+Moonshine source code copyright (c) 2025 Useful Sensors, Inc.
+(dba Moonshine AI), licensed under the MIT License. The original LICENSE and
+third-party notices are retained in licenses/. Model weights are not included
+or relicensed by this patch. Legacy non-English non-streaming models retain
+their separate terms in the upstream LICENSE.
+
+Local changes (not an official upstream release):
+- Correct the maximum-segment confidence fade, including a finite bound when
+  VAD is disabled for diagnostic use. Keep normal VAD enabled.
+- Make Silero tensor/inference/output errors observable, with scoped ORT
+  cleanup instead of treating a failed inference as a zero speech probability.
+- Release JNI input float arrays in both streaming and batch transcription;
+  release model-load UTF strings, and own debug round-trip transcript copies.
+- Propagate native transcription, audio-input, stream-start and stream-stop
+  errors as Java IllegalStateException with operation and numeric error code.
+  Keep freeStream cleanup behavior unchanged to avoid masking an existing
+  exception. Do not add transcript/audio content logs.
+- Reject missing native stream handles before dereferencing them. Repeated
+  cleanup of a missing stream is a no-op, without inserting a null stream.
+- Clear prior session confidence and look-behind PCM windows when starting
+  a VAD session. Include a restart regression; shared Silero recurrent-model
+  state is unchanged by this bounded patch.
+- Add native regression checks for fade continuity and bounded VAD-disabled
+  segments. The native segment bound is a decoder resource limit, not a
+  semantic sentence boundary.
+
+See moonshine-0.1.5-mcasttalk-reliability.patch, patch-receipt.json,
+source-acquisition.json and build-receipt.json for exact inputs and outputs.
+This notice does not claim successful Android, long-duration or voice-quality
+validation. Those results must be recorded separately for the exact artifact.
+
+Distribution coordinate: app.guidecast.thirdparty:moonshine-voice:0.1.5-mcasttalk1
+Only ARM64 is packaged. Other ABI binaries from the upstream AAR are removed.
+Upstream Java classes and resources are preserved byte-for-byte.
+The existing full ONNX Runtime 1.23.2 TTS override remains in the APK.
+Patch SHA-256: b499277412c9e70039ff07f8888a85d3fdae742ba74150fb4073fe526ae46a47
+Source, patch and reproducible packaging recipe: third_party/moonshine/0.1.5-mcasttalk1

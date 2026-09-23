@@ -363,7 +363,9 @@ internal fun conservativeReviewAccepted(original: String, draft: String, candida
     if (!reviewTextWithinBounds(original, candidate) || candidate.contains("```") || candidate.length > maxOf(32, draft.length * 2) ||
         candidate.length < draft.length / 2) return false
     val numbers = Regex("[+-]?[0-9]+(?:[.,:/-][0-9]+)*(?:[%％])?")
-    fun numericTokens(text: String) = numbers.findAll(text).map { it.value }.sorted().toList()
+    fun numericTokens(text: String) = numbers.findAll(
+        app.guidecast.core.translation.KoreanNumericQuantities.normalizeForTranslation(text, "ko"),
+    ).map { it.value }.sorted().toList()
     val originalNumbers = numericTokens(original)
     if (numericTokens(candidate) != originalNumbers.ifEmpty { numericTokens(draft) }) return false
     val common = setOf("The", "A", "An", "I", "We", "You", "They", "It", "This", "That", "Please", "Can", "Could",

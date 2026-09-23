@@ -178,6 +178,12 @@ class MoonshineSttInferenceService : Service() {
             requestSessionStop(sessionId)
         }
 
+        override fun finishRecognition(sessionId: Long) {
+            // The sender waits for each PCM ACK, so the native queue has consumed the complete
+            // finite source before this operation runs. Cancellation remains a separate stop.
+            nativeScope.launch { finishSession(sessionId) }
+        }
+
         override fun shutdown() {
             requestShutdown()
         }
@@ -436,6 +442,46 @@ class MoonshineSttInferenceService : Service() {
         cancelledSessions.mark(sessionId)
         nativeScope.launch {
             stopSession(sessionId, notifyClient = true)
+        }
+    }
+
+    private fun finishSession(sessionId: Long) {
+        val session = sessions[sessionId] ?: return
+        if (session.closed.get() || sessionId in cancelledSessions || shuttingDown.get()) {
+            stopSession(sessionId, notifyClient = true)
+            return
+        }
+        try {
+            val activeTranscriber = requireNotNull(nativeOwners.activeOrNull())
+            finishMoonshineSttInput(
+                // Moonshine Voice 0.1.5 stopStream calls final JNI transcription and dispatches
+                // TranscriptEvents synchronously. Closing/removing this listener first loses tail.
+                flushNative = { activeTranscriber.stopStream(session.streamHandle) },
+                releaseNative = {
+                    session.closed.set(true)
+                    try { activeTranscriber.removeListener(session.listener) }
+                    finally {
+                        try { activeTranscriber.freeStream(session.streamHandle) }
+                        finally { runCatching { session.callbackBinder.unlinkToDeath(session.callbackDied, 0) } }
+                    }
+                },
+                acknowledge = {
+                    // One-way calls to the same callback Binder are serialized: final transcript
+                    // callbacks queued during stopStream reach the client before this terminal.
+                    if (sessionId in cancelledSessions || shuttingDown.get()) {
+                        session.callback.safely { onSessionStopped(sessionId) }
+                    } else session.callback.safely { onSessionFinished(sessionId) }
+                },
+            )
+        } catch (error: Throwable) {
+            session.callback.safely {
+                onError(sessionId, MoonshineSttIpcProtocol.ERROR_RECOGNITION,
+                    error.safeMessage("Moonshine 마지막 음성 인식 결과를 확정하지 못했습니다."))
+            }
+            stopSession(sessionId, notifyClient = false)
+        } finally {
+            sessions.remove(sessionId)
+            cancelledSessions.remove(sessionId)
         }
     }
 

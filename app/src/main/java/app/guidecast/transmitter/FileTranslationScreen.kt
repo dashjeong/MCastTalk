@@ -69,6 +69,9 @@ data class FileTranslationUiState(
     val selectedFiles: List<FileConversionItem> = emptyList(),
     val automaticLanguageSupported: Boolean = true,
     val fileTranscriptionSupported: Boolean = true,
+    val automaticLanguageUnavailableReason: String? = null,
+    val sourceLanguageUnavailableReason: String? = null,
+    val recognitionSupportNotice: String? = null,
 )
 
 @Composable
@@ -168,7 +171,7 @@ internal fun FileTranslationScreen(
                         }
                         DropdownMenu(expanded = languageExpanded,
                             onDismissRequest = { languageExpanded = false }, modifier = Modifier.heightIn(max = 360.dp)) {
-                            DropdownMenuItem(text = { Text(if (state.automaticLanguageSupported) "자동 감지 (기본)" else "자동 감지 · Android 14 이상") },
+                            DropdownMenuItem(text = { Text(if (state.automaticLanguageSupported) "자동 감지 (기본)" else "자동 감지 · 현재 기기에서 사용 불가") },
                                 enabled = state.automaticLanguageSupported,
                                 onClick = { onSourceLanguageChange(null); languageExpanded = false })
                             state.languageOptions.forEach { (tag, label) ->
@@ -181,9 +184,11 @@ internal fun FileTranslationScreen(
                         Text("감지된 언어: ${fileLanguageLabel(it, state.languageOptions)}",
                             style = MaterialTheme.typography.bodyMedium)
                     }
-                    Text(state.languageNotice ?: if (!state.automaticLanguageSupported) "이 Android 버전에서는 원문 언어를 직접 선택해야 합니다. 선택한 언어를 모든 파일에 적용합니다."
-                        else "자동 감지를 지원하지 않거나 결과가 나오지 않으면 원문 언어를 직접 선택하세요.",
+                    Text(state.recognitionSupportNotice ?: if (!state.automaticLanguageSupported)
+                        state.automaticLanguageUnavailableReason ?: "기기 자동 감지를 사용할 수 없습니다. 원문 언어를 직접 선택하면 지원되는 앱 음성 인식 모델로 변환합니다."
+                        else "자동 감지는 기기의 파일 음성 인식을 사용합니다. 감지 결과가 나오지 않으면 원문 언어를 직접 선택하세요.",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    state.languageNotice?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                 }
                 item {
                     Text("3. 번역할 언어", fontWeight = FontWeight.SemiBold)
@@ -293,10 +298,11 @@ internal fun fileBaseLanguage(tag: String): String = tag.substringBefore('-').su
 
 /** Checked by UI and VM before opening/reading audio bytes or computing its SHA-256. */
 internal fun fileConversionPreflight(state: FileTranslationUiState): String? = listOfNotNull(
-    if (!state.fileTranscriptionSupported) "파일 음성 인식은 Android 13 이상에서 사용할 수 있습니다. 저장된 스크립트 재생은 계속 사용할 수 있습니다." else null,
+    if (!state.fileTranscriptionSupported) "이 기기에 사용할 수 있는 파일 음성 인식기가 없습니다. 저장된 스크립트 재생은 계속 사용할 수 있습니다." else null,
     state.unavailableReason,
+    state.sourceLanguageUnavailableReason,
     if (state.fileTranscriptionSupported && !state.automaticLanguageSupported && state.sourceLanguageTag == null)
-        "변환 전에 원문 언어를 직접 선택하세요. 자동 언어 감지는 Android 14 이상에서 요청할 수 있습니다." else null,
+        "변환 전에 원문 언어를 직접 선택하세요. 자동 감지 없이 지원되는 앱 모델로 변환할 수 있습니다." else null,
 ).distinct().joinToString("\n").ifBlank { null }
 
 internal fun fileSourceLanguageChoiceLabel(state: FileTranslationUiState): String =
