@@ -13,6 +13,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -56,6 +57,7 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
     var source by rememberSaveable { mutableStateOf<String?>("ko-KR") }
     var target by rememberSaveable { mutableStateOf("ko-KR") }
     var transcribePermission by rememberSaveable { mutableStateOf(false) }
+    var liveTranscription by rememberSaveable { mutableStateOf(true) }
     var deleteNote by remember { mutableStateOf<VoiceNote?>(null) }
     var speakerIndex by model.editorDraft.speakerIndex
     var speaker by model.editorDraft.speaker
@@ -75,6 +77,11 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
     var renameAttempted by model.editorDraft.renameAttempted
     var speakerAttempted by model.editorDraft.speakerAttempted
     val note = state.selected
+    val transcriptionUnavailable = if (note != null) model.transcriptionUnavailableReason(source) else null
+    val listState = rememberLazyListState()
+    LaunchedEffect(state.recording) {
+        if (state.recording) listState.animateScrollToItem(2)
+    }
     val matchingLines = remember(note?.lines, transcriptQuery) { voiceNoteMatchingLines(note?.lines.orEmpty(), transcriptQuery) }
     val library = remember(state.library, libraryQuery) { state.library.filter { it.title.contains(libraryQuery.trim(), ignoreCase = true) } }
     LaunchedEffect(note?.id) {
@@ -84,7 +91,7 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
     }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (!granted) model.permissionDenied()
-        else if (transcribePermission) model.transcribe(source, target) else model.record(title, source, target)
+        else if (transcribePermission) model.transcribe(source, target) else model.record(title, source, target, liveTranscription)
     }
     val txt = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { model.exportPrepared(it, "txt") }
     val srt = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/x-subrip")) { model.exportPrepared(it, "srt") }
@@ -100,7 +107,7 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
     val request: (Boolean) -> Unit = { transcribe ->
         transcribePermission = transcribe
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            if (transcribe) model.transcribe(source, target) else model.record(title, source, target)
+            if (transcribe) model.transcribe(source, target) else model.record(title, source, target, liveTranscription)
         } else permission.launch(Manifest.permission.RECORD_AUDIO)
     }
     val back = {
@@ -115,12 +122,12 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
     }
     BackHandler(onBack = back)
     Surface(Modifier.fillMaxSize().safeDrawingPadding().semantics { paneTitle = MCastService.NOTES.title }) {
-        LazyColumn(contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp),
+        LazyColumn(state = listState, contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp),
             modifier = Modifier.fillMaxSize().imePadding()) {
             item {
                 TextButton(onClick = back) { Text("← 서비스 홈") }
                 Text(MCastService.NOTES.title, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.semantics { heading() })
-                Text("녹음하고, 읽고, 다시 듣는 나만의 음성노트", style = MaterialTheme.typography.bodyMedium)
+                Text("녹음하며 바로 읽고, 다시 듣는 나만의 음성노트", style = MaterialTheme.typography.bodyMedium)
                 TextButton(onClick = { transferVisible = true }, enabled = enabled && !state.playback.isPlaying) { Text("노트 백업·가져오기") }
             }
             stickyHeader {
@@ -136,7 +143,7 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
                 Text("방송·파일 작업·모델 준비를 마친 뒤 시작하세요.", color = MaterialTheme.colorScheme.error)
             }
             if (!showLibrary) {
-            item {
+            if (!state.recording) item {
                 if (note == null) OutlinedTextField(title, { title = it.take(120) }, label = { Text("노트 제목") },
                     enabled = enabled, singleLine = true, modifier = Modifier.fillMaxWidth())
                 else {
@@ -144,9 +151,20 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
                     Text("${formatArchiveSessionTime(note.createdAt)} · ${voiceNoteTime(note.durationMs)}", style = MaterialTheme.typography.bodySmall)
                     TextButton(onClick = { renameTitle = note.title; renameAttempted = false }, enabled = enabled) { Text("제목 변경") }
                 }
-                VoiceNoteLanguagePicker("말하는 언어", source, enabled, Build.VERSION.SDK_INT >= 34) { source = it }
+                if (note == null && !state.recording) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(liveTranscription, onClick = { liveTranscription = true }, enabled = enabled,
+                            label = { Text("녹음·실시간 받아쓰기") })
+                        FilterChip(!liveTranscription, onClick = { liveTranscription = false }, enabled = enabled,
+                            label = { Text("녹음만") })
+                    }
+                }
+                VoiceNoteLanguagePicker("말하는 언어", source, enabled,
+                    Build.VERSION.SDK_INT >= 34 && (note != null || !liveTranscription)) { source = it }
                 VoiceNoteLanguagePicker("괄호 안에 표시할 번역 언어", target, enabled, false) { target = requireNotNull(it) }
-                Text("자동 전환은 Android 14 이상과 기기의 오프라인 언어팩 지원이 필요합니다. 한 문장 안의 혼합 언어는 정확히 구분되지 않을 수 있습니다.", style = MaterialTheme.typography.bodySmall)
+                Text(if (note == null && liveTranscription) "말하는 언어를 선택하세요. 시작을 누르면 저장된 인식 모델을 확인하고 녹음과 받아쓰기를 함께 시작합니다. 최초 준비에는 인터넷이 필요할 수 있습니다."
+                    else "녹음 후 자동 언어 감지는 Android 14 이상과 기기의 오프라인 언어팩 지원이 필요합니다.", style = MaterialTheme.typography.bodySmall)
+                if (note == null && liveTranscription && source == null) Text("실시간 받아쓰기는 말하는 언어를 직접 선택해 주세요.", color = MaterialTheme.colorScheme.error)
             }
             item {
                 when {
@@ -154,18 +172,33 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
                         Text("● 녹음 중 ${voiceNoteTime(state.elapsedMs)}", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.titleLarge)
                         Text("남은 녹음 시간 ${voiceNoteTime((3_600_000 - state.elapsedMs).coerceAtLeast(0))} · 60분이 되면 자동 저장합니다.")
                         Button(onClick = model::stopRecording, modifier = Modifier.fillMaxWidth()) { Text("녹음 종료·저장") }
+                        state.recognitionMessage?.let { Text(it, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
+                        if (liveTranscription) {
+                            Text("실시간 문장 · ${state.liveLines.size}개 저장", style = MaterialTheme.typography.titleMedium)
+                            state.liveLines.takeLast(8).forEach { line ->
+                                SelectionContainer { Text(line.original, style = MaterialTheme.typography.bodyLarge) }
+                            }
+                            if (state.partialTranscript.isNotBlank()) {
+                                Text("인식 중", style = MaterialTheme.typography.labelSmall)
+                                Text(state.partialTranscript, style = MaterialTheme.typography.bodyLarge,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            } else if (state.liveLines.isEmpty()) Text("말하면 문장이 여기에 나타납니다.")
+                        }
                     }
                     state.busy -> {
                         LinearProgressIndicator(Modifier.fillMaxWidth())
                         OutlinedButton(onClick = model::cancel) { Text("작업 중지") }
                     }
-                    note == null -> Button(onClick = { request(false) }, enabled = enabled, modifier = Modifier.fillMaxWidth()) { Text("새 녹음 시작") }
+                    note == null -> Button(onClick = { request(false) }, enabled = enabled && (!liveTranscription || source != null), modifier = Modifier.fillMaxWidth()) {
+                        Text(if (liveTranscription) "녹음·받아쓰기 시작" else "녹음만 시작")
+                    }
                     note.interrupted -> Button(onClick = model::recover, enabled = enabled) { Text("중단된 녹음 복구") }
                     else -> {
                         Button(onClick = { if (note.lines.isNotEmpty()) replaceDialog = true else request(true) },
-                            enabled = enabled && Build.VERSION.SDK_INT >= 33 && note.durationMs > 0, modifier = Modifier.fillMaxWidth()) {
+                            enabled = enabled && transcriptionUnavailable == null && note.durationMs > 0, modifier = Modifier.fillMaxWidth()) {
                             Text(if (note.lines.isEmpty()) "받아쓰기·번역 시작" else "선택한 언어로 다시 받아쓰기")
                         }
+                        transcriptionUnavailable?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                         if (note.lines.isNotEmpty()) {
                             val missing = note.lines.count { it.translation.isBlank() }
                             OutlinedButton(onClick = {
@@ -185,9 +218,15 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
                         }
                     }
                 }
-                Text("녹음 후 받아씁니다. 화면을 벗어나거나 잠그면 녹음은 종료·저장되고 변환 작업은 중지됩니다. 최대 60분.", style = MaterialTheme.typography.bodySmall)
-                if (Build.VERSION.SDK_INT < 33) Text("이 기기는 녹음·재생·WAV 저장을 지원합니다. 받아쓰기는 Android 13 이상이 필요합니다.", style = MaterialTheme.typography.bodySmall)
-                Text("음성과 문장은 기기 안에서 처리합니다. 번역 모델의 최초 준비에는 인터넷이 필요할 수 있습니다.", style = MaterialTheme.typography.bodySmall)
+                if (!state.recording) {
+                    Text(when {
+                        note != null -> "저장한 원음을 재생하고, 받아쓰기·번역하거나 문장을 수정할 수 있습니다. 화면을 벗어나거나 잠그면 재생과 진행 중인 노트 작업을 중지합니다."
+                        liveTranscription -> "녹음 중 확정 문장은 자동 저장됩니다. 화면을 벗어나거나 잠그면 녹음과 마지막 문장을 저장하고 중지합니다. 최대 60분."
+                        else -> "원음만 녹음하며 실시간 문장을 만들지 않습니다. 화면을 벗어나거나 잠그면 녹음을 저장하고 중지합니다. 최대 60분. 저장 후 받아쓰기·번역을 실행할 수 있습니다."
+                    }, style = MaterialTheme.typography.bodySmall)
+                    if (Build.VERSION.SDK_INT < 33) Text("기기가 지원하는 원문 언어를 직접 선택하면 앱 모델로 녹음과 파일을 받아씁니다. 자동 언어 감지는 Android 14 이상과 기기 음성 인식 지원이 필요합니다.", style = MaterialTheme.typography.bodySmall)
+                    Text("음성과 문장은 기기 안에서 처리합니다. 번역 모델의 최초 준비에는 인터넷이 필요할 수 있습니다.", style = MaterialTheme.typography.bodySmall)
+                }
             }
             state.message?.let { message -> item { Text(message, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) } }
             state.playback.error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error) } }

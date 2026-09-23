@@ -26,6 +26,9 @@ Third-Party Software and Model Attributions
 1. Moonshine AI (Speech-to-Text & Neural Audio Synthesis)
    Copyright Useful Sensors Inc.
    - SDK Runtime: MIT License
+   - Local ARM64 repair: 0.1.5-mcasttalk1; source patch, build inputs and hashes
+     are provided in third_party/moonshine/0.1.5-mcasttalk1. This is not an
+     official upstream release. Existing model and dependency terms remain.
    - Korean Legacy TINY Model: Moonshine AI Community License
    - Kokoro TTS / Kaldi-fbank: Apache License 2.0
    Notice: "Powered by Moonshine AI"

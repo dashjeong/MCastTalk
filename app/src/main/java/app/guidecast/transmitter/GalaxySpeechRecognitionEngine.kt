@@ -518,6 +518,7 @@ class GalaxySpeechRecognitionEngine(
         val endpointRestartRequests = Channel<Long>(capacity = Channel.CONFLATED)
         val recognitionStallRequests = Channel<Long>(capacity = Channel.CONFLATED)
         val progressWatchdog = RecognitionProgressWatchdog()
+        val inputCompletion = RecognitionInputCompletion()
 
         suspend fun emitSegmenterOutput(block: () -> List<RecognizedUtterance>) {
             segmenterMutex.withLock {
@@ -564,6 +565,7 @@ class GalaxySpeechRecognitionEngine(
                     }
                     pcm.send(frame)
                 }
+                segmenterMutex.withLock { inputCompletion.onNormalInputEof() }
             } finally {
                 pcm.close()
             }
@@ -572,10 +574,12 @@ class GalaxySpeechRecognitionEngine(
             while (currentCoroutineContext().isActive) {
                 delay(SEGMENTER_TICK_MILLIS)
                 val requestEndpoint = advanceSegmenter(SystemClock.elapsedRealtimeNanos())
-                progressWatchdog.stalledAttempt(SystemClock.elapsedRealtime())?.let {
-                    recognitionStallRequests.trySend(it)
+                if (inputCompletion.permitsAutomaticRestart()) {
+                    progressWatchdog.stalledAttempt(SystemClock.elapsedRealtime())?.let {
+                        recognitionStallRequests.trySend(it)
+                    }
                 }
-                if (requestEndpoint) {
+                if (requestEndpoint && inputCompletion.permitsAutomaticRestart()) {
                     val attemptId = activeRecognitionAttempt.get()
                     if (attemptId != NO_ACTIVE_RECOGNITION_ATTEMPT) {
                         endpointRestartRequests.trySend(attemptId)
@@ -604,6 +608,7 @@ class GalaxySpeechRecognitionEngine(
         }
         var consecutiveFailures = 0
         var androidCaptureConflict = false
+        var lastAttemptOutcome: RecognitionAttemptOutcome? = null
 
         operatorRestartSink.set(operatorRestarts)
         try {
@@ -618,6 +623,7 @@ class GalaxySpeechRecognitionEngine(
                 }
                 val providerSequenceMap = RecognitionSequenceMapper(nextSourceSequence)
                 val finalGate = ProviderFinalGate()
+                val attemptInput = inputCompletion.newAttempt()
                 val attemptId = nextRecognitionAttempt.getAndIncrement()
                 activeRecognitionAttempt.set(attemptId)
                 mutableStatus.value = GalaxySpeechLanguageStatus(
@@ -670,17 +676,18 @@ class GalaxySpeechRecognitionEngine(
                             progressWatchdog.beginAttempt(attemptId, SystemClock.elapsedRealtime())
                             RuntimeDiagnosticLog.record("recognition_attempt", "attempt=$attemptId backend=$attemptBackend")
                             var previousHypothesis: Triple<Long, String, Boolean>? = null
-                            engine.recognize(pcm.receiveAsFlow(), attemptConfig).collect { utterance ->
+                            engine.recognize(attemptInput.track(pcm.receiveAsFlow()), attemptConfig).collect { utterance ->
                                 val hypothesis = Triple(utterance.sequence, utterance.text, utterance.isFinal)
                                 if (hypothesis != previousHypothesis) {
                                     previousHypothesis = hypothesis
                                     progressWatchdog.onChangedTranscript(attemptId, SystemClock.elapsedRealtime())
                                 }
                                 segmenterMutex.withLock {
-                                    if (finalGate.shouldAccept(
-                                            utterance.sequence,
-                                            utterance.isFinal,
-                                        )) {
+                                    val accepted = finalGate.shouldAccept(utterance.sequence, utterance.isFinal)
+                                    currentCoroutineContext()[RecognitionInspectionContext]?.onProviderResult?.invoke(
+                                        attemptId, attemptBackend.name, utterance, accepted,
+                                    )
+                                    if (accepted) {
                                         val sequence = providerSequenceMap.map(utterance.sequence)
                                         interpretationSegmenter.accept(
                                             utterance.copy(sequence = sequence),
@@ -719,9 +726,9 @@ class GalaxySpeechRecognitionEngine(
                         }
                     } while (
                         (selected is RecognitionAttemptOutcome.EndpointRestart &&
-                            selected.attemptId != attemptId) ||
+                            (selected.attemptId != attemptId || !inputCompletion.permitsAutomaticRestart())) ||
                             (selected is RecognitionAttemptOutcome.Unresponsive &&
-                                selected.attemptId != attemptId)
+                                (selected.attemptId != attemptId || !inputCompletion.permitsAutomaticRestart()))
                     )
 
                     if (selected == RecognitionAttemptOutcome.OperatorRestart ||
@@ -739,6 +746,7 @@ class GalaxySpeechRecognitionEngine(
                 }
                 activeRecognitionAttempt.compareAndSet(attemptId, NO_ACTIVE_RECOGNITION_ATTEMPT)
                 progressWatchdog.endAttempt(attemptId)
+                lastAttemptOutcome = attemptOutcome
                 RuntimeDiagnosticLog.record("recognition_outcome", "attempt=$attemptId outcome=" +
                     when (attemptOutcome) {
                         RecognitionAttemptOutcome.Completed -> "completed"
@@ -749,11 +757,26 @@ class GalaxySpeechRecognitionEngine(
                         is RecognitionAttemptOutcome.Failed -> "provider_failure:${attemptOutcome.error.javaClass.simpleName}"
                     })
 
+                // The finite caller must receive EOF finalization failure, not a successful flush
+                // of an older partial. A restart selected just before EOF is equally incomplete.
+                inputCompletion.requireProviderCompletion(
+                    completedNormally = attemptOutcome == RecognitionAttemptOutcome.Completed,
+                    failure = (attemptOutcome as? RecognitionAttemptOutcome.Failed)?.error,
+                )
+                if (attemptOutcome == RecognitionAttemptOutcome.Completed) {
+                    inputCompletion.requireProgressAfterFiniteEndpoint(attemptInput)
+                }
+
                 // A provider session ending is not a semantic sentence boundary. Keep its immutable
                 // lines in the bounded assembler across normal completion, endpoint restart, errors
                 // and backend failover. Capacity failures and explicit operator reconnects instead
                 // preserve the usable tail once and reset the assembler before accepting new audio.
                 emitSegmenterOutput {
+                    // EOF publication uses this same mutex; close the race after the earlier check.
+                    inputCompletion.requireProviderCompletion(
+                        completedNormally = attemptOutcome == RecognitionAttemptOutcome.Completed,
+                        failure = (attemptOutcome as? RecognitionAttemptOutcome.Failed)?.error,
+                    )
                     if (attemptOutcome == RecognitionAttemptOutcome.OperatorRestart ||
                         (attemptOutcome is RecognitionAttemptOutcome.Failed &&
                             attemptOutcome.error is ProviderTranscriptAssemblyOverflowException)) {
@@ -780,7 +803,7 @@ class GalaxySpeechRecognitionEngine(
                     RecognitionAttemptOutcome.OperatorRestart,
                     is RecognitionAttemptOutcome.EndpointRestart,
                     -> {
-                        if (!feeder.isCompleted) delay(RESTART_DELAY_MILLIS)
+                        if (!inputCompletion.hasDrainedInput()) delay(RESTART_DELAY_MILLIS)
                     }
 
                     is RecognitionAttemptOutcome.Failed,
@@ -814,7 +837,10 @@ class GalaxySpeechRecognitionEngine(
                                     }
                                 }
                             }
-                            emitSegmenterOutput { interpretationSegmenter.finish(SystemClock.elapsedRealtimeNanos()) }
+                            emitSegmenterOutput {
+                                inputCompletion.requireProviderCompletion(false, error)
+                                interpretationSegmenter.finish(SystemClock.elapsedRealtimeNanos())
+                            }
                             consecutiveFailures = 0
                             continue@recognitionLoop
                         }
@@ -851,9 +877,13 @@ class GalaxySpeechRecognitionEngine(
                         delay(FAILURE_RETRY_DELAY_MILLIS)
                     }
                 }
-            } while (currentCoroutineContext().isActive && !feeder.isCompleted)
-            if (feeder.isCompleted) {
+            } while (currentCoroutineContext().isActive && !inputCompletion.hasDrainedInput())
+            if (inputCompletion.hasDrainedInput()) {
                 emitSegmenterOutput {
+                    inputCompletion.requireProviderCompletion(
+                        completedNormally = lastAttemptOutcome == RecognitionAttemptOutcome.Completed,
+                        failure = (lastAttemptOutcome as? RecognitionAttemptOutcome.Failed)?.error,
+                    )
                     interpretationSegmenter.finish(SystemClock.elapsedRealtimeNanos())
                 }
             }

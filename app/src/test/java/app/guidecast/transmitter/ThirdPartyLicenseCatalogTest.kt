@@ -20,7 +20,7 @@ class ThirdPartyLicenseCatalogTest {
 
     @Test
     fun catalogHasUniqueCompleteOfflineMetadata() {
-        assertEquals(47, GUIDECAST_LICENSE_CATALOG.size)
+        assertEquals(48, GUIDECAST_LICENSE_CATALOG.size)
         assertEquals(
             GUIDECAST_LICENSE_CATALOG.size,
             GUIDECAST_LICENSE_CATALOG.map { it.id }.distinct().size,
@@ -52,6 +52,10 @@ class ThirdPartyLicenseCatalogTest {
         assertEquals(
             listOf("moonshine-voice"),
             filteredLicenseCatalog("ai.moonshine:moonshine-voice", null).map { it.id },
+        )
+        assertEquals(
+            listOf("moonshine-voice", "moonshine-mcasttalk-patch"),
+            filteredLicenseCatalog("0.1.5-mcasttalk1", null).map { it.id },
         )
         assertEquals(listOf("zxing"), filteredLicenseCatalog("3.5.3", null).map { it.id })
         assertEquals(

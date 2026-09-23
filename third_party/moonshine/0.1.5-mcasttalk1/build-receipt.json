@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "status": "NATIVE_BUILD_COMPLETED_ANDROID_EXECUTION_PENDING",
+  "sourceCommit": "234f60faa0eb388b01cdf7e60aca232af37aefda",
+  "patchSha256": "b499277412c9e70039ff07f8888a85d3fdae742ba74150fb4073fe526ae46a47",
+  "cmakeVersion": "3.22.1-g37088a8",
+  "ndkVersion": "28.2.13676358",
+  "compiler": "Android Clang 19.0.1",
+  "abi": "arm64-v8a",
+  "apiLevel": 26,
+  "cxxStandard": 20,
+  "stl": "c++_static",
+  "buildType": "RelWithDebInfo",
+  "flexiblePageSizes": true,
+  "maxParallelJobs": 2,
+  "targets": [
+    "moonshine",
+    "moonshine-jni",
+    "voice-activity-detector-test"
+  ],
+  "artifacts": [
+    {
+      "path": "artifacts/arm64-v8a/libmoonshine-jni.so",
+      "bytes": 114376,
+      "sha256": "184671708a5f815930018818d5d87c413701e49853a4233cabc8a91ccb3a526b"
+    },
+    {
+      "path": "artifacts/arm64-v8a/libmoonshine.so",
+      "bytes": 11112904,
+      "sha256": "ef0fac9f27cd7382939b869afbe4222969c73bd8350c6611f41c847fa95e6309"
+    },
+    {
+      "path": "artifacts/arm64-v8a/libonnxruntime.so",
+      "bytes": 6291928,
+      "sha256": "86e85022fc539963177e478c8e9a8a8219bc3b0d7515bf5297a62986dbc45e7a"
+    },
+    {
+      "path": "artifacts/arm64-v8a/voice-activity-detector-test",
+      "bytes": 3121424,
+      "sha256": "e0554baea4fd3a37c8135c4124c076846127125ccc67588f0e47b31513067817"
+    }
+  ],
+  "apiSymbolSetsPreserved": true,
+  "allLoadSegments16KiBAligned": true,
+  "defaultVadThresholdChanged": false,
+  "productionRepositoryChanged": false,
+  "apkBuilt": false,
+  "adbUsed": false,
+  "nativeUnitTestsExecuted": false,
+  "semanticAccuracyProven": false,
+  "physicalDeviceOr8HourStabilityProven": false,
+  "jniExceptionOperations": [
+    "transcribeWithoutStreaming",
+    "transcribeStream",
+    "addAudioToStream",
+    "startStream",
+    "stopStream",
+    "transcriptToString"
+  ],
+  "nativeMissingStreamCleanupIsIdempotent": true,
+  "nativeStreamHandleChecksAdded": [
+    "start",
+    "stop",
+    "add",
+    "free"
+  ],
+  "vadRestartWindowsCleared": true,
+  "nativeUnitTestCases": [
+    "vad-duration-scale-decreases-without-discontinuity",
+    "vad-disabled-still-closes-bounded-segments",
+    "vad-restart-clears-prior-session-confidence-and-audio"
+  ],
+  "patchRoundTripFileHashesMatch": true,
+  "patchRoundTripFileCount": 7,
+  "strippedSharedObjectDebugSections": 0,
+  "buildWorkspacePathStrings": 0,
+  "jniFreeStreamThrowsOnError": false,
+  "receiptScope": "Native build provenance only; later device results are recorded separately. This receipt is not release approval."
+}

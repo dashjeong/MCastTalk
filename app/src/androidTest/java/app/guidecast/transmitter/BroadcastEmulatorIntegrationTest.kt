@@ -736,6 +736,63 @@ class BroadcastEmulatorIntegrationTest {
         }
     }
 
+    /** Real recorded speech → playback capture → STT → ML Kit → TTS → listener PCM.
+     * The microphone/HAL acoustics and human translation quality are separate physical gates.
+     */
+    @Test
+    fun recordedKoreanSpeechReachesEnglishListenerThroughRealPipeline(): Unit = runBlocking {
+        UiDevice.getInstance(instrumentation).openServiceWorkspace(MCastService.MULTILINGUAL)
+        val viewModel = requireUserViewModel()
+        instrumentation.runOnMainSync {
+            viewModel.selectSourceLanguage("ko-KR")
+            viewModel.setUseGemma(false)
+            viewModel.setTranslationBroadcastEnabled(true)
+        }
+        assertCapturedKoreanSpeechProducesTranslatedWebAudioChannels(
+            useGemma = false, languages = listOf("en"), speechFixture = recordedKoreanFixture(), operatorControls = true,
+        )
+    }
+
+    /** Starts/stops the real operator test button, never a mock recognizer/translator/synthesizer. */
+    @Test
+    fun operatorTestButtonCompletesRecordedSpeechAndCanRunAgain() = runBlocking {
+        val device = UiDevice.getInstance(instrumentation)
+        device.openServiceWorkspace(MCastService.MULTILINGUAL)
+        val viewModel = requireUserViewModel()
+        instrumentation.runOnMainSync {
+            viewModel.selectSourceLanguage("ko-KR")
+            viewModel.setUseGemma(false)
+        }
+        prepareSelectedModelsThroughUserControl(viewModel, setOf("en"))
+        activateDevicePlaybackInput()
+        device.clickTextControl("시험")
+        val label = viewModel.translationModelState.value.options.first { it.languageTag == "en" }.label
+        repeat(2) {
+            device.clickTextControl("$label 시험 시작")
+            val ready = withTimeout(90_000) {
+                app.broadcastRuntime.state.first { state ->
+                    state.translationTestActive && state.translationTestMessage.orEmpty().startsWith("준비됐습니다")
+                }
+            }
+            assertTrue(ready.translationTestActive)
+            playCapturedKoreanSpeech(recordedKoreanFixture())
+            val completed = withTimeout(180_000) {
+                app.broadcastRuntime.state.first { state ->
+                    !state.translationTestActive || state.translationTestPassed && state.transcripts.any { line ->
+                        line.isFinal && line.sourceText.isNotBlank() && !line.translations["en"].isNullOrBlank()
+                    }
+                }
+            }
+            assertTrue(completed.translationTestMessage, completed.translationTestActive && completed.translationTestPassed)
+            assertTrue("Actual captured speech must be non-silent", completed.inputAudibleFrameCount > 0)
+            instrumentation.runOnMainSync { PlaybackPcmActivity.finishActivePlayback() }
+            device.waitForIdle()
+            device.clickTextControl("통번역 시험 중지")
+            withTimeout(10_000) { app.broadcastRuntime.state.first { state -> !state.translationTestActive } }
+            assertEquals("Stopping a test must preserve independent input", InputPhase.ACTIVE, app.broadcastRuntime.state.value.inputPhase)
+        }
+    }
+
     @Test
     fun capturedKoreanSpeechProducesFourMixedProviderWebAudioChannelsWithoutProcessExit() {
         runBlocking {
@@ -930,8 +987,10 @@ class BroadcastEmulatorIntegrationTest {
         requireGemmaPriority: Boolean = false,
         health: ProcessHealthProbe? = null,
         languages: List<String> = listOf("en", "ja", "zh", "nl"),
+        speechFixture: CapturedTestSpeech? = null,
+        operatorControls: Boolean = false,
     ) = coroutineScope {
-        val sourceSpeech = createCapturedKoreanSpeech()
+        val sourceSpeech = speechFixture ?: createCapturedKoreanSpeech()
         if (languages.size > 1 || !useGemma) {
             // This journey needs the non-priority languages' installed ML Kit models too.
             // Opening a server is intentionally allowed before preparation and is not readiness.
@@ -964,7 +1023,11 @@ class BroadcastEmulatorIntegrationTest {
             }
             assertEquals(activeInput.inputErrorMessage, InputPhase.ACTIVE, activeInput.inputPhase)
 
-            BroadcastService.start(
+            if (operatorControls) {
+                device.selectBroadcastRadioOption("다른 기기에 방송")
+                device.selectBroadcastRadioOption("공개")
+                device.clickTextControl("방송 시작")
+            } else BroadcastService.start(
                 targetContext,
                 OperatorAccessMode.OPEN,
                 translationLanguages = languages.toTypedArray(),
@@ -1146,6 +1209,12 @@ class BroadcastEmulatorIntegrationTest {
             )
             assertEquals("통역 방송 도중 서비스가 종료됐습니다.", BroadcastPhase.LIVE, app.broadcastRuntime.state.value.phase)
             health?.assertHealthy("${languages.size}개 언어 혼합 공급자 웹 방송")
+            if (operatorControls) {
+                instrumentation.runOnMainSync { PlaybackPcmActivity.finishActivePlayback() }
+                device.clickTextControl("방송 중지")
+                withTimeout(10_000) { app.broadcastRuntime.state.first { it.phase == BroadcastPhase.IDLE } }
+                assertEquals("Broadcast stop must preserve independent input", InputPhase.ACTIVE, app.broadcastRuntime.state.value.inputPhase)
+            }
         } finally {
             connections.forEach(WebSocketConnection::close)
             device.pressBack()
@@ -1184,6 +1253,21 @@ class BroadcastEmulatorIntegrationTest {
         )
         instrumentation.runOnMainSync { viewModel.setUseGemma(true) }
         assertTrue("사용자 Gemma 선택이 UI 상태에 반영되지 않았습니다.", viewModel.gemmaState.first { it.useForTranslation }.useForTranslation)
+    }
+
+    /** Compose intentionally removes click actions from already-selected radio options. */
+    private fun UiDevice.selectBroadcastRadioOption(label: String) {
+        fun selected(): Boolean {
+            var node = findObject(By.text(label))
+            while (node != null && !node.isCheckable) node = node.parent
+            val option = requireNotNull(node) { "Broadcast option is not a radio control: $label" }
+            check(option.isEnabled) { "Broadcast option is disabled: $label" }
+            return option.isChecked
+        }
+        requireNotNull(findTextByVerticalScroll(label)) { "Broadcast option is unreachable: $label" }
+        if (selected()) return
+        clickTextControl(label)
+        assertTrue("Broadcast option was not selected by its actual UI control: $label", selected())
     }
 
     private suspend fun prepareSelectedModelsThroughUserControl(
@@ -1294,6 +1378,15 @@ class BroadcastEmulatorIntegrationTest {
         }.array()
         check(paddedPcm.size < 800_000) { "시험 음성이 Binder 제한에 비해 너무 큽니다: ${paddedPcm.size}" }
         return CapturedTestSpeech(paddedPcm, sourceSpeech.sampleRateHz)
+    }
+
+    private fun recordedKoreanFixture(): CapturedTestSpeech {
+        val pcm = instrumentation.context.assets.open("fixtures/fleurs-ko-1959.pcm").use { it.readBytes() }
+        assertEquals(224_640, pcm.size)
+        assertEquals("b35aa5acf7ff72a4ec1b68415957ac9e7fe89268312cc8f5e5325a88acea841f",
+            java.security.MessageDigest.getInstance("SHA-256").digest(pcm).joinToString("") { "%02x".format(it) })
+        // 1s lead-in and 4s trailing silence allow native endpointing on real captured audio.
+        return CapturedTestSpeech(ByteArray(32_000) + pcm + ByteArray(128_000), 16_000)
     }
 
     private fun playCapturedKoreanSpeech(speech: CapturedTestSpeech) {

@@ -10,7 +10,7 @@ ktor = "3.5.2"
 zxing = "3.5.3"
 mlkit-translate = "17.0.3"
 litertlm = "0.16.1"
-moonshine-voice = "0.1.5"
+moonshine-voice = "0.1.5-mcasttalk1"
 junit = "4.13.2"
 androidx-test-runner = "1.6.2"
 androidx-test-junit = "1.2.1"
@@ -42,7 +42,7 @@ ktor-client-websockets = { module = "io.ktor:ktor-client-websockets", version.re
 zxing-core = { module = "com.google.zxing:core", version.ref = "zxing" }
 mlkit-translate = { module = "com.google.mlkit:translate", version.ref = "mlkit-translate" }
 litertlm-android = { module = "com.google.ai.edge.litertlm:litertlm-android", version.ref = "litertlm" }
-moonshine-voice = { module = "ai.moonshine:moonshine-voice", version.ref = "moonshine-voice" }
+moonshine-voice = { module = "app.guidecast.thirdparty:moonshine-voice", version.ref = "moonshine-voice" }
 junit = { module = "junit:junit", version.ref = "junit" }
 androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidx-test-runner" }
 androidx-test-junit = { module = "androidx.test.ext:junit", version.ref = "androidx-test-junit" }

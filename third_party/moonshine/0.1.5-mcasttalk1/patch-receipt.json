@@ -1,0 +1,41 @@
+{
+  "sourceCommit": "234f60faa0eb388b01cdf7e60aca232af37aefda",
+  "patchSha256": "b499277412c9e70039ff07f8888a85d3fdae742ba74150fb4073fe526ae46a47",
+  "files": [
+    {
+      "path": "core/silero-vad.cpp",
+      "originalSha256": "1fdf4f636a529a9a21f16a4124ce11a62f007bfddbfa4783a95089c13da1747e",
+      "patchedSha256": "c125bdddd35ba545cfb44495a1fb317492b78a3f948e7d231b64c8fb4f1cd0a9"
+    },
+    {
+      "path": "core/transcriber.cpp",
+      "originalSha256": "b054d3aaaaf86dcc77304d9ad07ea6ea3c43c7e1402d169bc9165195fd275a95",
+      "patchedSha256": "c20d9ce3dea3d8ef3f4bde9e2d2344725e64d107f51d9087a98ef7a0841cdd89"
+    },
+    {
+      "path": "core/vad-duration-scale.h",
+      "originalSha256": null,
+      "patchedSha256": "8ae1206e757652468b272ca16fedddc578045ca972fee248cc177758f7988e6c"
+    },
+    {
+      "path": "core/voice-activity-detector-test.cpp",
+      "originalSha256": "8b9a69bdef149dde49aa16f54839848807093455c69ed1faf2f155385b8dc3bc",
+      "patchedSha256": "2806ac1ad86855e686329b743acddb8e3a3421571503728d536d97cd8271cf75"
+    },
+    {
+      "path": "core/voice-activity-detector.cpp",
+      "originalSha256": "8fab332566ed5b69e279dd0d6ab82921d5024070a7bb9730e1d4a4b4e023118d",
+      "patchedSha256": "8f905bc4d661fe310f0634cbbe6f0519ca1a5f267667cac246f5ba59eaa2aaa3"
+    },
+    {
+      "path": "core/voice-activity-detector.h",
+      "originalSha256": "29c313f9a6592ae1c291953ffac9058294a809792d9d33d11469e83a6062f0ba",
+      "patchedSha256": "d6a2c153015ba03d5bc090d361f849f91cd6b15a4b77320309e879a37ff994b1"
+    },
+    {
+      "path": "language-bindings/android/moonshine-jni/moonshine-jni.cpp",
+      "originalSha256": "5d21e752ecb54af057a1837a7180fe440ac7fbc0a9e59373021f42b8dc84ee8f",
+      "patchedSha256": "9c3ca5528d355e4bce1f6e966f088319f9099b71b548b66ab2537665524aa8b3"
+    }
+  ]
+}

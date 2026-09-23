@@ -9,6 +9,16 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
+        // Reviewed local native repairs must never resolve to an unrelated remote package.
+        exclusiveContent {
+            forRepository {
+                maven {
+                    name = "reviewedMoonshinePatch"
+                    url = uri("third_party/maven")
+                }
+            }
+            filter { includeGroup("app.guidecast.thirdparty") }
+        }
         google()
         mavenCentral()
     }

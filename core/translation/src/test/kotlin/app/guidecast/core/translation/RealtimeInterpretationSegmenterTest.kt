@@ -233,7 +233,9 @@ class RealtimeInterpretationSegmenterTest {
 
     @Test
     fun `natural acoustic pause commits a stable short phrase`() {
-        val segmenter = RealtimeInterpretationSegmenter()
+        val segmenter = RealtimeInterpretationSegmenter(
+            RealtimeInterpretationPolicy(requireAcousticPauseForBoundary = true),
+        )
         segmenter.observeSpeechActivity(isSpeech = true, capturedAtNanos = 0)
         segmenter.accept(partial(2, "왼쪽을 보세요", 100))
         segmenter.accept(partial(2, "왼쪽을 보세요", 200))
@@ -641,7 +643,7 @@ class RealtimeInterpretationSegmenterTest {
     }
 
     @Test
-    fun `two second hesitation retains known incomplete tail until three seconds`() {
+    fun `verified long hesitation never converts an unfinished subject into a sentence`() {
         val segmenter = RealtimeInterpretationSegmenter(sentenceCompletionInterpretationPolicy())
         segmenter.observeSpeechActivity(true, 0)
         segmenter.accept(partial(92, "다음 장소에서는 우리가", 100))
@@ -649,8 +651,10 @@ class RealtimeInterpretationSegmenterTest {
         assertFalse(segmenter.tick(2_200.ms).any { it.isFinal })
         segmenter.observeContinuousQuiet(fromMillis = 2_450, throughMillis = 3_199)
         assertFalse(segmenter.tick(3_199.ms).any { it.isFinal })
-        segmenter.observeSpeechActivity(false, 3_200.ms)
-        assertEquals("다음 장소에서는 우리가", segmenter.tick(3_200.ms).single { it.isFinal }.text)
+        segmenter.observeContinuousQuiet(fromMillis = 3_200, throughMillis = 12_000)
+        assertFalse(segmenter.tick(12_000.ms).any { it.isFinal })
+        assertEquals("다음 장소에서는 우리가", segmenter.finish(12_100.ms).single { it.isFinal }.text)
+        assertTrue(segmenter.finish(12_200.ms).isEmpty())
     }
 
     @Test

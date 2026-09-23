@@ -21,5 +21,8 @@ internal fun inspectFileTranscript(segments: List<FileSpeechSegment>, durationMs
 
 internal fun translationNumbersNeedReview(source: String, translated: String): Boolean {
     val number = Regex("[0-9]+(?:[.,][0-9]+)*")
-    return number.findAll(source).map { it.value }.toList() != number.findAll(translated).map { it.value }.toList()
+    fun tokens(text: String) = number.findAll(
+        app.guidecast.core.translation.KoreanNumericQuantities.normalizeForTranslation(text, "ko"),
+    ).map { it.value }.toList()
+    return tokens(source) != tokens(translated)
 }

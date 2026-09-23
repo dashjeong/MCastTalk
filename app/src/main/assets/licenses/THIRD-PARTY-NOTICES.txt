@@ -22,6 +22,7 @@ License families packaged for offline review
 - ONNX Runtime 1.23.2 third-party notices:
   ONNXRUNTIME-1.23.2-THIRD-PARTY-NOTICES.txt
 - Moonshine Voice 0.1.5 and model terms: MOONSHINE-0.1.5-LICENSE.txt
+- MCastTalk local ARM64 repair 0.1.5-mcasttalk1: MOONSHINE-MCASTTALK-PATCH.txt
 - Model and voice component notices: MODEL-AND-VOICE-NOTICES.txt
 - Moonshine native runtime texts: MOONSHINE-EIGEN-MPL-2.0.txt,
   MOONSHINE-KALDI-NATIVE-FBANK-APACHE-2.0.txt,

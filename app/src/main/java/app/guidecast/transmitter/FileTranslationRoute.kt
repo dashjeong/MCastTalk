@@ -76,7 +76,13 @@ internal fun FileTaskLifecycle(model: FileTranslationViewModel) {
         onDispose { view.keepScreenOn = previous }
     }
     DisposableEffect(owner, model) {
-        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_STOP) model.pauseForBackground() }
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> model.refreshRecognitionSupport()
+                Lifecycle.Event.ON_STOP -> model.pauseForBackground()
+                else -> Unit
+            }
+        }
         owner.lifecycle.addObserver(observer)
         onDispose { owner.lifecycle.removeObserver(observer) }
     }

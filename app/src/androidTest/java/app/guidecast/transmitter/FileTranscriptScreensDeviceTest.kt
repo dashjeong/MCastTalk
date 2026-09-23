@@ -38,6 +38,33 @@ class FileTranscriptScreensDeviceTest {
     @After fun finish() { instrumentation.runOnMainSync { activity?.finish() } }
 
     @Test
+    fun missingPlatformAutoRecognitionOffersManualAppPathAndAllowsConversion() {
+        var state by mutableStateOf(FileTranslationUiState(selectedFileName = "synthetic.wav",
+            automaticLanguageSupported = false, fileTranscriptionSupported = true,
+            automaticLanguageUnavailableReason = "기기의 자동 파일 음성 인식을 사용할 수 없습니다. 원문 언어를 직접 선택하면 지원되는 앱 모델로 변환합니다."))
+        var requested = false
+        openActivity()
+        instrumentation.runOnMainSync {
+            requireNotNull(activity).setContent { GuideCastTheme {
+                FileTranslationScreen(state, onChooseFile = {},
+                    onSourceLanguageChange = { state = state.copy(sourceLanguageTag = it,
+                        recognitionSupportNotice = "한국어 · 앱의 음성 인식 모델로 변환합니다. 저장된 모델을 재사용합니다.") },
+                    onTargetLanguageToggle = {}, onTranslationEngineChange = {}, onConvert = { requested = true }, onCancel = {},
+                    onOpenEntry = {}, onDeleteEntry = {}, onBack = {})
+            } }
+        }
+        assertTrue(device.wait(Until.hasObject(By.text("원문 언어를 선택하세요")), 5_000L))
+        device.clickTextControl("원문 언어를 선택하세요")
+        assertTrue(device.wait(Until.hasObject(By.text("자동 감지 · 현재 기기에서 사용 불가")), 5_000L))
+        device.findObjects(By.text("한국어")).first().click()
+        instrumentation.waitForIdleSync()
+        assertEquals("ko-KR", state.sourceLanguageTag)
+        assertTrue(device.wait(Until.hasObject(By.text("한국어 · 앱의 음성 인식 모델로 변환합니다. 저장된 모델을 재사용합니다.")), 5_000L))
+        device.clickTextControl("변환하고 보관함에 저장")
+        instrumentation.runOnMainSync { assertTrue("Manual source selection must enable the real convert callback", requested) }
+    }
+
+    @Test
     fun automaticLanguageIsDefaultAndManualFallbackIsSelectable() {
         var state by mutableStateOf(FileTranslationUiState(selectedFileName = "synthetic.wav"))
         openActivity()

@@ -1,6 +1,6 @@
 # 제3자 소프트웨어·모델 라이선스
 
-이 문서는 MCastTalk `0.2.42-alpha` (`versionCode 48`)에 포함되거나 앱에서 별도로
+이 문서는 MCastTalk `0.2.43-alpha` 보수 작업본 (`versionCode 49`)에 포함되거나 앱에서 별도로
 다운로드하는 제3자 구성요소의 라이선스와 고지 위치를 안내합니다. MCastTalk가 작성한
 자체 코드는 저장소 루트의 Apache License 2.0에 따라 상업적 이용을 포함한
 사용·수정·재배포가 허용됩니다. 저작권·라이선스·필요한 고지 및 변경 표시 의무를 준수하세요.
@@ -8,8 +8,9 @@
 제3자 소프트웨어·모델·음성·데이터에는 아래의 별도 조건이 적용되며, 자체 코드
 라이선스로 다시 허가되지 않습니다.
 
-현재 앱의 라이선스 화면에는 47개 항목이 등록되어 있습니다. APK에는 정적 고지 36개와
-LiteRT-LM·ML Kit AAR에서 추출한 고지 4개, 총 40개 원문·고지 파일이 들어 있습니다.
+공개 유지 버전은 `0.2.42`이며, 이 보수 작업본의 의존성 고지는 재배포 승인을 의미하지 않습니다.
+현재 앱의 라이선스 화면에는 48개 항목이 등록되어 있습니다. APK에는 정적 고지 37개와
+LiteRT-LM·ML Kit AAR에서 추출한 고지 4개, 총 41개 원문·고지 파일이 들어 있습니다.
 앱의 `라이선스` 화면 또는 APK의 `assets/licenses/`에서 해당 문서를 오프라인으로 볼 수
 있습니다. 공식 약관처럼 변경될 수 있는 문서는 복제본 대신 아래 공식 링크를 기준으로 합니다.
 각 원문에 포함된 저작권자명·저작권문·필수 연락처는 요약 과정에서 삭제하거나 바꾸지 않습니다.
@@ -29,7 +30,7 @@ LiteRT-LM·ML Kit AAR에서 추출한 고지 4개, 총 40개 원문·고지 파�
 | ZXing 저작권자 | `com.google.zxing:core:3.5.3` | Apache-2.0 | `assets/licenses/APACHE-2.0.txt` |
 | Google | LiteRT-LM Android `0.16.1` | Apache-2.0 및 포함 제3자 조건 | `assets/licenses/upstream/LICENSE`, `upstream/THIRD_PARTY_NOTICE.txt` |
 | Google | ML Kit Translate `17.0.3`, ML Kit Common `18.11.0`, Play services Base `18.5.0`, Basement `18.4.0`, Tasks `18.2.0` | [ML Kit Terms](https://developers.google.com/ml-kit/terms), [Google APIs Terms](https://developers.google.com/terms), [Android SDK License Agreement](https://developer.android.com/studio/terms.html) 및 AAR 제3자 조건 | `assets/licenses/upstream/third_party_licenses.txt`, `third_party_licenses.json` |
-| Useful Sensors, Inc. (Moonshine AI) | `ai.moonshine:moonshine-voice:0.1.5` | SDK 코드는 기본적으로 MIT. 모델·TTS·G2P 데이터 조건은 아래에서 별도 구분 | `assets/licenses/MOONSHINE-0.1.5-LICENSE.txt`, `MOONSHINE-NOTICE.txt`, `MODEL-AND-VOICE-NOTICES.txt` |
+| Useful Sensors, Inc. (Moonshine AI) | `app.guidecast.thirdparty:moonshine-voice:0.1.5-mcasttalk1` (upstream `ai.moonshine:moonshine-voice:0.1.5`) | SDK 코드는 기본적으로 MIT. 앱 전용 ARM64 수정이며 공식 upstream 배포본과 구분. 모델·TTS·G2P 데이터 조건은 아래에서 별도 구분 | `assets/licenses/MOONSHINE-0.1.5-LICENSE.txt`, `MOONSHINE-MCASTTALK-PATCH.txt`, `MOONSHINE-NOTICE.txt`, `MODEL-AND-VOICE-NOTICES.txt` |
 | Microsoft 및 ONNX Runtime 제3자 저작권자 | ONNX Runtime Android `1.23.2` ARM64 | MIT 및 포함 제3자 조건 | `assets/licenses/MOONSHINE-ONNXRUNTIME-MIT.txt`, `ONNXRUNTIME-1.23.2-THIRD-PARTY-NOTICES.txt` |
 | Xiph.Org Foundation·Jean-Marc Valin | RNNoise `0.2`, model `0b50c45` | BSD-3-Clause | `assets/licenses/RNNOISE-BSD-3-CLAUSE.txt` |
 | OpenCC 저작권자 | OpenCC 사전 데이터, revision `26753884f1984add422f3b0249ccee8613deaff6` | Apache-2.0 | `assets/licenses/OPENCC-APACHE-2.0.txt`, `OPENCC-README.txt` |
@@ -38,6 +39,12 @@ ML Kit AAR 고지에는 OkHttp `4.12.0`, Okio `3.6.0`, Gson `2.13.2`, Google Dat
 Transport, Firebase Components/Encoders 및 지원 annotation 라이브러리의 조건도 포함됩니다.
 
 ## Moonshine 0.1.5 네이티브 포함물
+
+앱 전용 수정의 [소스 패치·재빌드 방법·해시](../third_party/moonshine/0.1.5-mcasttalk1/README.md)는
+저장소에 포함됩니다. JNI 자원 해제, VAD 구간 계산·재시작과 오류 전달을 수정하며
+기존 Java 코드·리소스와 TTS의 full ONNX Runtime `1.23.2`는 유지합니다.
+수정되지 않은 다른 ABI는 로컬 AAR에서 제거했습니다. 원본 모델·데이터 조건과
+아래 네이티브 구성요소의 라이선스는 변경하지 않습니다.
 
 | 구성·원저작권자 | 고정 버전 | 라이선스 | 오프라인 고지 |
 |---|---|---|---|

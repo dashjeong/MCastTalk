@@ -122,9 +122,7 @@ class ConcurrentRealtimeInterpretationSegmenter(
         val outputSequence = state.outputSequences.getOrPut(event.sequence) {
             nextOutputSequence++
         }
-        val context = committedContext.joinToString(" ")
-            .takeLast(MAX_CONTEXT_CHARACTERS)
-            .ifBlank { null }
+        val context = wholeMeaningContext(committedContext)
         event.copy(
             sequence = outputSequence,
             contextBefore = context,
@@ -144,7 +142,6 @@ class ConcurrentRealtimeInterpretationSegmenter(
     private companion object {
         const val MAX_ACTIVE_SOURCES = 8
         const val MAX_COMPLETED_SOURCES = 256
-        const val MAX_CONTEXT_CHARACTERS = 300
         const val MAX_CONTEXT_SEGMENTS = 2
     }
 }

@@ -16,6 +16,20 @@ import org.junit.Test
 
 class SelectiveRefinementTranslationEngineProviderTest {
     @Test
+    fun spokenIntegerQuantityTriggersReviewAndCanRepairWrongDraftNumber() = runBlocking {
+        val diagnostics = mutableListOf<SelectiveRefinementDiagnostic>()
+        val repaired = provider(draft = { "The contract lasts 8 months." },
+            reviewer = { "The contract lasts 18 months." }, onDiagnostic = diagnostics::add)
+        assertEquals("The contract lasts 18 months.",
+            repaired.engineFor("en").translate("계약은 십팔 개월입니다.", "ko", "en"))
+        assertEquals(setOf(SelectiveRefinementReason.NUMERIC_CONTENT), diagnostics.single().reasons)
+        assertEquals(SelectiveRefinementOutcome.REVIEW_ACCEPTED, diagnostics.single().outcome)
+        assertFalse(reviewResultIsConservative("계약은 십팔 개월입니다.", "The contract lasts 8 months.",
+            "The contract lasts 80 months."))
+        assertFalse(DefaultSelectiveRefinementPolicy().decide("이 분은 천명을 따릅니다.", "").reviewRequested)
+    }
+
+    @Test
     fun ordinarySentenceUsesOneDraftAndDoesNotCreateReviewer() = runBlocking {
         var draftCalls = 0
         var reviewerCreations = 0

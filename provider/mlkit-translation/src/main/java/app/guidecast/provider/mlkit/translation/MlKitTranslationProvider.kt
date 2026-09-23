@@ -117,7 +117,11 @@ class MlKitTranslationProvider(
             val lease = slots.awaitLeaseFor(targetLanguageTag, sessionGeneration)
             translateWithWorker(
                 lease = lease,
-                text = text,
+                // Preserve the caller's recognized text; normalize only unambiguous quantities
+                // supplied to this context-free translation model.
+                text = app.guidecast.core.translation.KoreanNumericQuantities.normalizeForTranslation(
+                    text, sourceTag, maximumOutputLength = MAX_SOURCE_CHARACTERS,
+                ),
                 sourceSession = sourceSession,
                 targetLanguage = normalizedTarget,
                 logicalTargetLanguage = targetLanguageTag,

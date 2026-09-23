@@ -37,7 +37,9 @@ class DefaultSelectiveRefinementPolicy(
         glossaryHints: String,
     ): SelectiveRefinementDecision = SelectiveRefinementDecision(buildSet {
         if (glossaryHints.isNotBlank()) add(SelectiveRefinementReason.GLOSSARY_MATCH)
-        if (originalText.any(Char::isDigit)) add(SelectiveRefinementReason.NUMERIC_CONTENT)
+        if (KoreanNumericQuantities.normalizeForTranslation(originalText, "ko").any(Char::isDigit)) {
+            add(SelectiveRefinementReason.NUMERIC_CONTENT)
+        }
         val finalCharacter = originalText.trimEnd().lastOrNull()
         if (originalText.codePointCount() >= longSentenceCodePoints &&
             finalCharacter != null && finalCharacter in SENTENCE_TERMINATORS) {
@@ -218,10 +220,15 @@ internal fun reviewResultIsConservative(
     val originalNumbers = normalizedNumbers(originalText)
     val draftNumbers = normalizedNumbers(draftTranslation)
     val reviewedNumbers = normalizedNumbers(reviewedTranslation)
-    return reviewedNumbers == originalNumbers && reviewedNumbers == draftNumbers
+    // A draft can contain the numeric mistake being repaired. Explicit source quantities are
+    // authoritative; when none can be parsed, retain the earlier conservative draft guard.
+    return reviewedNumbers == originalNumbers &&
+        (originalNumbers.isNotEmpty() || reviewedNumbers == draftNumbers)
 }
 
-private fun normalizedNumbers(text: String): List<String> = NUMERIC_TOKEN.findAll(text)
+private fun normalizedNumbers(text: String): List<String> = NUMERIC_TOKEN.findAll(
+    KoreanNumericQuantities.normalizeForTranslation(text, "ko"),
+)
     .map { match ->
         buildString {
             match.value.codePoints().forEach { codePoint ->

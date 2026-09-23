@@ -41,7 +41,10 @@ def check_path(name):
         raise ValueError('environment file')
 
 def inspect(name, data, depth=0):
-    check_path(name)
+    # Standard AGP metadata in the pinned AAR uses a Java package containing "build".
+    # Keep scanning its contents; this exact nested archive entry is not a build output tree.
+    if not (depth > 0 and name == 'META-INF/com/android/build/gradle/aar-metadata.properties'):
+        check_path(name)
     if any(p.search(data) for p in PATTERNS):
         raise ValueError('credential pattern')
     if depth > 5 or len(data) > MAX_MEMBER:

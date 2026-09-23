@@ -175,30 +175,35 @@ class RealtimeInterpretationSegmenter(
         nowNanos: Long,
         source: RecognizedUtterance,
     ): List<RecognizedUtterance> {
-        val residualText = residual.map(ObservedToken::text)
-        val commitCount = chooseCommitCount(residualText, nowNanos)
-        if (commitCount <= 0) return listOfNotNull(preview(residual, source, nowNanos))
-
         val output = mutableListOf<RecognizedUtterance>()
-        val committed = residual.take(commitCount)
-        output += commit(
-            tokens = committed.map(ObservedToken::text),
-            nowNanos = nowNanos,
-            capturedAtNanos = requireNotNull(committed.oldestObservationNanos()),
-        )
-        committedSourceTokens += committed.map(ObservedToken::text)
-        lastCommitAtNanos = nowNanos
+        var tail = residual
+        while (tail.isNotEmpty()) {
+            val commitCount = chooseCommitCount(tail.map(ObservedToken::text), nowNanos)
+            if (commitCount <= 0) break
+            val committed = tail.take(commitCount)
+            output += commit(
+                tokens = committed.map(ObservedToken::text),
+                nowNanos = nowNanos,
+                capturedAtNanos = requireNotNull(committed.oldestObservationNanos()),
+            )
+            committedSourceTokens += committed.map(ObservedToken::text)
+            lastCommitAtNanos = nowNanos
 
-        val tail = residual.drop(commitCount)
-        hypothesisHistory.clear()
-        if (tail.isNotEmpty()) {
-            hypothesisHistory.addLast(tail.map(ObservedToken::text))
+            tail = tail.drop(commitCount)
+            // Preserve only agreement that was actually observed for the remaining text. Clearing
+            // it here would leave the second complete sentence waiting for an unrelated callback.
+            val remainingHistory = hypothesisHistory.map { it.drop(commitCount) }
+            hypothesisHistory.clear()
+            remainingHistory.filter(List<String>::isNotEmpty).forEach(hypothesisHistory::addLast)
             // Each aligned token owns its original observation time, and a newly inserted token
             // starts at the callback where it first appears. The oldest still-pending token drives
             // the safety budget even when a recognizer inserts a newer word before it.
             updatePendingSince(tail.oldestObservationNanos())
+        }
+        if (tail.isNotEmpty()) {
             preview(tail, source, nowNanos)?.let(output::add)
         } else {
+            hypothesisHistory.clear()
             updatePendingSince(null)
         }
         return output
@@ -228,9 +233,9 @@ class RealtimeInterpretationSegmenter(
             else -> 0L
         }
 
-        // A sustained measured pause is an utterance boundary even when the provider emitted only
-        // one revisable hypothesis. This is deliberately separate from the wall-clock decision
-        // budget: ongoing speech keeps quietMillis at zero and is never hard-cut by this path.
+        // Silence confirms that the acoustic input has paused, not that its meaning is complete.
+        // In product mode a subject, connective or unfinished negation stays visible as a preview
+        // across even a long hesitation. A following provider line can then supply its predicate.
         val tail = residual.last()
         val incompleteTail = isLikelyIncompleteBoundaryToken(tail) ||
             (requiresPositiveKoreanCompletion() && !isPositiveKoreanSentenceEnding(tail))
@@ -239,20 +244,13 @@ class RealtimeInterpretationSegmenter(
         } else {
             policy.utteranceEndSilenceMillis
         }
-        if (
-            quietMillis >= utterancePauseMillis &&
-            textSettled &&
-            residual.hasUsefulText()
-        ) {
-            return residual.size
-        }
-
         val requirePositiveKoreanCompletion = requiresPositiveKoreanCompletion()
-        // Select the last eligible boundary, not simply the last ending. A later sentence
-        // without right context must not hide an earlier, already confirmed sentence.
-        val strongBoundary = stable.indices.lastOrNull { index ->
+        // Release the earliest confirmed sentence, then evaluate the retained tail separately.
+        // A provider callback containing several sentences must not merge them into one request.
+        val strongBoundary = stable.indices.firstOrNull { index ->
             val token = stable[index]
             isStrongBoundary(token) &&
+                isMeaningBoundary(residual, index) &&
                 (!requirePositiveKoreanCompletion || isPositiveKoreanSentenceEnding(token)) &&
                 (!policy.requireAcousticPauseForBoundary ||
                     (quietMillis >= policy.sentencePauseMillis && textSettled) ||
@@ -266,10 +264,20 @@ class RealtimeInterpretationSegmenter(
             return strongBoundary + 1
         }
 
-        val weakBoundary = stable.indexOfLast { token ->
-            isWeakBoundary(token) &&
-                (!requirePositiveKoreanCompletion || isPositiveKoreanWeakBoundary(token))
+        if (
+            quietMillis >= utterancePauseMillis &&
+            textSettled &&
+            residual.hasUsefulText() &&
+            isMeaningBoundary(residual, residual.lastIndex)
+        ) {
+            return residual.size
         }
+
+        val weakBoundary = stable.indices.lastOrNull { index ->
+            isWeakBoundary(stable[index]) &&
+                isMeaningBoundary(residual, index) &&
+                (!requirePositiveKoreanCompletion || isPositiveKoreanWeakBoundary(stable[index]))
+        } ?: -1
         if (
             elapsedMillis >= policy.weakBoundaryWaitMillis &&
             weakBoundary >= 0 &&
@@ -287,6 +295,7 @@ class RealtimeInterpretationSegmenter(
             // music, so a pause can accelerate a commit only after LocalAgreement confirms text.
             val paused = stable.size.takeIf {
                 it >= policy.minimumPauseCommitTokens &&
+                    isMeaningBoundary(residual, it - 1) &&
                     stable.lastOrNull()?.let(::isLikelyIncompleteBoundaryToken) != true &&
                     (!policy.requireCompleteKoreanMeaningForUnpunctuatedPause ||
                         sourceLanguageTag?.substringBefore('-')?.equals("ko", ignoreCase = true) != true ||
@@ -351,6 +360,24 @@ class RealtimeInterpretationSegmenter(
         policy.requireCompleteKoreanMeaningForUnpunctuatedPause &&
             sourceLanguageTag?.substringBefore('-')?.equals("ko", ignoreCase = true) == true
 
+    private fun isMeaningBoundary(tokens: List<String>, index: Int): Boolean {
+        if (!policy.preserveIncompleteMeaningAcrossPauses) return true
+        if (index !in tokens.indices) return false
+        val prefix = tokens.take(index + 1)
+        return when (sourceLanguageTag?.substringBefore('-')?.lowercase()) {
+            "ko" -> {
+                val word = tokens[index].trimEnd('"', '\'', '”', '’', ')', ']', '}',
+                    '.', '!', '?', '。', '！', '？', ',', ';', ':', '，', '；', '：')
+                isPositiveKoreanSentenceEnding(tokens[index]) &&
+                    (word !in KOREAN_STANDALONE_RESPONSES || prefix.size == 1) &&
+                    !(word == "네" && hasKoreanCounterRightContext(tokens.drop(index + 1))) &&
+                    !hasKoreanDependentRightContext(tokens.drop(index + 1))
+            }
+            "en" -> !prefix.hasIncompleteEnglishMeaning()
+            else -> !isLikelyIncompleteBoundaryToken(tokens[index])
+        }
+    }
+
     private fun commit(
         tokens: List<String>,
         nowNanos: Long,
@@ -360,9 +387,7 @@ class RealtimeInterpretationSegmenter(
         previewSequence = null
         previewText = null
         val text = tokens.joinToString(" ").take(MAX_UTTERANCE_CHARACTERS)
-        val contextBefore = committedContext.joinToString(" ")
-            .takeLast(MAX_CONTEXT_CHARACTERS)
-            .ifBlank { null }
+        val contextBefore = wholeMeaningContext(committedContext)
         return RecognizedUtterance(
             sequence = sequence,
             text = text,
@@ -396,9 +421,7 @@ class RealtimeInterpretationSegmenter(
             isFinal = false,
             capturedAtElapsedRealtimeNanos = capturedAtNanos,
             recognizedAtElapsedRealtimeNanos = nowNanos,
-            contextBefore = committedContext.joinToString(" ")
-                .takeLast(MAX_CONTEXT_CHARACTERS)
-                .ifBlank { null },
+            contextBefore = wholeMeaningContext(committedContext),
             firstAudioDeadlineElapsedRealtimeNanos = capturedAtNanos +
                 policy.listenerMaximumWaitMillis * 1_000_000L,
         )
@@ -619,7 +642,6 @@ class RealtimeInterpretationSegmenter(
 
     private companion object {
         const val MAX_UTTERANCE_CHARACTERS = 2_000
-        const val MAX_CONTEXT_CHARACTERS = 300
         const val MAX_CONTEXT_SEGMENTS = 2
         const val MAX_ALIGNMENT_ANCHOR_TOKENS = 4
         const val ALIGN_DIAGONAL: Byte = 0
@@ -662,6 +684,8 @@ data class RealtimeInterpretationPolicy(
     val semanticRightContextTokens: Int = unstableTailTokenCount,
     /** Korean product mode requires positive sentence-final evidence even after a long pause. */
     val requireCompleteKoreanMeaningForUnpunctuatedPause: Boolean = false,
+    /** A pause/provider endpoint must not turn a known dependent clause into a translation unit. */
+    val preserveIncompleteMeaningAcrossPauses: Boolean = false,
 ) {
     init {
         require(stableHypothesisCount in 2..4)
@@ -729,6 +753,7 @@ fun sentenceCompletionInterpretationPolicy(): RealtimeInterpretationPolicy =
         semanticContinuousSpeechCommitMillis = 4_600,
         semanticRightContextTokens = 2,
         requireCompleteKoreanMeaningForUnpunctuatedPause = true,
+        preserveIncompleteMeaningAcrossPauses = true,
     )
 
 private fun elapsedMillis(startNanos: Long?, nowNanos: Long): Long =
@@ -765,10 +790,28 @@ private fun tokenPrefixEditDistances(left: List<String>, right: List<String>): I
 
 private fun List<String>.hasUsefulText(): Boolean =
     joinToString("").count(Char::isLetterOrDigit) >= 2 ||
-        singleOrNull()?.trimEnd('.', '!', '?', '。', '！', '？') in KOREAN_COMPLETE_SHORT_REPLIES
+        singleOrNull()?.trim('"', '\'', '“', '”', '‘', '’', '.', '!', '?', '。', '！', '？',
+            ',', ';', ':', '，', '；', '：') in KOREAN_COMPLETE_SHORT_REPLIES
 
 // Explicit complete answers, not a blanket one-character rule that would commit "왜" or "안".
-private val KOREAN_COMPLETE_SHORT_REPLIES = setOf("네", "예")
+private val KOREAN_COMPLETE_SHORT_REPLIES = setOf(
+    "네", "예", "응", "아니요", "아니오", "아니야", "아냐", "맞아", "좋아", "싫어", "몰라",
+    "괜찮아", "고마워", "알겠어", "됐어",
+)
+private val KOREAN_STANDALONE_RESPONSES = setOf("네", "예", "응")
+
+private fun hasKoreanCounterRightContext(tokens: List<String>): Boolean {
+    val word = tokens.firstOrNull()?.trimEnd('.', '!', '?', ',', ';', ':') ?: return false
+    return KOREAN_NUMBER_COUNTERS.any { counter ->
+        word.startsWith(counter) && word.removePrefix(counter) in KOREAN_COUNTER_PARTICLES
+    }
+}
+
+private val KOREAN_NUMBER_COUNTERS = setOf(
+    "가지", "개", "명", "마리", "대", "번", "차례", "장", "권", "잔", "병", "살",
+    "시", "시간", "분", "초", "일", "달", "개월", "년", "층", "곳", "군데",
+)
+private val KOREAN_COUNTER_PARTICLES = setOf("", "가", "이", "를", "을", "는", "은", "의", "로", "쯤", "씩", "나", "만")
 
 private fun isStrongBoundary(token: String): Boolean {
     val normalized = token.trimEnd('"', '\'', '”', '’', ')', ']', '}')
@@ -776,7 +819,8 @@ private fun isStrongBoundary(token: String): Boolean {
     if (isLikelyIncompleteBoundaryToken(normalized)) return false
     if (normalized.lastOrNull() in STRONG_PUNCTUATION) return true
     return withoutTrailingPunctuation in KOREAN_COMPLETE_SHORT_REPLIES ||
-        KOREAN_SENTENCE_ENDINGS.any(withoutTrailingPunctuation::endsWith)
+        KOREAN_SENTENCE_ENDINGS.any(withoutTrailingPunctuation::endsWith) ||
+        hasKoreanPastDeclarativeEnding(withoutTrailingPunctuation)
 }
 
 /** Protects common Korean fragments when a recognizer speculatively appends sentence punctuation. */
@@ -788,17 +832,25 @@ private fun isPositiveKoreanSentenceEnding(token: String): Boolean {
     val normalized = token.trimEnd('"', '\'', '”', '’', ')', ']', '}')
         .trimEnd('.', '!', '?', '。', '！', '？', ',', ';', ':', '，', '；', '：')
     return !isLikelyIncompleteKoreanBoundary(normalized) &&
-        (normalized in KOREAN_COMPLETE_SHORT_REPLIES || KOREAN_SENTENCE_ENDINGS.any(normalized::endsWith))
+        (normalized in KOREAN_COMPLETE_SHORT_REPLIES ||
+            KOREAN_SENTENCE_ENDINGS.any(normalized::endsWith) ||
+            hasKoreanPastDeclarativeEnding(normalized))
+}
+
+/** -았/었- can contract into 갔/봤/왔/했/됐/났; its ㅆ coda precedes the finite 다/어 ending. */
+private fun hasKoreanPastDeclarativeEnding(word: String): Boolean {
+    if (word.length < 2 || word.last() !in setOf('다', '어')) return false
+    val pastSyllable = word[word.lastIndex - 1]
+    return pastSyllable in '가'..'힣' && (pastSyllable.code - '가'.code) % 28 == 20
 }
 
 private fun isPositiveKoreanWeakBoundary(token: String): Boolean {
     val normalized = token.trimEnd('"', '\'', '”', '’', ')', ']', '}')
         .trimEnd(',', ';', ':', '，', '；', '：')
     if (isLikelyIncompleteKoreanBoundary(normalized)) return false
-    return isPositiveKoreanSentenceEnding(normalized) ||
-        KOREAN_CONNECTIVE_ENDINGS.any(normalized::endsWith) ||
-        (normalized.length >= 3 && normalized.endsWith("고") &&
-            normalized !in KOREAN_NON_BOUNDARY_GO_WORDS)
+    // A comma after "확인하고," is still a dependent clause. Its predicate/contrast must be
+    // translated together; punctuation from an acoustic provider is not a grammatical override.
+    return isPositiveKoreanSentenceEnding(normalized)
 }
 
 private fun isWeakBoundary(token: String): Boolean {
@@ -824,7 +876,7 @@ internal fun String.withoutSpeculativeIncompleteKoreanPunctuation(): String {
         '.', '!', '?', '。', '！', '？', ',', ';', ':', '，', '；', '：',
     )
     if (lexical == token) return normalized
-    val supportedBoundary = when (token.lastOrNull()) {
+    val supportedBoundary = (lexical !in KOREAN_STANDALONE_RESPONSES || tokenStart == 0) && when (token.lastOrNull()) {
         in STRONG_PUNCTUATION -> isPositiveKoreanSentenceEnding(token)
         in WEAK_PUNCTUATION -> isPositiveKoreanWeakBoundary(token)
         else -> true
@@ -866,8 +918,10 @@ private val STRONG_PUNCTUATION = setOf('.', '!', '?', '。', '！', '？')
 private val WEAK_PUNCTUATION = setOf(',', ';', ':', '，', '；', '：')
 private val KOREAN_SENTENCE_ENDINGS = listOf(
     "습니다", "니다", "습니까", "합니까", "입니다", "합니다", "됩니다", "있습니다", "없습니다",
-    "십시오", "주세요", "하세요", "해요", "했어요", "돼요", "예요", "이에요",
-    "아요", "어요", "나요", "까요", "네요", "군요", "랍니다", "죠",
+    "십시오", "주세요", "하세요", "세요", "해요", "했어요", "돼요", "예요", "이에요",
+    "아요", "어요", "나요", "까요", "네요", "군요", "더라고요", "게요", "랍니다", "죠",
+    "했다", "한다", "됐다", "된다", "였다", "이다", "있다", "없다", "같다", "싶다", "겠다",
+    "했어", "있어", "없어", "거야", "할게", "할까", "하자", "가자", "할래",
 )
 private val KOREAN_CONNECTIVE_ENDINGS = listOf(
     "으면서", "면서", "지만", "았지만", "었지만", "는데", "은데", "인데",

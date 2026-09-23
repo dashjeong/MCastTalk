@@ -3,12 +3,14 @@ package app.guidecast.transmitter
 import android.Manifest
 import android.app.Activity
 import android.content.Intent
+import android.graphics.Rect
 import android.os.Build
 import android.os.SystemClock
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
+import androidx.test.uiautomator.BySelector
 import androidx.test.uiautomator.StaleObjectException
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiObject2
@@ -26,6 +28,10 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assume.assumeFalse
+import org.junit.Assume.assumeTrue
+import java.io.File
+import java.util.regex.Pattern
 
 /**
  * User-path regressions for the operator information architecture.
@@ -39,10 +45,25 @@ class OperatorNavigationUiTest {
     private val targetContext = instrumentation.targetContext
     private val device = UiDevice.getInstance(instrumentation)
     private var activity: Activity? = null
+    private var previousOptions: OperatorOptions? = null
 
     @Before
     fun setUp() {
         grantRuntimePermissions()
+        val app = targetContext.applicationContext as GuideCastApplication
+        previousOptions = app.operatorSettings.state.value
+        // Service navigation now preserves saved choices. Seed this suite's explicit fixture
+        // before creating its ViewModel, instead of depending on another test's last choices.
+        // Automatic downloads are separate from the navigation and manual-preparation paths.
+        instrumentation.runOnMainSync {
+            app.operatorSettings.restore(OperatorOptions(
+                translationEnabled = true,
+                useGemma = true,
+                selectiveRefinement = false,
+                runMode = BroadcastRunMode.NETWORK,
+                automaticPreparation = false,
+            ))
+        }
         activity = instrumentation.startActivitySync(
             Intent(targetContext, MainActivity::class.java).addFlags(
                 Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK,
@@ -52,8 +73,11 @@ class OperatorNavigationUiTest {
         device.openServiceWorkspace(MCastService.MULTILINGUAL)
         assertTrue(
             "운영자 화면이 열리지 않았습니다.",
-            device.wait(Until.hasObject(By.text("DMZ 평화걷기 안내 방송")), UI_TIMEOUT_MILLIS),
+            device.wait(Until.hasObject(By.text(MCastService.MULTILINGUAL.title)), UI_TIMEOUT_MILLIS),
         )
+        listOf("운영", "시험", "설정").forEach { label ->
+            assertTrue("공통 $label 메뉴가 없습니다.", device.hasObject(By.text(label)))
+        }
     }
 
     @After
@@ -74,6 +98,9 @@ class OperatorNavigationUiTest {
             targetContext.stopService(Intent(targetContext, BroadcastService::class.java))
             instrumentation.runOnMainSync { activity?.finish() }
             instrumentation.waitForIdleSync()
+            previousOptions?.let { options ->
+                instrumentation.runOnMainSync { app?.operatorSettings?.restore(options) }
+            }
         }
     }
 
@@ -87,11 +114,16 @@ class OperatorNavigationUiTest {
         assertNotNull(scrollDownUntilText("공개"))
         assertTrue(waitUntilTextAncestorChecked("공개"))
         fun verifyPreference(expected: Boolean) {
-            assertTrue(device.wait(Until.hasObject(By.text("DMZ 평화걷기 안내 방송")), UI_TIMEOUT_MILLIS))
+            // Return through the real app tab: the heading may have scrolled off screen.
+            openSection(tabLabel = "운영", heading = MCastService.MULTILINGUAL.title)
             runBlocking { withTimeout(5_000L) {
                 vm.translationModelState.first { !it.isBusy && it.broadcastTranslationEnabled == expected }
+                vm.gemmaState.first { it.useForTranslation }
+                app.operatorSettings.state.first { it.translationEnabled == expected && it.useGemma }
             } }
             assertTrue(vm.gemmaState.value.useForTranslation)
+            assertEquals(expected, app.operatorSettings.state.value.translationEnabled)
+            assertTrue(app.operatorSettings.state.value.useGemma)
             assertEquals(InputPhase.IDLE, app.broadcastRuntime.state.value.inputPhase)
             assertEquals(BroadcastPhase.IDLE, app.broadcastRuntime.state.value.phase)
         }
@@ -221,6 +253,7 @@ class OperatorNavigationUiTest {
         val deadline = SystemClock.uptimeMillis() + 35_000L
         var selectable: UiObject2? = null
         while (SystemClock.uptimeMillis() < deadline && selectable == null) {
+            refreshTestAccessibilityCache()
             var candidate = device.findObject(By.text("일본어 · 日本語"))
             while (candidate != null) {
                 if (candidate.isCheckable && candidate.isEnabled) {
@@ -233,7 +266,9 @@ class OperatorNavigationUiTest {
         }
         assertNotNull("초기 모델 확인이 끝나지 않아 언어 선택이 잠겼습니다.", selectable)
         val originallyChecked = requireNotNull(selectable).isChecked
-        tap(requireNotNull(selectable))
+        // The row also contains a voice-provider button; its center opens that picker.
+        // Touch the language title to exercise the row's language-selection action.
+        tap(requireNotNull(scrollDownUntilText("일본어 · 日本語")))
         assertTrue(waitUntilTextAncestorChecked("일본어 · 日本語", !originallyChecked))
         tap(requireNotNull(device.findObject(By.text("일본어 · 日本語"))))
         assertTrue(waitUntilTextAncestorChecked("일본어 · 日本語", originallyChecked))
@@ -242,14 +277,25 @@ class OperatorNavigationUiTest {
     @Test
     fun fiveLanguagePreparationCanBeStoppedAndSelectionRecovers() {
         openSection(tabLabel = "설정", heading = "언어·모델 설정")
-        val selectAll = requireNotNull(scrollDownUntilText("추천 5개 선택"))
-        assertTrue(device.wait(Until.hasObject(By.text("추천 5개 선택").enabled(true)), 35_000L))
-        tap(selectAll)
-        val prepare = requireNotNull(scrollDownUntilText("번역 · 음성인식 · Moonshine 음성 준비"))
         lateinit var viewModel: AudioInputViewModel
         instrumentation.runOnMainSync {
             viewModel = ViewModelProvider(requireNotNull(activity) as MainActivity)[AudioInputViewModel::class.java]
         }
+        runBlocking { withTimeout(35_000L) { viewModel.translationModelState.first { !it.isBusy } } }
+        // The current app starts with the five defaults selected, disabling "select defaults".
+        // Exercise both actual controls so an ignored or disabled selection cannot pass.
+        tap(requireNotNull(scrollDownUntilText("선택 해제")))
+        runBlocking { withTimeout(5_000L) {
+            viewModel.translationModelState.first { it.selectedLanguageTags.isEmpty() }
+        } }
+        tap(requireNotNull(scrollDownUntilText("기본 5개 선택")))
+        runBlocking { withTimeout(5_000L) {
+            viewModel.translationModelState.first { it.selectedLanguageTags ==
+                recommendedTranslationLanguageSelection(
+                    options = it.options, sourceLanguageTag = it.selectedSourceLanguageTag) }
+        } }
+        assertEquals(5, viewModel.translationModelState.value.selectedLanguageTags.size)
+        val prepare = requireNotNull(scrollDownUntilText("준비 상태 다시 확인 · 실패 항목 재시도"))
         assertTrue("이번 준비 버튼 동작을 이전 준비 결과와 구분할 수 있어야 합니다.",
             viewModel.translationModelState.value.operationLabel != "통번역 준비 중")
         fun preparationFinished(): Boolean = viewModel.translationModelState.value.let {
@@ -323,8 +369,10 @@ class OperatorNavigationUiTest {
         openSection(tabLabel = "시험", heading = "통번역 사전 점검")
 
         val inputControl = requireNotNull(
-            device.wait(Until.findObject(By.text("입력 제어")), UI_TIMEOUT_MILLIS),
-        ) { "시험 탭 첫 화면에 입력 제어가 없습니다." }
+            // The shared header and HUD entry points can put controls below a small viewport.
+            // Reach the input through scrolling, then still verify it precedes the test panel.
+            scrollDownUntilText("입력 제어"),
+        ) { "시험 탭에서 입력 제어에 접근할 수 없습니다." }
         assertTrue(
             "시험 탭 입력 제어에 현재 상태에 맞는 입력 동작이 없습니다.",
             INPUT_ACTION_LABELS.any { label -> device.hasObject(By.text(label)) },
@@ -338,8 +386,8 @@ class OperatorNavigationUiTest {
                 inputControl.visibleBounds.top < testPanel.visibleBounds.top,
             )
         } else {
-            // A compact viewport may compose only the first LazyColumn item. Seeing input control
-            // before the first downward scroll, then the test panel after it, proves the same order.
+            // A compact viewport may compose only one LazyColumn item. Seeing input control
+            // before scrolling onward to the test panel proves the same order.
             val revealedTestPanel = scrollDownUntilText("통번역 시험")
             assertNotNull(
                 "입력 제어 아래에서 통번역 시험 패널을 찾지 못했습니다.",
@@ -534,6 +582,11 @@ class OperatorNavigationUiTest {
                 requireNotNull(activity) as MainActivity,
             )[AudioInputViewModel::class.java]
         }
+        assumeTrue(
+            "Enabling Gemma refinement requires the app's supported-device memory capability; " +
+                "this path is not proven on an unsupported AVD.",
+            viewModel.gemmaState.value.broadcastCapable,
+        )
         assertEquals(false, viewModel.gemmaState.value.selectiveTranslationRefinement)
         assertEquals(InputPhase.IDLE, app.broadcastRuntime.state.value.inputPhase)
         assertEquals(BroadcastPhase.IDLE, app.broadcastRuntime.state.value.phase)
@@ -590,6 +643,50 @@ class OperatorNavigationUiTest {
                 app.broadcastRuntime.update { it.copy(inputPhase = InputPhase.IDLE) }
             }
         }
+    }
+
+    @Test
+    fun unsupportedGemmaDeviceKeepsSelectiveRefinementDisabledAndRuntimeIdle() {
+        val app = targetContext.applicationContext as GuideCastApplication
+        lateinit var viewModel: AudioInputViewModel
+        instrumentation.runOnMainSync {
+            viewModel = ViewModelProvider(
+                requireNotNull(activity) as MainActivity,
+            )[AudioInputViewModel::class.java]
+        }
+        assumeFalse(
+            "This check requires a device rejected by the app's Gemma memory capability.",
+            viewModel.gemmaState.value.broadcastCapable,
+        )
+        assertEquals(false, viewModel.gemmaState.value.selectiveTranslationRefinement)
+        assertEquals(InputPhase.IDLE, app.broadcastRuntime.state.value.inputPhase)
+        assertEquals(BroadcastPhase.IDLE, app.broadcastRuntime.state.value.phase)
+        assertEquals(false, app.broadcastRuntime.state.value.translationTestActive)
+
+        openSection(tabLabel = "설정", heading = "언어·모델 설정")
+        tap(requireNotNull(scrollDownUntilText("AI 모델")))
+        val label = "선택적 번역 보완 (시험)"
+        assertNotNull(scrollDownUntilText(label))
+        assertTrue(waitUntilTextAncestorChecked(label, expected = false))
+        assertRefinementControlDisabled(label)
+
+        // One attempted user tap must not bypass the production device-capability guard.
+        tap(requireNotNull(scrollDownUntilText(label)))
+        assertRefinementControlDisabled(label)
+        assertTrue(waitUntilTextAncestorChecked(label, expected = false))
+        assertEquals(false, viewModel.gemmaState.value.selectiveTranslationRefinement)
+        assertEquals(InputPhase.IDLE, app.broadcastRuntime.state.value.inputPhase)
+        assertEquals(BroadcastPhase.IDLE, app.broadcastRuntime.state.value.phase)
+        assertEquals(false, app.broadcastRuntime.state.value.translationTestActive)
+    }
+
+    private fun assertRefinementControlDisabled(label: String) {
+        refreshTestAccessibilityCache()
+        var target = device.findObject(By.text(label))
+        while (target != null && !target.isCheckable) target = target.parent
+        assertNotNull("번역 보완 체크 컨트롤이 없습니다.", target)
+        assertEquals("지원하지 않는 기기에서 보완 기능이 활성화됐습니다.", false,
+            requireNotNull(target).isEnabled)
     }
 
     private fun openSection(tabLabel: String, heading: String) {
@@ -658,12 +755,35 @@ class OperatorNavigationUiTest {
         )
     }
 
-    private fun scrollDownUntilText(text: String): UiObject2? {
+    private fun scrollDownUntilText(text: String): UiObject2? =
+        scrollDownUntilSelector(By.text(text))
+
+    private fun scrollDownUntilDescription(description: String): UiObject2? =
+        scrollDownUntilSelector(By.desc(description))
+
+    private fun freshNodeBounds(selector: BySelector): Pair<UiObject2, Rect>? {
+        // Re-read a replaced Compose node; never repeat a user action to satisfy an assertion.
+        repeat(3) { attempt ->
+            refreshTestAccessibilityCache()
+            val node = device.wait(Until.findObject(selector), 300L) ?: return null
+            try {
+                return node to node.visibleBounds
+            } catch (stale: StaleObjectException) {
+                if (attempt == 2) {
+                    captureHelperFailure("selector-stale")
+                    throw stale
+                }
+            }
+        }
+        return null
+    }
+
+    private fun scrollDownUntilSelector(selector: BySelector): UiObject2? {
         repeat(MAX_SCROLL_ATTEMPTS) {
-            device.wait(Until.findObject(By.text(text)), 300L)?.let { node ->
+            freshNodeBounds(selector)?.let { (node, bounds) ->
                 when {
-                    node.visibleBounds.centerY() in safeTapTop()..safeTapBottom() -> return node
-                    node.visibleBounds.centerY() > safeTapBottom() -> scrollTargetUp()
+                    bounds.centerY() in safeTapTop()..safeTapBottom() -> return node
+                    bounds.centerY() > safeTapBottom() -> scrollTargetUp()
                     else -> scrollTargetDown()
                 }
                 device.waitForIdle()
@@ -672,14 +792,14 @@ class OperatorNavigationUiTest {
             scrollForward()
             device.waitForIdle()
         }
-        if (device.findObject(By.text(text)) == null) {
+        if (freshNodeBounds(selector) == null) {
             repeat(MAX_SCROLL_ATTEMPTS / 2) {
                 scrollBackward()
                 device.waitForIdle()
-                device.findObject(By.text(text))?.let { node ->
+                freshNodeBounds(selector)?.let { (node, bounds) ->
                     when {
-                        node.visibleBounds.centerY() in safeTapTop()..safeTapBottom() -> return node
-                        node.visibleBounds.centerY() > safeTapBottom() -> scrollTargetUp()
+                        bounds.centerY() in safeTapTop()..safeTapBottom() -> return node
+                        bounds.centerY() > safeTapBottom() -> scrollTargetUp()
                         else -> scrollTargetDown()
                     }
                     device.waitForIdle()
@@ -687,43 +807,10 @@ class OperatorNavigationUiTest {
                 }
             }
         }
-        return device.findObject(By.text(text))?.takeIf(::isTapSafe)
+        return freshNodeBounds(selector)?.takeIf {
+            it.second.centerY() in safeTapTop()..safeTapBottom()
+        }?.first
     }
-
-    private fun scrollDownUntilDescription(description: String): UiObject2? {
-        repeat(MAX_SCROLL_ATTEMPTS) {
-            device.wait(Until.findObject(By.desc(description)), 300L)?.let { node ->
-                when {
-                    node.visibleBounds.centerY() in safeTapTop()..safeTapBottom() -> return node
-                    node.visibleBounds.centerY() > safeTapBottom() -> scrollTargetUp()
-                    else -> scrollTargetDown()
-                }
-                device.waitForIdle()
-                return@repeat
-            }
-            scrollForward()
-            device.waitForIdle()
-        }
-        if (device.findObject(By.desc(description)) == null) {
-            repeat(MAX_SCROLL_ATTEMPTS / 2) {
-                scrollBackward()
-                device.waitForIdle()
-                device.findObject(By.desc(description))?.let { node ->
-                    when {
-                        node.visibleBounds.centerY() in safeTapTop()..safeTapBottom() -> return node
-                        node.visibleBounds.centerY() > safeTapBottom() -> scrollTargetUp()
-                        else -> scrollTargetDown()
-                    }
-                    device.waitForIdle()
-                    return@repeat
-                }
-            }
-        }
-        return device.findObject(By.desc(description))?.takeIf(::isTapSafe)
-    }
-
-    private fun isTapSafe(node: UiObject2): Boolean =
-        node.visibleBounds.centerY() in safeTapTop()..safeTapBottom()
 
     private fun safeTapTop(): Int = device.displayHeight / 5
 
@@ -770,29 +857,84 @@ class OperatorNavigationUiTest {
     }
 
     private fun tap(node: UiObject2) {
-        // Android 15 can keep a LazyColumn fling active after the accessibility tree looks idle.
-        // A tap during that tail only stops scrolling, so wait briefly and read fresh bounds.
-        SystemClock.sleep(SCROLL_SETTLE_MILLIS)
-        device.waitForIdle()
-        val bounds = node.visibleBounds
-        assertTrue(
-            "화면 좌표를 누르지 못했습니다: $bounds",
-            device.click(bounds.centerX(), bounds.centerY()),
-        )
-        device.waitForIdle()
+        try {
+            // Capture identity before settling: the QR test read a stale node after this wait.
+            // Retain the nearest matching instance when a dialog and its background share text.
+            val originalBounds = node.visibleBounds
+            val checkable = node.isCheckable
+            val selector = node.contentDescription?.takeIf(String::isNotBlank)?.let(By::desc)
+                ?: node.text?.takeIf(String::isNotBlank)?.let(By::text)
+                ?: node.findObjects(By.text(Pattern.compile(".+"))).firstOrNull()?.text?.let(By::text)
+                ?: error("Touch target has no stable accessibility label")
+            SystemClock.sleep(SCROLL_SETTLE_MILLIS)
+            device.waitForIdle()
+            var previous: Rect? = null
+            var stableSamples = 0
+            var settled: Rect? = null
+            val deadline = SystemClock.uptimeMillis() + 3_000L
+            while (SystemClock.uptimeMillis() < deadline) {
+                refreshTestAccessibilityCache()
+                val bounds = try {
+                    device.findObjects(selector).mapNotNull { candidate ->
+                        var target: UiObject2? = candidate
+                        if (checkable) {
+                            while (target != null && !target.isCheckable) target = target.parent
+                        }
+                        target?.visibleBounds
+                    }.minByOrNull {
+                        kotlin.math.abs(it.centerX() - originalBounds.centerX()) +
+                            kotlin.math.abs(it.centerY() - originalBounds.centerY())
+                    }
+                } catch (_: StaleObjectException) {
+                    null
+                }
+                stableSamples = if (bounds != null && !bounds.isEmpty && bounds == previous) stableSamples + 1 else 0
+                previous = bounds
+                if (stableSamples >= 6) { settled = bounds; break }
+                SystemClock.sleep(75L)
+            }
+            val bounds = requireNotNull(settled) { "Touch target did not settle: $selector" }
+            assertTrue(
+                "화면 좌표를 누르지 못했습니다: $bounds",
+                device.click(bounds.centerX(), bounds.centerY()),
+            )
+            device.waitForIdle()
+            refreshTestAccessibilityCache()
+        } catch (failure: Throwable) {
+            captureHelperFailure("tap")
+            throw failure
+        }
     }
 
     private fun waitUntilTextAncestorChecked(text: String, expected: Boolean = true): Boolean {
         val deadline = SystemClock.uptimeMillis() + UI_TIMEOUT_MILLIS
         while (SystemClock.uptimeMillis() < deadline) {
-            var node = device.findObject(By.text(text))
-            while (node != null) {
-                if (node.isCheckable && node.isChecked == expected) return true
-                node = node.parent
+            refreshTestAccessibilityCache()
+            try {
+                var node = device.findObject(By.text(text))
+                while (node != null) {
+                    if (node.isCheckable && node.isChecked == expected) return true
+                    node = node.parent
+                }
+            } catch (_: StaleObjectException) {
+                // A fresh observation is safe; the toggle itself is still clicked only once.
             }
             SystemClock.sleep(100L)
         }
+        captureHelperFailure("checked-${text.hashCode()}-$expected")
         return false
+    }
+
+    private fun captureHelperFailure(reason: String) {
+        // Capture before @After closes the activity. A TestWatcher runs after that teardown.
+        val directory = targetContext.getExternalFilesDir(null) ?: return
+        val prefix = "operator-ui-failure-${SystemClock.uptimeMillis()}-$reason"
+        runCatching { device.takeScreenshot(File(directory, "$prefix.png")) }
+        runCatching { device.dumpWindowHierarchy(File(directory, "$prefix-cached.xml")) }
+        runCatching {
+            refreshTestAccessibilityCache()
+            device.dumpWindowHierarchy(File(directory, "$prefix-fresh.xml"))
+        }
     }
 
     private fun grantRuntimePermissions() {

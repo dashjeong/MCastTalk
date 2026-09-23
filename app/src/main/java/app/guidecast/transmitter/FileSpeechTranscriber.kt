@@ -29,6 +29,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -57,8 +58,11 @@ data class FileTranscriptionProgress(
     val message: String,
 )
 
-/** A private file job owns its recognizer; it never changes the live broadcaster's engines. */
+/** File jobs claim a backend lease and are excluded from live capture by the workspace owner. */
 object FileSpeechTranscriber {
+    fun usesAppRecognition(languageTag: String): Boolean =
+        normalizeSourceLanguage(languageTag) in GUIDECAST_SOURCE_LANGUAGE_BASE_TAGS
+
     suspend fun transcribe(
         context: Context,
         uri: Uri,
@@ -66,16 +70,6 @@ object FileSpeechTranscriber {
         allowedLanguageTags: List<String>? = null,
         onProgress: (FileTranscriptionProgress) -> Unit = {},
     ): FileTranscriptionResult {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) throw FileTranscriptionException(
-            "파일 음성 인식은 Android 13 이상에서 사용할 수 있습니다.",
-        )
-        if (sourceLanguageTag == null && Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            throw FileTranscriptionException("이 Android 버전에서는 자동 언어 감지를 사용할 수 없습니다. 원문 언어를 직접 선택하세요.")
-        }
-        val available = try { SpeechRecognizer.isOnDeviceRecognitionAvailable(context) } catch (_: Exception) { false }
-        if (!available) throw FileTranscriptionException(
-            "기기에 온디바이스 음성 인식 서비스가 없습니다. 시스템 음성 인식 서비스와 오프라인 언어팩을 준비하세요.",
-        )
         val manualLanguage = sourceLanguageTag?.let {
             val normalized = Locale.forLanguageTag(it).toLanguageTag()
             if (normalized == "und") throw FileTranscriptionException("원문 언어를 다시 선택하세요.")
@@ -86,6 +80,25 @@ object FileSpeechTranscriber {
             duration = info.durationMs
             onProgress(FileTranscriptionProgress(0, duration, 0, "파일 음성을 읽고 있습니다"))
         }
+        if (manualLanguage != null && usesAppRecognition(manualLanguage)) {
+            val app = context.applicationContext as? GuideCastApplication
+                ?: throw FileTranscriptionException("앱 음성 인식 작업 공간을 열지 못했습니다.")
+            onProgress(FileTranscriptionProgress(0, null, 0, "선택한 원문 언어의 음성 인식을 준비하고 있습니다"))
+            return withPreparedLocalSpeechRecognition(app, manualLanguage) { engine ->
+                transcribePreparedFileFrames(frames, engine, manualLanguage, { duration },
+                    availability = app.speechRecognitionEngine.status.map { it.isReady }, onProgress = onProgress)
+            }
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) throw FileTranscriptionException(
+            "이 언어의 파일 음성 인식은 Android 13 이상의 시스템 언어팩이 필요합니다. 지원하는 원문 언어를 직접 선택하세요.",
+        )
+        if (sourceLanguageTag == null && Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            throw FileTranscriptionException("이 Android 버전에서는 자동 언어 감지를 사용할 수 없습니다. 원문 언어를 직접 선택하세요.")
+        }
+        val available = try { SpeechRecognizer.isOnDeviceRecognitionAvailable(context) } catch (_: Exception) { false }
+        if (!available) throw FileTranscriptionException(
+            "시스템의 자동 언어 감지·음성 인식을 사용할 수 없습니다. 한국어 등 앱이 지원하는 원문 언어를 직접 선택하세요.",
+        )
         return transcribeFileFrames(frames, manualLanguage, { duration }, onProgress) { bytes, start, end, language ->
             recognizeFileChunk(context.applicationContext, bytes, start, end, language, allowedLanguageTags)
         }

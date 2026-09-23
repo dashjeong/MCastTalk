@@ -15,4 +15,6 @@ oneway interface IGuideCastMoonshineStt {
     void pushPcm(long sessionId, long frameId, in byte[] pcm16Le);
     void stopRecognition(long sessionId);
     void shutdown();
+    /** Finite input EOF: flush native results before the distinct completion acknowledgement. */
+    void finishRecognition(long sessionId);
 }

@@ -133,8 +133,10 @@ class GuideCastApplication : Application() {
     }
     val microphoneNoiseSettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { MicrophoneNoiseSettings(this) }
     val diagnosticExportState = kotlinx.coroutines.flow.MutableStateFlow(DiagnosticExportState())
-    val localFileWorkActive = kotlinx.coroutines.flow.MutableStateFlow(false)
-    val localVoiceNoteWorkActive = kotlinx.coroutines.flow.MutableStateFlow(false)
+    internal val fileWorkOwners = LocalWorkOwners()
+    val localFileWorkActive = fileWorkOwners.active
+    internal val voiceNoteWorkOwners = LocalWorkOwners()
+    val localVoiceNoteWorkActive = voiceNoteWorkOwners.active
     val localModelWorkActive = kotlinx.coroutines.flow.MutableStateFlow(false)
 
     /** Owns the short export independently of screen recreation; keeps only application context. */

@@ -1329,6 +1329,45 @@ class TranslationBroadcastPipelineTest {
     }
 
     @Test
+    fun `late revisions cannot contradict an already displayed translated and spoken final`() = runTest {
+        val sourceEvents = mutableListOf<RecognizedUtterance>()
+        val translated = mutableListOf<String>()
+        val spoken = mutableListOf<String>()
+        val original = RecognizedUtterance(23, "들어가면 안 됩니다", "ko", true, 1L)
+        val running = TranslationBroadcastPipeline(
+            streams = AudioStreamRegistry(),
+            translationEngines = TranslationEngineProvider {
+                TextTranslationEngine { text, _, _ -> translated.add(text); text }
+            },
+            speechEngines = SpeechSynthesisEngineProvider {
+                object : SpeechSynthesisEngine {
+                    override fun synthesize(text: String, languageTag: String) = flow {
+                        spoken.add(text)
+                        emit(PcmAudioFrame(audibleTestPcm(), 1L))
+                    }
+                }
+            },
+            observer = object : TranslationPipelineObserver {
+                override fun onSourceRecognized(utterance: RecognizedUtterance) {
+                    sourceEvents.add(utterance)
+                }
+            },
+        ).start(this, flowOf(
+            original,
+            original.copy(text = "들어가면 됩니다"),
+            original.copy(text = "들어가면", isFinal = false),
+            original.copy(text = "", isFinal = false, isRetracted = true),
+            original.copy(sequence = 24), // A genuine repeated sentence is still valid speech.
+        ), listOf(TranslationTarget("en", "English", "en", 24_000)))
+        try {
+            advanceUntilIdle()
+            assertEquals(listOf(original, original.copy(sequence = 24)), sourceEvents)
+            assertEquals(listOf(original.text, original.text), translated)
+            assertEquals(translated, spoken)
+        } finally { running.close() }
+    }
+
+    @Test
     fun `empty synthesis Flow is reported as failed speech`() = runTest {
         val health = runPcmFailureTest(emptyFlow())
 

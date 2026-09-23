@@ -1,3 +1,6 @@
 artifacts/*.apk filter=lfs diff=lfs merge=lfs -text
 app/src/main/assets/licenses/** whitespace=-blank-at-eol,-blank-at-eof
 app/src/main/assets/licenses/ONNXRUNTIME-1.23.2-THIRD-PARTY-NOTICES.txt text eol=lf
+# Preserve the pinned upstream license bytes and unified-diff context markers.
+third_party/moonshine/0.1.5-mcasttalk1/LICENSE whitespace=-blank-at-eol
+third_party/moonshine/0.1.5-mcasttalk1/moonshine-0.1.5-mcasttalk-reliability.patch whitespace=-blank-at-eol
