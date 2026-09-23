@@ -4,6 +4,25 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class GemmaTranslationReviewPromptTest {
+    @Test fun `same source grammar cue is used in review without changing original or draft`() {
+        val source = "네 분이 아직 복도에 계셔서 안내원이 모시러 갔습니다."
+        val draft = "Four minutes passed in the corridor."
+        val review = GemmaTranslationReviewPrompt.build("Korean", "English", "", source, "", draft)
+        val direct = GemmaTranslationPrompt.build("Korean", "English", "", source)
+        assertTrue(review.contains("ORIGINAL: \"$source\""))
+        assertTrue(review.contains("DRAFT: \"$draft\""))
+        assertEquals(direct.lineSequence().single { it.startsWith("SOURCE_GRAMMAR:") },
+            review.lineSequence().single { it.startsWith("SOURCE_GRAMMAR:") })
+    }
+
+    @Test fun `review abstains for time construction even when draft claims people`() {
+        val source = "선생님께서 몇 분 동안 문 앞에 서 계셨습니다."
+        val prompt = GemmaTranslationReviewPrompt.build("Korean", "English", "두 분이 서 계십니다.",
+            source, "", "A few people stood at the door.")
+        assertFalse(prompt.contains("SOURCE_GRAMMAR:"))
+        assertTrue(prompt.contains("ORIGINAL: \"$source\""))
+    }
+
     @Test fun outputLanguageAndDirectionRemainExplicitAroundUntrustedData() {
         val prompt = GemmaTranslationReviewPrompt.build("Korean", "English", "이전 안내입니다.",
             "회의가 연기되었습니다.", "", "The meeting has been postponed.")

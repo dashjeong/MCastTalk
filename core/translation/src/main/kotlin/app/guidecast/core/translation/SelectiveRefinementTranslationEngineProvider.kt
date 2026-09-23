@@ -11,6 +11,7 @@ enum class SelectiveRefinementReason {
     NUMERIC_CONTENT,
     LONG_COMPLETE_SENTENCE,
     STYLE_REQUESTED,
+    SOURCE_AMBIGUITY,
 }
 
 data class SelectiveRefinementDecision(
@@ -23,6 +24,10 @@ data class SelectiveRefinementDecision(
 fun interface SelectiveRefinementPolicy {
     /** Decisions may inspect only the original and its already-matched glossary hints. */
     fun decide(originalText: String, glossaryHints: String): SelectiveRefinementDecision
+
+    /** Old custom SAM policies remain authoritative; language-aware evidence is opt-in. */
+    fun decide(originalText: String, glossaryHints: String, sourceLanguageTag: String): SelectiveRefinementDecision =
+        decide(originalText, glossaryHints)
 }
 
 class DefaultSelectiveRefinementPolicy(
@@ -46,6 +51,17 @@ class DefaultSelectiveRefinementPolicy(
             add(SelectiveRefinementReason.LONG_COMPLETE_SENTENCE)
         }
     })
+
+    override fun decide(
+        originalText: String,
+        glossaryHints: String,
+        sourceLanguageTag: String,
+    ): SelectiveRefinementDecision {
+        val decision = decide(originalText, glossaryHints)
+        return if (SourceSemanticEvidence.classify(sourceLanguageTag, originalText).isNotEmpty()) {
+            decision.copy(reasons = decision.reasons + SelectiveRefinementReason.SOURCE_AMBIGUITY)
+        } else decision
+    }
 
     private companion object {
         const val DEFAULT_LONG_SENTENCE_CODE_POINTS = 80
@@ -80,11 +96,18 @@ class SelectiveRefinementTranslationEngineProvider(
     private val policy: SelectiveRefinementPolicy = DefaultSelectiveRefinementPolicy(),
     private val reviewerAvailable: (targetLanguageTag: String) -> Boolean = { true },
     private val onDiagnostic: (SelectiveRefinementDiagnostic) -> Unit = {},
+    /**
+     * Opt-in ceiling for a reviewer that declares its own bounded queue and inference budget.
+     * Ordinary reviewers and callers omitting this value retain the short review deadline.
+     * The ceiling is not extra inference time: the fair queue still enforces its own deadlines.
+     */
+    private val queuedReviewTimeoutMillis: Long? = null,
 ) : TranslationEngineProvider {
     init {
         require(draftTimeoutMillis in 500L..15_000L)
         require(reviewTimeoutMillis in 100L..5_000L)
         require(draftTimeoutMillis + reviewTimeoutMillis <= 15_000L)
+        require(queuedReviewTimeoutMillis == null || queuedReviewTimeoutMillis in 100L..60_000L)
     }
 
     override fun engineFor(targetLanguageTag: String): TextTranslationEngine {
@@ -92,7 +115,8 @@ class SelectiveRefinementTranslationEngineProvider(
         val draftEngine = draftProvider.engineFor(configuredTargetLanguageTag)
         return object : BoundedQueuedTranslationEngine {
             override val maximumCallDurationMillis: Long =
-                draftTimeoutMillis + reviewTimeoutMillis
+                draftTimeoutMillis + (queuedReviewTimeoutMillis?.plus(QUEUE_COMPLETION_ALLOWANCE_MILLIS)
+                    ?: reviewTimeoutMillis)
 
             override suspend fun translateWithContext(
                 text: String,
@@ -114,10 +138,11 @@ class SelectiveRefinementTranslationEngineProvider(
                 require(draft.isNotBlank()) { "Draft translator returned an empty result" }
 
                 val glossaryHints = currentCoroutineContext()[TranslationGlossaryContext]?.hints.orEmpty()
-                val policyDecision = policy.decide(text, glossaryHints)
-                // A user-requested register change also needs the reviewer for a short, otherwise
-                // ordinary draft. Keep every availability, input, quality and deadline guard below.
-                val decision = if (currentCoroutineContext()[TranslationStyleContext] != null) {
+                val policyDecision = policy.decide(text, glossaryHints, sourceLanguageTag)
+                // An explicitly selected style, including AUTO, requests a meaning/register
+                // review even for short drafts. Keep every availability, quality and deadline guard.
+                val style = currentCoroutineContext()[TranslationStyleContext]?.style
+                val decision = if (style != null) {
                     policyDecision.copy(reasons = policyDecision.reasons + SelectiveRefinementReason.STYLE_REQUESTED)
                 } else policyDecision
                 if (!decision.reviewRequested) {
@@ -152,7 +177,7 @@ class SelectiveRefinementTranslationEngineProvider(
                 )
                 val reviewed = try {
                     val reviewerEngine = reviewerProvider.engineFor(targetLanguageTag)
-                    withTimeoutOrNull(reviewTimeoutMillis) {
+                    withTimeoutOrNull(reviewCallTimeoutMillis(reviewerEngine)) {
                         withContext(reviewContext) {
                             reviewerEngine.translatePreservingSourceContext(
                                 text,
@@ -166,6 +191,12 @@ class SelectiveRefinementTranslationEngineProvider(
                     throw cancelled
                 } catch (fatal: Error) {
                     throw fatal
+                } catch (_: TranslationQueueWaitTimeoutException) {
+                    report(targetLanguageTag, decision, SelectiveRefinementOutcome.REVIEW_TIMED_OUT)
+                    return draft
+                } catch (_: TranslationInferenceTimeoutException) {
+                    report(targetLanguageTag, decision, SelectiveRefinementOutcome.REVIEW_TIMED_OUT)
+                    return draft
                 } catch (_: Exception) {
                     report(targetLanguageTag, decision, SelectiveRefinementOutcome.REVIEW_FAILED)
                     return draft
@@ -174,7 +205,7 @@ class SelectiveRefinementTranslationEngineProvider(
                     report(targetLanguageTag, decision, SelectiveRefinementOutcome.REVIEW_TIMED_OUT)
                     return draft
                 }
-                if (!reviewResultIsConservative(text, draft, reviewed)) {
+                if (!reviewResultIsConservative(text, draft, reviewed, sourceLanguageTag, targetLanguageTag)) {
                     report(targetLanguageTag, decision, SelectiveRefinementOutcome.REVIEW_REJECTED)
                     return draft
                 }
@@ -182,6 +213,15 @@ class SelectiveRefinementTranslationEngineProvider(
                 return reviewed
             }
         }
+    }
+
+    private fun reviewCallTimeoutMillis(engine: TextTranslationEngine): Long {
+        val ceiling = queuedReviewTimeoutMillis ?: return reviewTimeoutMillis
+        val bounded = engine as? BoundedQueuedTranslationEngine ?: return reviewTimeoutMillis
+        val declared = bounded.maximumCallDurationMillis
+        check(declared in 100L..ceiling) { "Reviewer queue budget exceeds the configured bound" }
+        // Let the queue report its own timeout before the outer safety watchdog cancels it.
+        return declared + QUEUE_COMPLETION_ALLOWANCE_MILLIS
     }
 
     private fun report(
@@ -197,6 +237,7 @@ class SelectiveRefinementTranslationEngineProvider(
     private companion object {
         const val DEFAULT_DRAFT_TIMEOUT_MILLIS = 3_000L
         const val DEFAULT_REVIEW_TIMEOUT_MILLIS = 800L
+        const val QUEUE_COMPLETION_ALLOWANCE_MILLIS = 100L
     }
 }
 
@@ -215,19 +256,28 @@ internal fun reviewResultIsConservative(
     originalText: String,
     draftTranslation: String,
     reviewedTranslation: String,
+    sourceLanguageTag: String = "ko",
+    targetLanguageTag: String = "en",
 ): Boolean {
     if (reviewedTranslation.isBlank()) return false
-    val originalNumbers = normalizedNumbers(originalText)
-    val draftNumbers = normalizedNumbers(draftTranslation)
-    val reviewedNumbers = normalizedNumbers(reviewedTranslation)
+    val originalNumbers = normalizedNumbers(originalText, sourceLanguageTag)
+    if (originalNumbers.isNotEmpty() &&
+        targetLanguageTag.replace('_', '-').substringBefore('-').equals("en", ignoreCase = true)) {
+        val comparison = EnglishCardinalNumbers.normalizeForComparison(reviewedTranslation) ?: return false
+        // The source is authoritative. Never let a malformed draft prevent repair of its number.
+        return originalNumbers.map(::canonicalIntegerGrouping) ==
+            normalizedNumbers(comparison, targetLanguageTag).map(::canonicalIntegerGrouping)
+    }
+    val draftNumbers = normalizedNumbers(draftTranslation, targetLanguageTag)
+    val reviewedNumbers = normalizedNumbers(reviewedTranslation, targetLanguageTag)
     // A draft can contain the numeric mistake being repaired. Explicit source quantities are
     // authoritative; when none can be parsed, retain the earlier conservative draft guard.
     return reviewedNumbers == originalNumbers &&
         (originalNumbers.isNotEmpty() || reviewedNumbers == draftNumbers)
 }
 
-private fun normalizedNumbers(text: String): List<String> = NUMERIC_TOKEN.findAll(
-    KoreanNumericQuantities.normalizeForTranslation(text, "ko"),
+private fun normalizedNumbers(text: String, languageTag: String): List<String> = NUMERIC_TOKEN.findAll(
+    KoreanNumericQuantities.normalizeForTranslation(text, languageTag),
 )
     .map { match ->
         buildString {
@@ -246,6 +296,11 @@ private fun normalizedNumbers(text: String): List<String> = NUMERIC_TOKEN.findAl
         }
     }
     .toList()
+
+private fun canonicalIntegerGrouping(token: String): String =
+    if (GROUPED_INTEGER.matches(token)) token.replace(",", "") else token
+
+private val GROUPED_INTEGER = Regex("[+\\-]?[1-9][0-9]{0,2}(?:,[0-9]{3})+")
 
 private val NUMERIC_TOKEN = Regex(
     "[+\\-\\u2212]?\\p{Nd}+(?:[.,:/\\uFF0E\\uFF0C\\uFF1A]\\p{Nd}+)*(?:\\s*[%\\uFF05])?",

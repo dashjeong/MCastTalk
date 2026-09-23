@@ -4092,7 +4092,7 @@ private fun GemmaModelCard(
                 Text("선택적 번역 보완 (시험)", fontWeight = FontWeight.SemiBold)
             }
             Text(
-                "ML Kit 초안 중 용어·숫자·긴 문장만 Gemma가 검토합니다. " +
+                "의미 검토 후 확정 · 추가 대기 가능. ML Kit 초안 중 용어·숫자·긴 문장과 선택한 말투를 Gemma가 검토합니다. " +
                     "보완 실패 시 초안을 한 번만 송출합니다. 지연·품질은 시험 후 판단하세요.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

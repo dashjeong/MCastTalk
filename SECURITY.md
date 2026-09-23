@@ -8,7 +8,8 @@ agreement or certification that all vulnerabilities have been removed:
 | Version | Supported |
 |---|---|
 | `0.2.43-alpha` | Withdrawn; maintenance only, do not distribute |
-| `0.2.42-alpha` | Current public Alpha; experimental |
+| `0.2.44-alpha` | Maintenance prerelease; known translation limitations remain |
+| `0.2.42-alpha` | Previous public Alpha; retained for reference |
 | `0.2.40-alpha` | Superseded: continuous transcript buffer recovery fix in 0.2.41 |
 | `0.2.39-alpha` | Previous public Alpha |
 | `< 0.2.39` | :x: |

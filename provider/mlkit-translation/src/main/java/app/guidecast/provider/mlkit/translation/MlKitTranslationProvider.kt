@@ -117,9 +117,9 @@ class MlKitTranslationProvider(
             val lease = slots.awaitLeaseFor(targetLanguageTag, sessionGeneration)
             translateWithWorker(
                 lease = lease,
-                // Preserve the caller's recognized text; normalize only unambiguous quantities
-                // supplied to this context-free translation model.
-                text = app.guidecast.core.translation.KoreanNumericQuantities.normalizeForTranslation(
+                // Preserve recognized text; only this worker input copy receives bounded
+                // quantity notation and confident person-classifier disambiguation.
+                text = app.guidecast.core.translation.KoreanTranslationInput.normalizeForTranslation(
                     text, sourceTag, maximumOutputLength = MAX_SOURCE_CHARACTERS,
                 ),
                 sourceSession = sourceSession,
@@ -428,7 +428,7 @@ class MlKitTranslationProvider(
                     try {
                         val completed = withTimeoutOrNull(WORKER_WARMUP_TIMEOUT_MILLIS) {
                             engineFor(languageTag).translate(
-                                requireNotNull(WARMUP_SOURCE_TEXT[sourceSession.languageTag]),
+                                mlKitWarmupSourceText(sourceSession.languageTag),
                                 sourceSession.languageTag,
                                 languageTag,
                             )
@@ -589,7 +589,7 @@ class MlKitTranslationProvider(
         isOwnerCurrent: () -> Boolean,
     ) {
         val normalized = sourceLanguageTag.toMlKitLanguage()
-        require(normalized in WARMUP_SOURCE_TEXT) {
+        require(normalized in ML_KIT_SOURCE_WARMUP_TEXT) {
             "GuideCast does not support ML Kit source language: $sourceLanguageTag"
         }
         sourceSwitchMutex.withLock {
@@ -779,14 +779,6 @@ class MlKitTranslationProvider(
     }
 
     private companion object {
-        val WARMUP_SOURCE_TEXT = mapOf(
-            "ar" to "مرحبا",
-            "en" to "Hello",
-            "es" to "Hola",
-            "ja" to "こんにちは",
-            "ko" to "안녕하세요",
-            "zh" to "你好",
-        )
         const val MAX_SOURCE_CHARACTERS = 2_000
         const val MAX_LIVE_TARGETS = MAX_SIMULTANEOUS_TRANSLATED_CHANNELS
         const val MODEL_READY_RESULT = "guidecast-model-ready"

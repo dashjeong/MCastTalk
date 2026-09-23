@@ -3,10 +3,13 @@ package app.guidecast.transmitter
 import android.os.Build
 import android.os.SystemClock
 import androidx.test.platform.app.InstrumentationRegistry
+import app.guidecast.core.translation.BoundedQueuedTranslationEngine
 import app.guidecast.core.translation.ContextualTextTranslationEngine
 import app.guidecast.core.translation.FairQueuedTranslationEngineProvider
 import app.guidecast.core.translation.FairTranslationQueueConfig
 import app.guidecast.core.translation.FairTranslationQueueObserver
+import app.guidecast.core.translation.GlossaryTerms
+import app.guidecast.core.translation.TranslationGlossaryContext
 import app.guidecast.core.translation.SelectiveRefinementOutcome
 import app.guidecast.core.translation.SelectiveRefinementTranslationEngineProvider
 import app.guidecast.core.translation.TranslationEngineProvider
@@ -41,16 +44,23 @@ import org.junit.Test
  * Integration of the real providers and the broadcast's selective/fair/admission configuration.
  * This does not start BroadcastService, its automatic recovery coordinator, capture audio, exercise UI/TTS/cloud/approved corrections,
  * or establish human translation quality. It deliberately retains both native providers and the
- * default selective deadlines (3 s draft, 800 ms review); Gemma's own 10 s limit is unchanged.
+ * legacy deadlines (3 s draft, 800 ms review) or the enabled bounded-queue review deadline;
+ * Gemma's own 10 s limit is unchanged. These are separate test methods and result files.
  * After initial preparation there is no test-inserted reset, warmup or retry between cases.
  *
  * Requires dedicatedCorpusDevice=true and the same hash-pinned contextualQualityManifest used
  * by ContextualTranslationQualityDeviceTest, under target externalFilesDir/benchmark.
  */
 class ContextualSelectiveReviewDeviceTest {
-    @Test fun actualSelectiveRouteRecordsReviewApplicationAndMeaning(): Unit = runBlocking {
+    @Test fun actualSelectiveRouteRecordsReviewApplicationAndMeaning() = runTrial(queuedReview = false)
+
+    @Test fun actualQueuedSelectiveRouteRecordsReviewApplicationAndMeaning() = runTrial(queuedReview = true)
+
+    private fun runTrial(queuedReview: Boolean): Unit = runBlocking {
         val args = InstrumentationRegistry.getArguments()
         require(args.getString("dedicatedCorpusDevice") == "true") { "DEDICATED_QUALITY_DEVICE_REQUIRED" }
+        val glossaryMode = args.getString("contextualQualityGlossary") ?: "none"
+        require(glossaryMode in setOf("none", "packaged")) { "INVALID_GLOSSARY_MODE" }
         val app = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as GuideCastApplication
         val base = File(checkNotNull(app.getExternalFilesDir(null)), "benchmark").canonicalFile
         val name = args.getString("contextualQualityManifest") ?: "contextual-quality-round12.json"
@@ -61,35 +71,41 @@ class ContextualSelectiveReviewDeviceTest {
         }
         val bytes = file.readBytes()
         val hash = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
-        check(hash == FIXTURE_SHA256) { "PUBLIC_FIXTURE_SHA256_MISMATCH" }
+        val expectedCaseCount = checkNotNull(FIXTURE_CASE_COUNTS[hash]) { "PUBLIC_FIXTURE_SHA256_MISMATCH" }
         val fixture = JSONObject(bytes.toString(Charsets.UTF_8))
         check(fixture.getInt("schemaVersion") == 1 && fixture.getString("sourceLanguage") == "ko" &&
             fixture.getString("targetLanguage") == "en")
         val cases = fixture.getJSONArray("cases")
-        check(cases.length() == 10)
+        check(cases.length() == expectedCaseCount)
         check((0 until cases.length()).count {
             cases.getJSONObject(it).getString("kind") == "recorded-asr-output"
         } == 5)
         check((0 until cases.length()).count {
             cases.getJSONObject(it).getString("kind") == "authored-counterexample"
-        } == 5)
+        } == expectedCaseCount - 5)
 
         val capability = GemmaBroadcastCapability.detect(app)
         val rows = JSONArray()
         val failures = JSONArray()
-        val output = File(base, "contextual-selective-results-${System.currentTimeMillis()}.json")
+        val prefix = if (queuedReview) "contextual-selective-quality-results" else "contextual-selective-results"
+        val output = File(base, "$prefix-${System.currentTimeMillis()}.json")
+        val queueConfig = FairTranslationQueueConfig(maxPendingPerLanguage = 2,
+            queueWaitTimeoutMillis = 30_000L, inferenceTimeoutMillis = 15_000L)
         val result = JSONObject().put("schemaVersion", 1).put("state", "PREPARING")
             .put("fixtureId", fixture.getString("fixtureId")).put("fixtureSha256", hash)
             .put("fixtureBytes", bytes.size).put("cases", rows).put("failures", failures)
             .put("scope", "REAL_PROVIDER_SELECTIVE_QUEUE_INTEGRATION_NOT_BROADCAST_SERVICE_E2E")
-            .put("route", "MLKIT_SELECTIVE_DEFAULTS_FAIR_QUEUE_NATIVE_ADMISSION_GEMMA")
+            .put("route", if (queuedReview) "MLKIT_SELECTIVE_BOUNDED_QUEUE_NATIVE_ADMISSION_GEMMA"
+                else "MLKIT_SELECTIVE_DEFAULTS_FAIR_QUEUE_NATIVE_ADMISSION_GEMMA")
             .put("sourceLanguage", "ko").put("targetLanguage", "en")
+            .put("glossaryMode", glossaryMode)
             .put("audioRecognitionExecuted", false).put("humanMeaningAssessment", false)
             .put("externalAiApiUsed", false).put("userCorrectionsModified", false)
-            .put("publicFixtureTextStoredLocally", true).put("live800msSelectiveBudgetTested", true)
+            .put("publicFixtureTextStoredLocally", true).put("live800msSelectiveBudgetTested", !queuedReview)
             .put("productionAutomaticRecoveryTested", false)
-            .put("gemmaProviderDeadlineMs", 10_000).put("selectiveUsesConstructorDefaults", true)
+            .put("gemmaProviderDeadlineMs", 10_000).put("selectiveUsesConstructorDefaults", !queuedReview)
             .put("draftBudgetMs", 3_000).put("reviewBudgetMs", 800).put("style", "AUTO")
+            .put("queuedReviewBudgetMs", if (queuedReview) queueConfig.maximumCallDurationMillis else JSONObject.NULL)
             .put("sampler", JSONObject().put("topK", 1).put("topP", 1.0).put("temperature", 0.0).put("seed", 7))
             .put("queue", JSONObject().put("maxPendingPerLanguage", 2)
                 .put("queueWaitTimeoutMs", 30_000).put("inferenceTimeoutMs", 15_000))
@@ -111,6 +127,11 @@ class ContextualSelectiveReviewDeviceTest {
         val unmatchedQueueEvents = AtomicInteger()
         save()
         try {
+            if (glossaryMode == "packaged") {
+                var overrides = 0
+                app.glossary.exportOverrides { overrides++ }
+                check(overrides == 0) { "PUBLIC_FIXTURE_REQUIRES_NO_USER_GLOSSARY_OVERRIDES" }
+            }
             app.withTranslationBackendUse {
                 withTimeout(600_000L) {
                     check(capability.supported) { "BROADCAST_GEMMA_MEMORY_CAPABILITY_REQUIRED" }
@@ -182,8 +203,7 @@ class ContextualSelectiveReviewDeviceTest {
                     val draft = traceProvider(mlKit.withNativeFirstUseGate(gate, MLKIT_KEY), active, "draft")
                     val reviewer = traceProvider(gemma.withNativeFirstUseGate(gate, GEMMA_KEY), active, "review")
                     val queue = FairQueuedTranslationEngineProvider(reviewer, queueScope,
-                        config = FairTranslationQueueConfig(maxPendingPerLanguage = 2,
-                            queueWaitTimeoutMillis = 30_000L, inferenceTimeoutMillis = 15_000L),
+                        config = queueConfig,
                         observer = FairTranslationQueueObserver { timing ->
                             val trace = active.get()
                             if (trace == null) unmatchedQueueEvents.incrementAndGet() else {
@@ -208,8 +228,9 @@ class ContextualSelectiveReviewDeviceTest {
                             check(target == "en" && gemma.hasActivePreparedWorker() && !gemma.isAutomaticRetryBlocked()) {
                                 "Optional Gemma reviewer is not ready"
                             }
-                            val engine = queue.engineFor(target) as ContextualTextTranslationEngine
-                            object : ContextualTextTranslationEngine {
+                            val engine = queue.engineFor(target) as BoundedQueuedTranslationEngine
+                            object : BoundedQueuedTranslationEngine {
+                                override val maximumCallDurationMillis = engine.maximumCallDurationMillis
                                 override suspend fun translateWithContext(text: String, contextBefore: String?,
                                     sourceLanguageTag: String, targetLanguageTag: String): String {
                                     checkNotNull(active.get()).queued = true
@@ -217,6 +238,7 @@ class ContextualSelectiveReviewDeviceTest {
                                 }
                             }
                         },
+                        queuedReviewTimeoutMillis = if (queuedReview) queueConfig.maximumCallDurationMillis else null,
                         onDiagnostic = { diagnostic ->
                             active.get()?.let { trace ->
                                 trace.diagnostics.incrementAndGet()
@@ -244,9 +266,14 @@ class ContextualSelectiveReviewDeviceTest {
                         rows.put(row)
                         val requestStarted = SystemClock.elapsedRealtime()
                         try {
-                            val translated = withContext(TranslationStyleContext(TranslationStyle.AUTO)) {
+                            val terms = if (glossaryMode == "packaged") app.glossary.matching(original, "ko", "en")
+                                else emptyList()
+                            row.put("matchedGlossaryTerms", terms.size)
+                            val rawTranslated = withContext(TranslationStyleContext(TranslationStyle.AUTO) +
+                                TranslationGlossaryContext(GlossaryTerms.hints(terms))) {
                                 engine.translateWithContext(original, context, "ko", "en")
                             }
+                            val translated = GlossaryTerms.correct(rawTranslated, terms)
                             check(translated.isNotBlank() && translated.length <= 1_200) { "MALFORMED_FINAL_TRANSLATION" }
                             row.put("requestState", "COMPLETED").put("finalTranslation", translated)
                                 .put("finalAssets", assess(item, translated))
@@ -280,7 +307,11 @@ class ContextualSelectiveReviewDeviceTest {
                         row.put("reviewApplied", accepted).put("draftFallbackUsed", completed && !accepted && !draftAccepted)
                             .put("draftAcceptedWithoutReview", completed && draftAccepted)
                             .put("finalEqualsDraft", completed && row.optString("finalTranslation") == row.optString("draftTranslation"))
-                        if (!accepted) failures.put("${item.getString("id")}:REVIEW_NOT_APPLIED")
+                        // Record the actual policy outcome, while checking every final meaning
+                        // asset. A successful inference alone must never certify translation quality.
+                        if (!accepted && (!queuedReview || !draftAccepted)) {
+                            failures.put("${item.getString("id")}:REVIEW_NOT_APPLIED")
+                        }
                         if (row.optJSONObject("finalAssets")?.optBoolean("passed") != true) failures.put("${item.getString("id")}:FINAL_MEANING_ASSET_FAILED")
                         if (trace.diagnostics.get() != 1 || row.optInt("draftCalls") != 1) {
                             failures.put("${item.getString("id")}:ROUTE_ACCOUNTING_FAILED")
@@ -293,17 +324,24 @@ class ContextualSelectiveReviewDeviceTest {
             }
             val completed = (0 until rows.length()).count { rows.getJSONObject(it).optString("requestState") == "COMPLETED" }
             val accepted = (0 until rows.length()).count { rows.getJSONObject(it).optBoolean("reviewApplied") }
+            val policyRequested = (0 until rows.length()).count {
+                rows.getJSONObject(it).optJSONArray("reviewReasons")?.length()?.let { count -> count > 0 } == true
+            }
+            val reviewDenominator = if (queuedReview) policyRequested else expectedCaseCount
             val meaning = (0 until rows.length()).count { rows.getJSONObject(it).optJSONObject("finalAssets")?.optBoolean("passed") == true }
             val outcomes = JSONObject()
             SelectiveRefinementOutcome.values().forEach { outcome ->
                 outcomes.put(outcome.name, (0 until rows.length()).count { rows.getJSONObject(it).optString("selectiveOutcome") == outcome.name })
             }
-            result.put("requestedCases", 10).put("executedCases", rows.length()).put("completedRequests", completed)
+            result.put("requestedCases", expectedCaseCount).put("executedCases", rows.length()).put("completedRequests", completed)
                 .put("reviewAcceptedCases", accepted).put("finalSemanticAssetPassCases", meaning)
+                .put("policyRequestedReviewCases", policyRequested)
+                .put("policySkippedReviewCases", (0 until rows.length()).count { rows.getJSONObject(it).optBoolean("draftAcceptedWithoutReview") })
                 .put("draftFallbackCases", (0 until rows.length()).count { rows.getJSONObject(it).optBoolean("draftFallbackUsed") })
-                .put("reviewApplicationDenominator", 10).put("semanticAssetDenominator", 10)
+                .put("reviewApplicationDenominator", reviewDenominator).put("semanticAssetDenominator", expectedCaseCount)
                 .put("outcomes", outcomes).put("unmatchedQueueEvents", unmatchedQueueEvents.get())
-            val passed = rows.length() == 10 && completed == 10 && accepted == 10 && meaning == 10 &&
+            val passed = rows.length() == expectedCaseCount && completed == expectedCaseCount &&
+                accepted == reviewDenominator && meaning == expectedCaseCount &&
                 failures.length() == 0 && unmatchedQueueEvents.get() == 0
             result.put("state", if (passed) "SELECTIVE_APPLICATION_AND_ASSET_GATES_PASSED" else "SELECTIVE_APPLICATION_OR_ASSET_GATES_FAILED")
         } catch (error: Throwable) {
@@ -409,7 +447,10 @@ class ContextualSelectiveReviewDeviceTest {
     }
 
     private companion object {
-        const val FIXTURE_SHA256 = "0350057708c2043bf954a72d827fb320d7a476fbe2098ec17d398077a707a708"
+        val FIXTURE_CASE_COUNTS = mapOf(
+            "0350057708c2043bf954a72d827fb320d7a476fbe2098ec17d398077a707a708" to 10,
+            "c94c5ac80d72531f79a1d6219fba0d9f1f11e7596e28e50e0eb0f06f52522ac8" to 26,
+        )
         const val MLKIT_KEY = "mlkit-translation"
         const val GEMMA_KEY = "gemma-translation"
         const val QUEUE_SETTLEMENT_MS = 20_000L

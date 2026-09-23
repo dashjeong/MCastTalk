@@ -2648,17 +2648,18 @@ class BroadcastService : Service() {
         } else null
         // A single shared engine, not one model copy per language. Recovery executes inside an
         // admitted job; time spent awaiting a fair turn is not reported as a failed Gemma call.
+        val gemmaQueueConfig = FairTranslationQueueConfig(
+            maxPendingPerLanguage = 2,
+            queueWaitTimeoutMillis = 30_000L,
+            inferenceTimeoutMillis = GEMMA_PIPELINE_TRANSLATION_TIMEOUT_MILLIS,
+        )
         val fairGemma = gemmaWithFailover?.let { failover ->
             FairQueuedTranslationEngineProvider(
                 // Review mode preserves its already-computed draft itself: never execute ML Kit
                 // a second time inside the review lane or mistake fallback for successful review.
                 delegate = if (selectiveTranslationRefinement) admittedGemmaTranslationProvider else failover,
                 parentScope = serviceScope,
-                config = FairTranslationQueueConfig(
-                    maxPendingPerLanguage = 2,
-                    queueWaitTimeoutMillis = 30_000L,
-                    inferenceTimeoutMillis = GEMMA_PIPELINE_TRANSLATION_TIMEOUT_MILLIS,
-                ),
+                config = gemmaQueueConfig,
             ).also { queue ->
                 try {
                     synchronized(translationResourceLock) {
@@ -2738,6 +2739,9 @@ class BroadcastService : Service() {
         } else null
         val selectiveProvider = SelectiveRefinementTranslationEngineProvider(
             draftProvider = admittedFallbackTranslationProvider,
+            // The operator enabled meaning review. Keep its fair queue's wait/inference bounds
+            // rather than cancelling all languages under a shared 800 ms wall-clock deadline.
+            queuedReviewTimeoutMillis = gemmaQueueConfig.maximumCallDurationMillis,
             reviewerAvailable = { target ->
                 target in gemmaTargets && fairGemma != null && gemmaLiveActive.get() &&
                     app.gemmaTranslationProvider.hasActivePreparedWorker() &&
