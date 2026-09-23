@@ -17,6 +17,6 @@ internal class SentenceRefiningTranslationEngine(
         val draft = if (delegate is ContextualTextTranslationEngine)
             delegate.translateWithContext(text, contextBefore, sourceLanguageTag, targetLanguageTag)
         else delegate.translate(text, sourceLanguageTag, targetLanguageTag)
-        return reviewer.refine(sourceLanguageTag, targetLanguageTag, text, draft, live = true, contextBefore = contextBefore)
+        return reviewer.refine(sourceLanguageTag, targetLanguageTag, text, draft, live = true)
     }
 }

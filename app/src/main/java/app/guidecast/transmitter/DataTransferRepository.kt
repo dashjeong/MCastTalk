@@ -37,7 +37,6 @@ class DataTransferRepository(private val app: GuideCastApplication) {
             DataTransferStage(File.createTempFile("portable-export-check-", ".db", app.cacheDir)).use { validation ->
             val coroutine = currentCoroutineContext()
             var count = 0L
-            var noteAudio = emptyList<Pair<File, String>>()
             val digest = MessageDigest.getInstance("SHA-256")
             val validationBatch = ArrayList<JSONObject>(32)
             fun flushValidation() {
@@ -107,21 +106,11 @@ class DataTransferRepository(private val app: GuideCastApplication) {
                             after = rows.lastOrNull()?.key
                         } while (rows.size == 200)
                         FileTranscriptLibrary(app).use { it.exportPortable(::emit) }
-                        noteAudio = VoiceNoteTransfer.export(VoiceNoteRepository(File(app.filesDir, "voice-notes")), ::emit) { coroutine.ensureActive() }
                     }
                 }
                 flushValidation()
                 validation.validateReferences(kind)
                 zip.closeEntry()
-                noteAudio.forEach { (audio, expectedHash) ->
-                    bytes += audio.length()
-                    require(bytes <= DataTransferFormat.MAX_EXPANDED_BYTES) { "백업이 지원 용량 8GB를 초과합니다." }
-                    zip.putNextEntry(ZipEntry("voice-notes/${audio.name}"))
-                    require(audio.inputStream().use { VoiceNoteTransfer.copy(it, zip) { coroutine.ensureActive() } } == expectedHash) {
-                        "백업 준비 중 녹음이 변경됐습니다. 작업을 중지하고 다시 백업하세요."
-                    }
-                    zip.closeEntry()
-                }
                 zip.putNextEntry(ZipEntry("manifest.json"))
                 zip.write(DataTransferFormat.manifest(kind, count, digest.digest().joinToString("") { "%02x".format(it) }).toString().toByteArray(Charsets.UTF_8))
                 zip.closeEntry()
@@ -141,10 +130,7 @@ class DataTransferRepository(private val app: GuideCastApplication) {
                 requireNotNull(app.contentResolver.openInputStream(source)).use { stage.readZip(it, kind, coroutine, onProgress) }
                 coroutine.ensureActive()
                 check(!app.dataTransferUnavailable()) { "입력·방송을 중지한 뒤 가져오세요." }
-                if (kind == DataTransferKind.SCRIPTS) {
-                    FileTranscriptLibrary(app).use { it.validatePortableCapacity(stage.records("file")) }
-                    VoiceNoteRepository(File(app.filesDir, "voice-notes")).validateImport(stage.voiceNotes)
-                }
+                if (kind == DataTransferKind.SCRIPTS) FileTranscriptLibrary(app).use { it.validatePortableCapacity(stage.records("file")) }
                 onProgress(DataTransferProgress("검사를 마쳤습니다. 기존 자료를 유지하며 병합합니다.", stage.count, applying = true))
                 var inserted = 0L
                 when (kind) {
@@ -173,13 +159,12 @@ class DataTransferRepository(private val app: GuideCastApplication) {
                         FileTranscriptLibrary(app).use { library -> inserted += library.importPortable { type ->
                             stage.records(type).onEach { coroutine.ensureActive() }
                         } }
-                        inserted += VoiceNoteRepository(File(app.filesDir, "voice-notes")).importMissing(stage.voiceNotes) { coroutine.ensureActive() }
                     }
                 }
                 DataTransferResult(inserted, when {
                     stage.count == 0L -> "빈 백업입니다. 기존 자료를 유지했습니다."
                     kind == DataTransferKind.SETTINGS -> "설정을 가져왔습니다. 클라우드 전송과 자동 학습 동의는 꺼진 상태입니다."
-                    kind == DataTransferKind.SCRIPTS -> "가져오기를 마쳤습니다. 새 항목 ${inserted}개 · 기존 항목과 확정 수정은 유지했습니다. 녹톡 원음은 함께 복원했습니다. 외부 파일 음원은 ‘파일 찾기’로 다시 연결하세요."
+                    kind == DataTransferKind.SCRIPTS -> "가져오기를 마쳤습니다. 새 항목 ${inserted}개 · 기존 항목과 확정 수정은 유지했습니다. 파일 음원은 ‘파일 찾기’로 다시 연결하세요."
                     else -> "가져오기를 마쳤습니다. 새 항목 ${inserted}개 · 기존 항목과 확정 수정은 유지했습니다."
                 })
             }
@@ -193,7 +178,7 @@ internal data class PreparedLocalBackup(val file: File, val kind: DataTransferKi
 
 internal typealias BackupPreparer = suspend (DataTransferKind, (DataTransferProgress) -> Unit) -> PreparedLocalBackup
 
-/** Shared by the real repository and synthetic UI fixtures; only explicit backups include note audio. */
+/** Shared by the real repository and synthetic UI fixtures; preparation never copies audio files. */
 internal suspend fun savePreparedDownload(
     app: GuideCastApplication,
     kind: DataTransferKind,
@@ -235,7 +220,6 @@ internal object PortableSettings {
         put("lab", JSONObject().apply {
             put("expressiveTts", options.expressiveTtsEnabled); put("paraphrase", options.paraphraseEnabled)
             put("register", options.translationRegister.name); put("provider", options.provider.name); put("model", options.modelId)
-            put("secondaryModel", options.secondaryModelId); put("comparisonSituation", options.comparisonSituation)
         })
         put("voices", JSONObject(app.speechSynthesisProvider.voicePreferences.value.mapValues { it.value.name }))
         put("registeredPackages", JSONArray(app.getSharedPreferences("playback-targets", Context.MODE_PRIVATE)
@@ -250,7 +234,7 @@ internal object PortableSettings {
         row.optJSONObject("operator")?.let { put("operator", OperatorOptions.fromJson(it).toJson()) }
         row.optJSONObject("translationApi")?.let { put("translationApi", TranslationApiOptions.fromPortable(it).portable()) }
         row.optJSONObject("lab")?.let { lab -> put("lab", JSONObject().apply {
-            listOf("expressiveTts", "paraphrase", "register", "provider", "model", "secondaryModel", "comparisonSituation").forEach { key -> if (lab.has(key)) put(key, lab.get(key)) }
+            listOf("expressiveTts", "paraphrase", "register", "provider", "model").forEach { key -> if (lab.has(key)) put(key, lab.get(key)) }
         }) }
     }
     fun validate(row: JSONObject) {
@@ -265,11 +249,6 @@ internal object PortableSettings {
             if (lab.has("register")) TranslationRegister.valueOf(lab.getString("register"))
             if (lab.has("provider")) CloudReviewProvider.valueOf(lab.getString("provider"))
             if (lab.has("model")) require(validReviewModel(lab.getString("model")))
-            if (lab.has("secondaryModel")) require(validReviewModel(lab.getString("secondaryModel")))
-            if (lab.has("comparisonSituation")) {
-                val value = lab.getString("comparisonSituation")
-                require(value.length <= 300 && !containsCredentialLikeText(value) && value.none { it == '\u0000' || it.code < 32 && it !in "\n\r\t" })
-            }
         }
         row.optJSONObject("voices")?.let { voices ->
             require(voices.length() <= 100)
@@ -304,8 +283,6 @@ internal object PortableSettings {
                 translationRegister = if (lab.has("register")) TranslationRegister.valueOf(lab.getString("register")) else options.translationRegister,
                 provider = provider,
                 modelId = if (lab.has("model")) lab.getString("model") else if (provider != options.provider) defaultReviewModel(provider) else options.modelId,
-                secondaryModelId = if (lab.has("secondaryModel")) lab.getString("secondaryModel") else if (provider != options.provider) defaultReviewModel(provider.other()) else options.secondaryModelId,
-                comparisonSituation = if (lab.has("comparisonSituation")) lab.getString("comparisonSituation") else options.comparisonSituation,
             )
         }
         app.developerLabSettings.importOptions(options)
@@ -326,4 +303,4 @@ internal fun BroadcastSnapshot.dataTransferUnavailable(): Boolean = translationT
     inputPhase in setOf(InputPhase.STARTING, InputPhase.ACTIVE, InputPhase.PAUSED)
 
 internal fun GuideCastApplication.dataTransferUnavailable(): Boolean = broadcastRuntime.state.value.dataTransferUnavailable() ||
-    localFileWorkActive.value || localVoiceNoteWorkActive.value || localModelWorkActive.value
+    localFileWorkActive.value || localModelWorkActive.value

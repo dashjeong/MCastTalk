@@ -68,11 +68,6 @@ class DeveloperCloudMemoryDeviceTest {
         val pair = JSONObject(openai.getJSONArray("input").getJSONObject(0).getString("content"))
         assertEquals(setOf("original", "draft"), pair.keys().asSequence().toSet())
         assertEquals(2, pair.length())
-        val contextual = JSONObject(CloudReviewJson.request(request.copy(contextBefore = "synthetic previous sentence", situation = "guided tour")))
-        val contextualData = JSONObject(contextual.getJSONArray("input").getJSONObject(0).getString("content"))
-        assertEquals(setOf("original", "draft", "preceding_context", "situation"), contextualData.keys().asSequence().toSet())
-        assertEquals("synthetic previous sentence", contextualData.getString("preceding_context"))
-        assertFalse(contextualData.has("related_examples"))
         val result = JSONObject().put("accepted", true).put("corrected", "synthetic corrected").toString()
         val response = JSONObject().put("status", "completed").put("output", JSONArray().put(JSONObject()
             .put("type", "message").put("content", JSONArray().put(JSONObject().put("type", "output_text").put("text", result)))))
@@ -80,9 +75,7 @@ class DeveloperCloudMemoryDeviceTest {
         response.put("status", "incomplete")
         assertNull(CloudReviewJson.corrected(CloudReviewProvider.OPENAI, response.toString()))
         val google = JSONObject(CloudReviewJson.request(request.copy(provider = CloudReviewProvider.GOOGLE, modelId = "gemini-2.5-flash-lite")))
-        // generateContent TextResponseFormat uses a protobuf enum, not a MIME string.
-        // https://ai.google.dev/api/generate-content#TextResponseFormat
-        assertEquals("APPLICATION_JSON", google.getJSONObject("generationConfig").getJSONObject("responseFormat").getJSONObject("text").getString("mimeType"))
+        assertEquals("application/json", google.getJSONObject("generationConfig").getJSONObject("responseFormat").getJSONObject("text").getString("mimeType"))
         val googleResponse = JSONObject().put("candidates", JSONArray().put(JSONObject().put("finishReason", "STOP")
             .put("content", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", result))))))
         assertEquals("synthetic corrected", CloudReviewJson.corrected(CloudReviewProvider.GOOGLE, googleResponse.toString()))

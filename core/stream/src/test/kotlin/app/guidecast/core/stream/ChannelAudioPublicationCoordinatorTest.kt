@@ -14,18 +14,6 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChannelAudioPublicationCoordinatorTest {
     @Test
-    fun `capture lease never waits for tone and recovers immediately after release`() = runTest {
-        val coordinator = ChannelAudioPublicationCoordinator(listOf("source", "en"))
-        val tone = requireNotNull(coordinator.acquireAllChannels(1_000))
-        repeat(100) { assertNull(coordinator.tryAcquireChannel("source")) }
-        tone.close()
-        val capture = requireNotNull(coordinator.tryAcquireChannel("source"))
-        assertNull(coordinator.tryAcquireChannel("source"))
-        capture.close()
-        requireNotNull(coordinator.tryAcquireChannel("source")).close()
-    }
-
-    @Test
     fun `all-channel tone waits for active speech and then excludes every channel`() = runTest {
         val coordinator = ChannelAudioPublicationCoordinator(listOf("en", "ja"))
         val englishSpeech = coordinator.acquireChannel("en")

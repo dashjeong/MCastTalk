@@ -52,10 +52,9 @@ internal fun MicrophoneNoiseOptions(
 
 /** Switching pages is view-only: never start, stop or prepare an engine here. */
 @Composable
-internal fun SettingsCategoryPicker(selected: SettingsCategory,
-    categories: List<SettingsCategory> = SettingsCategory.entries, onSelect: (SettingsCategory) -> Unit) {
+internal fun SettingsCategoryPicker(selected: SettingsCategory, onSelect: (SettingsCategory) -> Unit) {
     Row(Modifier.fillMaxWidth().selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        categories.forEach { category ->
+        SettingsCategory.entries.forEach { category ->
             val active = selected == category
             Surface(
                 shape = MaterialTheme.shapes.medium,
