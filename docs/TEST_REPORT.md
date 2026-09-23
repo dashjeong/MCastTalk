@@ -1,7 +1,13 @@
 # 0.2.43 Alpha validation
 
+> **WITHDRAWN 2026-09-23 — NOT RELEASE APPROVAL.** Users reported failed audio broadcast
+> and test flows. Voice notes record WAV but do not transcribe while recording, missing
+> the required note-taking experience. The results below are historical component checks;
+> they did not establish complete user journeys. See [maintenance review](MAINTENANCE_0_2_43.md).
+> The public release and tag have been withdrawn; public product source is restored to 0.2.42.
+
 Validated on 2026-09-22. Package `app.guidecast.transmitter.alpha`, versionCode `49`.
-This is a public Alpha release. Physical-device latency, prolonged operation and human
+This was a public Alpha release and is now withdrawn. Physical-device latency, prolonged operation and human
 translation/voice quality remain unverified; automated results are not substitutes.
 
 ## Product changes

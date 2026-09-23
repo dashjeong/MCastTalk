@@ -1,5 +1,11 @@
 # MCastTalk
 
+> **0.2.43-alpha 공개 철회 · 보수 전용 브랜치**
+> 음성 송출·시험 기능 실패 및 음성노트 요구 누락 보고로 2026-09-23 배포를 철회했습니다.
+> 이 브랜치의 APK를 공개하거나 설치 권장하지 않습니다.
+> 현재 공개본은 [0.2.42-alpha](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.42-alpha)입니다.
+> [확인된 문제·보수 우선순위·재검증 기준](docs/MAINTENANCE_0_2_43.md)
+
 **실시간 다국어 통역방송(feat. DMZ peace walk)**
 
 **0.2.43-alpha — 서비스 홈·음성노트·문맥 검토**
@@ -10,8 +16,8 @@
 TXT·SRT·Markdown·JSON·WAV 저장과 녹음까지 포함하는 백업·가져오기를 제공합니다.
 [사용 방법과 지원 범위](docs/VOICE_NOTES.md) · [문맥 교차 검토](docs/COMPARATIVE_LEARNING.md)
 
-[APK 다운로드](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.43-alpha) ·
-[검증 결과와 미검증 환경](docs/TEST_REPORT.md)
+[현재 공개 APK: 0.2.42](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.42-alpha) ·
+[철회 전 시험 기록과 그 한계](docs/TEST_REPORT.md)
 (`0.2.43-alpha`, `versionCode 49`). 기존 공개 앱과 같은 배포자 서명을 사용합니다.
 
 아스트라 미니미는 기기 상태를 진단하고 개선안을 안내합니다. 실험실에서는 필요한 문장만
