@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcasttalk-bootstrap"
+version = "0.1.0"
+description = "Offline Windows bootstrap and model-pack verification for MCastTalk"
+requires-python = ">=3.11"
+license = {text = "Apache-2.0"}
+
+[project.scripts]
+mcasttalk-bootstrap = "mcasttalk_bootstrap.cli:main"
+
+[tool.setuptools]
+packages = ["mcasttalk_bootstrap"]

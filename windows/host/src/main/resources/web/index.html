@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#11151d">
+  <meta name="description" content="MCastTalk 로컬 다국어 회의 공간">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/styles.css">
+  <title>MCastTalk · 회의</title>
+</head>
+<body>
+  <a class="skip-link" href="#room-main">본문으로 건너뛰기</a>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="MCastTalk 시작 화면"><span class="brand-mark" aria-hidden="true">M</span><strong>MCastTalk</strong></a>
+      <nav class="service-nav" role="tablist" aria-label="4대 서비스">
+        <button class="service-tab is-active" id="service-translate" role="tab" aria-selected="true" data-mode="multilingual">
+          <span class="service-icon" aria-hidden="true">🌐</span>
+          <span>통역톡</span>
+        </button>
+        <button class="service-tab" id="service-live" role="tab" aria-selected="false" data-mode="voice" disabled title="독립 원음 방송 서비스 준비 중">
+          <span class="service-icon" aria-hidden="true">🎙️</span>
+          <span>라이브톡</span>
+        </button>
+        <button class="service-tab" id="service-notes" role="tab" aria-selected="false" data-mode="notes" disabled title="녹음·전사·보관 기능 준비 중">
+          <span class="service-icon" aria-hidden="true">📝</span>
+          <span>녹톡</span>
+        </button>
+        <button class="service-tab" id="service-script" role="tab" aria-selected="false" data-mode="files" disabled title="파일 전사·내보내기 준비 중">
+          <span class="service-icon" aria-hidden="true">📑</span>
+          <span>스크립톡</span>
+        </button>
+      </nav>
+      <span class="build-label">0.4.1 개발 검증 · 로컬 회의</span>
+      <div class="connection-pill" data-state="offline" id="connection-pill" role="status"><span class="status-dot" aria-hidden="true"></span><span id="connection-label">연결 안 됨</span></div>
+      <div id="account-actions" class="account-actions" hidden><span id="account-label"></span><button id="my-account-button" type="button">내 계정</button><button id="operator-button" type="button" hidden>운영 상태</button><button id="admin-button" type="button" hidden>계정 관리</button><button id="logout-button" type="button">로그아웃</button></div>
+    </header>
+    <main id="room-main" tabindex="-1">
+      <p id="auth-loading" class="auth-loading" role="status">로그인 상태 확인 중…</p>
+      <p id="invitation-notice" class="invitation-notice" role="status" hidden></p>
+      <section id="login-view" class="login-view" aria-labelledby="login-heading" hidden>
+        <div><p class="eyebrow">WELCOME TO MCASTTALK</p><h1 id="login-heading" tabindex="-1">내 계정으로<br>회의에 연결하세요.</h1><p class="intro-copy">관리자가 발급한 계정으로 로그인하세요.<br>게스트 계정은 지정된 회의실과 기간에만 사용할 수 있습니다.<br>읽기 전용 참가자도 로그인이 필요합니다.</p><p class="field-hint">최초 관리자 계정은 Windows 프로그램의 초기 설정에서 직접 만듭니다. 기본 계정이나 공개 회원가입은 제공되지 않습니다.</p></div>
+        <form id="login-form" class="join-form"><h2>로그인</h2><label for="login-username">사용자 이름<input id="login-username" autocomplete="username" maxlength="64" required></label><label for="login-password" class="audio-field">비밀번호<input id="login-password" type="password" autocomplete="current-password" maxlength="256" required></label><button id="login-button" class="primary-button" type="submit">로그인</button><p id="login-status" class="form-note" role="status"></p></form>
+      </section>
+      <section id="prejoin" class="prejoin" aria-labelledby="prejoin-heading" hidden>
+        <div class="prejoin-intro">
+          <p class="eyebrow">YOUR LANGUAGE. ONE CONVERSATION.</p>
+          <h1 id="prejoin-heading">대화가 만나는 곳,<br>모두의 언어로.</h1>
+          <p class="intro-copy">입장 전에 계정과 언어 설정을 확인하세요.<br>마이크·카메라는 참가 후 직접 켤 수 있습니다.</p>
+          <div class="device-preview" aria-label="미디어 기능 상태">
+            <div class="preview-avatar" id="preview-avatar" aria-hidden="true">나</div>
+            <strong id="preview-name">내 참가 화면</strong>
+            <p id="preview-role-label">계정 인증 기반 회의 참가</p>
+            <div class="device-indicators"><span id="indicator-mic">마이크 · 카메라 수동 시작</span><span id="indicator-sub">통역 모델 확인 중</span></div>
+          </div>
+          <div class="availability-note"><span class="note-icon" aria-hidden="true">i</span><p>영상·원음은 같은 LAN의 WebRTC 연결을 사용합니다. 자동 통역에는 호스트의 로컬 모델 설정이 필요합니다. AI 통역은 오류가 있을 수 있으며 중요한 내용은 원문과 확인하세요. 기기 성능에 따라 처리 지연이 발생합니다.</p></div>
+        </div>
+        <form id="join-form" class="join-form">
+          <p class="eyebrow">READY TO JOIN</p><h2>회의 참가</h2>
+          <div class="field-grid">
+            <label for="room-id">회의실 ID<input id="room-id" name="roomId" value="room-101" pattern="[A-Za-z0-9][A-Za-z0-9_\-]{2,63}" maxlength="64" aria-describedby="room-id-help" required></label>
+            <label for="display-name">계정 표시 이름<input id="display-name" name="displayName" autocomplete="nickname" maxlength="64" readonly required></label>
+          </div>
+          <p class="field-hint" id="room-id-help">영문·숫자·하이픈·밑줄 3~64자. 같은 ID로 참가하면 함께 연결됩니다.</p>
+          <p id="guest-access-note" class="field-hint" hidden></p>
+          <div id="prejoin-preferences">
+            <fieldset id="language-preferences"><legend>내 언어 및 오디오 설정</legend>
+              <div class="language-grid">
+                <label for="input-language">실제로 말하는 언어<select id="input-language" name="inputLanguage"><option value="ko">한국어</option><option value="en">English</option><option value="ja">日本語</option><option value="zh-CN">简体中文</option></select></label>
+                <label for="publish-language">상대에게 전달할 언어<select id="publish-language" name="publishLanguage"><option value="auto">기본 · 말하는 언어</option><option value="ko">한국어</option><option value="en">English</option><option value="ja">日本語</option><option value="zh-CN">简体中文</option></select></label>
+                <label for="listen-language">기본 청취 언어 · 모국어<select id="listen-language" name="listenLanguage"><option value="ko">한국어</option><option value="en">English</option><option value="ja">日本語</option><option value="zh-CN">简体中文</option></select></label>
+                <label for="secondary-original-language">추가 원음 유지 언어<select id="secondary-original-language" name="secondaryOriginalLanguage"><option value="">없음</option><option value="ko">한국어</option><option value="en">English</option><option value="ja">日本語</option><option value="zh-CN">简体中文</option></select></label>
+                <label for="display-language">그 외 언어의 번역 자막<select id="display-language" name="displayLanguage"><option value="ko">한국어</option><option value="en">English</option><option value="ja">日本語</option><option value="zh-CN">简体中文</option></select></label>
+              </div>
+              <p class="field-hint">기본 청취 언어와 추가 언어는 통역 없이 정상 음량의 원음·원문 자막으로 전달합니다. 예: 한국어 + 영어. 다른 언어만 번역합니다. 발화자는 실제로 말하는 언어를 따로 선택하세요.</p>
+              <label for="audio-mode" class="audio-field">모르는 언어의 수신 오디오<select id="audio-mode" name="audioMode"><option value="both">통역 우선 + 원음 배경 (권장)</option><option value="translated">번역 음성만</option><option value="original">모든 언어 원음만</option><option value="captions_only">자막만 · 모든 음성 끄기</option></select></label>
+              <label for="ducking-mode" class="audio-field">통역 음량 방식<select id="ducking-mode" name="duckingMode"><option value="ducked_original">통역 100% · 모르는 원음은 배경 음량</option><option value="translated_only">모르는 언어의 원음 끄기</option><option value="original_only">통역 끄기 · 원음만</option></select></label>
+              <p class="field-hint">참가자별 표시·청취 언어를 사용합니다. 자동 통역은 짧은 발화 단위로 처리합니다. 모델 미설정 시 원음·원문 채팅만 제공됩니다.</p>
+              <p id="preference-status" class="preference-status" role="status"></p>
+              <section aria-label="자원 최적화 다중언어 권장" class="capacity-card">
+                <strong>자원 최적화 · 통역 언어 권장</strong>
+                <p id="capacity-summary" role="status">로그인 후 호스트 측정 결과를 확인합니다.</p>
+                <p id="capacity-demand" class="field-hint"></p>
+                <p class="field-hint">지원 언어 수는 동시 처리 보장이 아닙니다. 권장은 한 명씩 짧게 발화할 때의 통역 출력 언어 수이며 참석자 수와 다릅니다. 기본 청취 언어·추가 원음 유지 언어는 중복 통역에서 제외합니다.</p>
+              </section>
+            </fieldset>
+          </div>
+          <div id="model-terms" class="availability-note" hidden><label class="check-label"><input type="checkbox" id="model-terms-accepted"><span>AI 음성은 기계 생성이며 오류가 있을 수 있음을 이해하고, 음성 합성 모델의 <a href="/tts-model-license.txt" target="_blank" rel="noopener">OpenRAIL-M 이용 조건</a>(금지 용도 포함)을 준수하겠습니다.</span></label><p>이 모델은 의료 조언·의료 결과 해석, 사법·법집행·이민·망명 처리 용도 등에 이용할 수 없습니다. 회의 참가 전에 조건 전문을 확인하세요.</p></div>
+          <button class="primary-button" id="join-button" type="submit">회의 참가 <span aria-hidden="true">→</span></button>
+          <button class="secondary-button stacked-button" id="listener-quick-button" type="button">읽기 전용 참가 · 로그인 필요</button>
+          <button class="secondary-button invite-prejoin-button stacked-button" id="invite-prejoin-button" type="button">이 회의실에 초대</button>
+          <p class="form-note" id="form-note">호스트의 접속 범위와 로컬 모델 설정을 확인 중입니다.</p>
+        </form>
+      </section>
+      <section id="meeting" class="meeting" aria-labelledby="meeting-heading" hidden>
+        <div class="meeting-header">
+          <div class="meeting-identity"><h1 id="meeting-heading" tabindex="-1">회의실</h1><span class="session-time"><span aria-hidden="true">◷</span> <span id="meeting-duration" aria-label="내 참가 후 경과 시간">00:00</span><span class="muted">참가 후</span></span></div>
+          <div class="view-switch" role="group" aria-label="회의 보기 방식"><button id="gallery-button" type="button" aria-pressed="true">갤러리</button><button id="speaker-button" type="button" aria-pressed="false" aria-describedby="layout-note">발언자 보기</button></div>
+        </div>
+        <div class="meeting-workspace" id="meeting-workspace">
+          <section class="stage" aria-label="회의 참석자 화면">
+            <div class="stage-topline"><span id="stage-summary">참석자 0명</span><span class="local-chip" id="role-badge">발화자/청취자</span></div>
+            <p id="layout-note" class="layout-note">최대 8명 소규모 LAN 회의입니다. 발언자 보기는 수동 화면 배치입니다.</p>
+            <div id="participant-gallery" class="participant-gallery" data-layout="gallery"></div>
+            
+            <button id="resume-speech-button" type="button" class="secondary-button" hidden>번역 음성 재생 허용</button>
+            <!-- 실시간 동기화 자막 HUD -->
+            <div id="subtitle-card" class="subtitle-card">
+              <div class="subtitle-header">
+                <span class="live-indicator">AI 통역 자막</span>
+                <span id="subtitle-lang-chip" class="lang-chip">통역 대기</span>
+              </div>
+              <p id="subtitle-orig" class="subtitle-orig">로컬 모델 준비 상태를 확인하세요.</p>
+              <p id="subtitle-trans" class="subtitle-trans">AI 통역 자막</p>
+            </div>
+
+            <!-- 스마트 오디오 더킹 조절기 -->
+            <div id="audio-ducking-panel" class="audio-ducking-panel">
+              <div class="ducking-bar-header">
+                <span class="ducking-title">🎧 스마트 오디오 더킹</span>
+                <span id="ducking-display" class="ducking-display">번역 음성 연결 후 제공</span>
+              </div>
+              <div class="ducking-controls">
+                <span class="ducking-endpoint-label">원음 100%</span>
+                <input type="range" id="ducking-slider" min="0" max="100" value="20" aria-label="통역 재생 중 원음 비율" disabled>
+                <span class="ducking-endpoint-label">번역음 100%</span>
+              </div>
+            </div>
+          </section>
+          <aside class="side-panel" id="side-panel" aria-labelledby="side-panel-heading" hidden>
+            <div class="side-heading"><h2 id="side-panel-heading" tabindex="-1">참가자</h2><button type="button" id="close-panel-button" class="close-button" aria-label="패널 닫기">×</button></div>
+            <section id="participants-panel" aria-label="참가자 목록"><p class="panel-description">계정 이름으로 상대를 확인한 뒤 비공개 채팅을 시작하세요.</p><label for="participant-search">참가자 검색<input id="participant-search" type="search" maxlength="64" placeholder="표시 이름 또는 @사용자 이름" autocomplete="off"></label><p id="participant-search-status" class="field-hint" role="status"></p><ul id="participant-list"></ul></section>
+            <section id="preferences-panel" aria-label="내 언어 설정" hidden><div id="meeting-preferences"></div></section>
+            <section id="chat-panel" aria-label="회의 채팅" hidden>
+              <p class="panel-description" id="chat-capability-note">원문과 로컬 AI 번역을 표시합니다. 모델 미설정·번역 실패 시에는 원문만 전달합니다. 메시지는 이 화면을 벗어나면 보관되지 않습니다.</p>
+              <ol id="chat-feed" class="chat-feed" aria-label="받은 메시지"></ol>
+              <form id="chat-form" class="chat-form">
+                <label for="chat-recipient">받는 사람<select id="chat-recipient" aria-describedby="recipient-hint"><option value="">모두에게</option></select></label>
+                <p id="recipient-hint" class="recipient-hint" role="status">전체 공개 · 회의실의 모두에게 전송</p>
+                <label class="sr-only" for="message-input">메시지</label>
+                <textarea id="message-input" rows="3" maxlength="2000" placeholder="메시지를 입력하세요" aria-describedby="chat-help" disabled></textarea>
+                <div class="chat-actions"><span id="chat-counter">0 / 2,000</span><button id="send-button" type="submit" disabled>보내기</button></div>
+                <p id="chat-help" class="field-hint">Enter 전송 · Shift+Enter 줄바꿈</p>
+                <p id="chat-status" class="preference-status" role="status"></p>
+              </form>
+            </section>
+            <section id="activity-panel" aria-label="회의 활동" hidden><p class="panel-description">현재 연결의 참가·퇴장·설정 변경 기록입니다.</p><ol id="conversation-feed" class="activity-feed"></ol></section>
+          </aside>
+        </div>
+        <footer class="meeting-toolbar" aria-label="회의 제어">
+          <div class="toolbar-group media-controls">
+            <button class="tool-button" id="microphone-button" type="button" disabled title="마이크 켜기/끄기"><span class="tool-icon" aria-hidden="true">🎙️</span><span>마이크</span><small id="mic-label">꺼짐</small></button>
+            <button class="tool-button" id="camera-button" type="button" disabled title="카메라 켜기/끄기" aria-pressed="false"><span class="tool-icon" aria-hidden="true">▣</span><span>카메라</span><small>켜기 / 끄기</small></button>
+            <button class="tool-button" id="share-button" type="button" disabled title="카메라와 화면 공유 중 하나를 송출합니다"><span class="tool-icon" aria-hidden="true">↑</span><span>화면 공유</span><small>켜기 / 끄기</small></button>
+            <button class="tool-button" id="captions-button" type="button" disabled title="자동 통번역 자막은 아직 제공되지 않습니다"><span class="tool-icon captions-icon" aria-hidden="true">CC</span><span>자막</span><small id="caption-label">준비 중</small></button>
+          </div>
+          <div class="toolbar-group panel-controls">
+            <button class="tool-button" id="invite-button" type="button" aria-haspopup="dialog"><span class="tool-icon" aria-hidden="true">＋</span><span>초대</span></button>
+            <button class="tool-button" id="participants-button" type="button" aria-controls="side-panel" aria-expanded="false" aria-keyshortcuts="Alt+P"><span class="tool-icon" aria-hidden="true">♙<span class="count-badge" id="participant-count">0</span></span><span>참가자</span></button>
+            <button class="tool-button" id="chat-button" type="button" aria-controls="side-panel" aria-expanded="false"><span class="tool-icon" aria-hidden="true">▤<span class="count-badge" id="chat-unread" hidden>0</span></span><span>채팅</span></button>
+            <button class="tool-button" id="preferences-button" type="button" aria-controls="side-panel" aria-expanded="false" aria-keyshortcuts="Alt+L"><span class="tool-icon" aria-hidden="true">文</span><span>내 언어</span></button>
+            <button class="tool-button" id="activity-button" type="button" aria-controls="side-panel" aria-expanded="false"><span class="tool-icon" aria-hidden="true">≡</span><span>활동</span></button>
+          </div>
+          <button class="leave-button" id="disconnect-button" type="button">나가기</button>
+        </footer>
+        <p class="keyboard-hint">Alt+P 참가자 · Alt+L 내 언어 · Esc 패널 닫기</p>
+      </section>
+    </main>
+    <dialog id="invite-dialog" class="account-dialog invite-dialog" aria-labelledby="invite-heading" aria-describedby="invite-scope">
+      <div class="side-heading"><h2 id="invite-heading">회의 참석자 초대</h2><button id="close-invite-button" class="close-button" type="button" aria-label="초대 창 닫기">×</button></div>
+      <p id="invite-room-label"></p>
+      <p id="invite-scope" class="availability-note">이 PC의 브라우저에서만 사용할 수 있는 링크입니다. 다른 PC·휴대전화에서는 접속할 수 없습니다.</p>
+      <div class="invite-links-box">
+        <label for="invite-link">호스트/발화자 초대 링크<input id="invite-link" type="text" readonly spellcheck="false" aria-describedby="invite-account-note"></label>
+        <button id="copy-invite-button" class="primary-button" type="button">호스트 링크 복사</button>
+        <label for="listener-invite-link" class="audio-field">읽기 전용 참가 링크 · 로그인 필요<input id="listener-invite-link" type="text" readonly spellcheck="false"></label>
+        <button id="copy-listener-button" class="secondary-button stacked-button" type="button">읽기 전용 링크 복사</button>
+      </div>
+      <p id="invite-account-note" class="field-hint">모든 참가자에게 관리자 발급 계정이 필요합니다. 링크는 회의실 주소이며 권한을 부여하지 않습니다. 현재 읽기 전용 참가자는 원문 채팅을 볼 수 있습니다.</p>
+      <button id="invite-manage-accounts" class="secondary-button" type="button" hidden>초대할 사용자·게스트 계정 관리</button>
+      <p id="invite-status" class="form-note" role="status"></p>
+    </dialog>
+    <dialog id="account-dialog" class="account-dialog" aria-labelledby="account-dialog-heading">
+      <div class="side-heading"><h2 id="account-dialog-heading">내 계정</h2><button id="close-account-button" class="close-button" type="button" aria-label="계정 창 닫기">×</button></div>
+      <section id="my-account-section"><p id="my-account-description" class="panel-description"></p><form id="password-form"><label for="current-password">현재 비밀번호<input id="current-password" type="password" autocomplete="current-password" maxlength="256" required></label><label for="new-password" class="audio-field">새 비밀번호<input id="new-password" type="password" autocomplete="new-password" maxlength="256" required></label><label for="confirm-password" class="audio-field">새 비밀번호 확인<input id="confirm-password" type="password" autocomplete="new-password" maxlength="256" required></label><p class="field-hint">변경하면 모든 기기의 로그인이 해제됩니다. 새 비밀번호로 다시 로그인하세요.</p><button class="primary-button" id="password-button" type="submit">비밀번호 변경</button></form></section>
+      <section id="admin-section" hidden>
+        <p class="panel-description">계정은 관리자가 발급합니다. 게스트에는 만료 시각과 회의실을 반드시 지정하세요.</p>
+        <div class="admin-layout">
+          <section><div class="side-heading"><h3>계정 목록</h3><button id="refresh-accounts-button" class="secondary-button" type="button">새로고침</button></div><ul id="accounts-list" class="accounts-list"></ul></section>
+          <div class="account-editor-column">
+            <details id="create-account-details" open><summary>새 계정 만들기</summary><form id="create-account-form" class="account-form">
+              <div class="field-grid"><label for="create-username">사용자 이름<input id="create-username" autocomplete="off" maxlength="64" required></label><label for="create-display-name">표시 이름<input id="create-display-name" autocomplete="off" maxlength="64" required></label></div>
+              <label for="create-password" class="audio-field">초기 비밀번호<input id="create-password" type="password" autocomplete="new-password" maxlength="256" required></label>
+              <label for="create-role" class="audio-field">역할<select id="create-role"><option value="USER">사용자</option><option value="GUEST">게스트</option><option value="ADMIN">관리자</option></select></label>
+              <div id="create-guest-fields" class="guest-fields" hidden><label for="create-guest-room">허용 회의실 ID<input id="create-guest-room" pattern="[A-Za-z0-9][A-Za-z0-9_\-]{2,63}" maxlength="64"></label><label for="create-expires-at">만료 시각 · 이 기기의 현지 시간<input id="create-expires-at" type="datetime-local"></label><p class="field-hint">기본 기간은 지금부터 24시간입니다. 실제 사용 가능 기간은 서버가 확인합니다.</p></div>
+              <button id="create-account-button" class="primary-button" type="submit">계정 만들기</button>
+            </form></details>
+            <section id="edit-account-section" class="edit-account-section" hidden><h3 id="edit-account-heading">계정 수정</h3><p id="edit-account-note" class="field-hint"></p><form id="edit-account-form" class="account-form"><label for="edit-role">역할<select id="edit-role"><option value="USER">사용자</option><option value="GUEST">게스트</option><option value="ADMIN">관리자</option></select></label><label for="edit-enabled" class="check-label"><input id="edit-enabled" type="checkbox">계정 활성화</label><div id="edit-guest-fields" class="guest-fields" hidden><label for="edit-guest-room">허용 회의실 ID<input id="edit-guest-room" pattern="[A-Za-z0-9][A-Za-z0-9_\-]{2,63}" maxlength="64"></label><label for="edit-expires-at">만료 시각 · 이 기기의 현지 시간<input id="edit-expires-at" type="datetime-local"></label></div><button id="edit-account-button" class="primary-button" type="submit">변경 저장</button></form><form id="reset-password-form" class="account-form reset-password-form"><label for="reset-password">새 초기 비밀번호<input id="reset-password" type="password" autocomplete="new-password" maxlength="256" required></label><p class="field-hint">초기화하면 해당 계정의 모든 로그인이 해제됩니다.</p><button id="reset-password-button" class="secondary-button" type="submit">비밀번호 초기화</button></form></section>
+          </div>
+        </div>
+      </section>
+      <section id="operator-section" hidden>
+        <p class="panel-description">현재 호스트의 실제 상태입니다. 연결 수는 처리 성능 보장이 아니며, JVM 힙은 PC 전체 메모리나 GPU 메모리가 아닙니다.</p>
+        <button id="refresh-diagnostics-button" class="secondary-button" type="button">상태 새로고침</button>
+        <p id="diagnostics-status" class="field-hint" role="status"></p>
+        <dl id="diagnostics-metrics" class="diagnostics-metrics"></dl>
+        <form id="capacity-form" class="account-form">
+          <h3>자원 최적화 다중언어 설정</h3>
+          <p id="capacity-operator-summary" class="field-hint"></p>
+          <label for="capacity-count">회의 허용 언어 개수 (통역 부하 별도 검사)<select id="capacity-count"><option value="0">자동 · 설치 언어 중 최대 5개, 통역 부하 별도 검사</option></select></label>
+          <p id="capacity-selection-status" class="field-hint" role="status"></p>
+          <fieldset><legend>회의에서 사용할 언어 · 모두 해제하면 설정 개수 이내 자동</legend>
+            <label class="check-label"><input type="checkbox" name="capacity-language" value="ko">한국어</label>
+            <label class="check-label"><input type="checkbox" name="capacity-language" value="en">English</label>
+            <label class="check-label"><input type="checkbox" name="capacity-language" value="ja">日本語</label>
+            <label class="check-label"><input type="checkbox" name="capacity-language" value="zh-CN">简体中文</label>
+          </fieldset>
+          <label for="capacity-mode">운영 방식<select id="capacity-mode"><option value="quality-first">품질 우선 · 언어 설정 시 자원 한도 확인 (권장)</option><option value="allow-delay">고급 시험 · 지연 허용 (실시간 권장 아님)</option></select></label>
+          <label class="check-label"><input id="capacity-ack" type="checkbox">권장 초과 시 통역 지연·품질 저하가 발생할 수 있음을 확인했습니다.</label>
+          <p class="field-hint">이번 서버 실행에만 적용합니다. 재시작하면 다시 측정하고 품질 우선·자동 선택으로 돌아갑니다. 언어를 줄이거나 참가자의 청취·자막 언어를 통일하면 부하가 줄어듭니다.</p>
+          <button id="capacity-save" type="submit" class="secondary-button">통역 정책 적용</button>
+          <p id="capacity-save-status" role="status"></p>
+        </form>
+        <h3>기능 준비 상태</h3><ul id="diagnostics-capabilities" class="diagnostics-capabilities"></ul>
+        <p class="availability-note">개발 검증 버전입니다. 영상·원음은 LAN 연결, 자동 통역은 구성된 로컬 모델을 사용합니다. 모델 로딩·하드웨어·동시 발화 수에 따라 지연이 발생합니다. 인터넷 NAT 중계와 다른 물리 기기의 수용 시험은 별도 검증이 필요합니다.</p>
+      </section>
+      <p id="account-status" class="form-note" role="status"></p>
+    </dialog>
+    <div id="announcement" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+    <div id="feedback" class="feedback" hidden><p id="feedback-message" role="alert"></p><button id="dismiss-feedback" type="button" aria-label="알림 닫기">×</button></div>
+  </div>
+  <script src="/room-invitation.js" defer></script>
+  <script src="/meeting-media.js" defer></script>
+  <script src="/voice-capture.js" defer></script>
+  <script src="/audio-policy.js" defer></script>
+  <script src="/app.js" defer></script>
+</body>
+</html>

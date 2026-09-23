@@ -1,0 +1,17 @@
+'use strict';
+const {test}=require('node:test');const assert=require('node:assert/strict');
+const audioPolicy=require('../src/main/resources/web/audio-policy.js');const knows=audioPolicy.knows;
+const policy=(...args)=>{const {originalVolume,translated}=audioPolicy.policy(...args);return {originalVolume,translated};};
+const p={listenLanguage:'ko',secondaryOriginalLanguage:'en',audioMode:'both',duckingMode:'ducked_original'};
+for(const source of ['ko','en'])test('normal original and no interpretation for '+source,()=>assert.deepEqual(policy(p,source),{originalVolume:1,translated:false}));
+for(const source of ['ja','zh-CN'])test('unknown original is background for '+source,()=>assert.deepEqual(policy(p,source),{originalVolume:0.2,translated:true}));
+for(const secondary of ['en','ja','zh-CN'])test('select second understood language '+secondary,()=>assert.equal(knows({...p,secondaryOriginalLanguage:secondary},secondary),true));
+test('translated-only preserves understood original',()=>assert.deepEqual(policy({...p,audioMode:'translated'},'en'),{originalVolume:1,translated:false}));
+test('translated-only mutes unknown original',()=>assert.deepEqual(policy({...p,audioMode:'translated'},'ja'),{originalVolume:0,translated:true}));
+test('captions-only mutes even understood language',()=>assert.deepEqual(policy({...p,audioMode:'captions_only'},'ko'),{originalVolume:0,translated:false}));
+test('original-only turns off interpretation',()=>assert.deepEqual(policy({...p,audioMode:'original'},'ja'),{originalVolume:1,translated:false}));
+test('ducking original-only turns off interpretation',()=>assert.equal(policy({...p,duckingMode:'original_only'},'ja').translated,false));
+test('ducking translated-only mutes unknown original',()=>assert.equal(policy({...p,duckingMode:'translated_only'},'ja').originalVolume,0));
+test('custom background volume does not change known original',()=>assert.equal(policy(p,'en',0.1).originalVolume,1));
+test('custom background volume applied to unknown original',()=>assert.equal(policy(p,'ja',0.1).originalVolume,0.1));
+test('volume is clamped',()=>{assert.equal(policy(p,'ja',-3).originalVolume,0);assert.equal(policy(p,'ja',3).originalVolume,1);});

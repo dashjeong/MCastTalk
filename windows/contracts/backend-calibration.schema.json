@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mcasttalk.local/schemas/backend-calibration-v2.json",
+  "title": "MCastTalk Backend Calibration Evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "modelPackageId",
+    "modelPackageVersion",
+    "hardwareFingerprint",
+    "modelSha256",
+    "backend",
+    "deviceId",
+    "driverVersion",
+    "runtimeVersion",
+    "runtimeSha256",
+    "settingsSha256",
+    "correctnessPassed",
+    "passed",
+    "p95LatencyMs",
+    "peakMemoryBytes",
+    "sustainedMinutes",
+    "thermalThrottleObserved"
+  ],
+  "properties": {
+    "schemaVersion": {"const": 2},
+    "modelPackageId": {"type": "string", "minLength": 1},
+    "modelPackageVersion": {"type": "string", "minLength": 1},
+    "hardwareFingerprint": {"type": "string", "minLength": 1},
+    "modelSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "runtimeSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "settingsSha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "correctnessPassed": {"type": "boolean"},
+    "backend": {
+      "enum": ["cpu", "vulkan", "winml", "directml", "openvino", "cuda", "tensorrt", "hip", "qnn"]
+    },
+    "deviceId": {"type": "string", "minLength": 1},
+    "driverVersion": {"type": ["string", "null"]},
+    "runtimeVersion": {"type": "string", "minLength": 1},
+    "passed": {"type": "boolean"},
+    "failureCode": {"type": ["string", "null"]},
+    "p95LatencyMs": {"type": "number", "exclusiveMinimum": 0},
+    "peakMemoryBytes": {"type": "integer", "minimum": 0},
+    "sustainedMinutes": {"type": "number", "minimum": 0},
+    "thermalThrottleObserved": {"type": "boolean"}
+  }
+}

@@ -42,6 +42,16 @@ secrets.properties
 # OS files
 .DS_Store
 
+# Windows bootstrap development
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+dist/
+*.egg-info/
+.tools/
+.run/
+
 # Public export only: private engineering evidence belongs in the private repo.
 # Ignore rules do not erase already tracked files or their Git history.
 docs/evidence/

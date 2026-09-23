@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "checkedAtUtc": "2026-09-19T10:40:48Z",
+  "method": "Read-only GitHub public REST API /repos/{owner}/{repo}, without authentication",
+  "purpose": "Popularity and maintenance snapshot, not local performance or release approval",
+  "repositories": [
+    {"repository":"jitsi/jitsi-meet","stars":29941,"archived":false,"pushedAt":"2026-09-19T01:47:27Z","apiLicense":"Apache-2.0"},
+    {"repository":"livekit/livekit","stars":20995,"archived":false,"pushedAt":"2026-09-19T05:54:32Z","apiLicense":"Apache-2.0"},
+    {"repository":"open-webui/open-webui","stars":152525,"archived":false,"pushedAt":"2026-09-19T03:54:10Z","apiLicense":"NOASSERTION"},
+    {"repository":"ggml-org/whisper.cpp","stars":53773,"archived":false,"pushedAt":"2026-09-18T10:20:25Z","apiLicense":"MIT"},
+    {"repository":"ggml-org/llama.cpp","stars":128787,"archived":false,"pushedAt":"2026-09-19T10:14:48Z","apiLicense":"MIT"},
+    {"repository":"QwenLM/Qwen3-ASR","stars":3569,"archived":false,"pushedAt":"2026-06-26T08:20:17Z","apiLicense":"Apache-2.0"},
+    {"repository":"QwenLM/Qwen3-TTS","stars":13457,"archived":false,"pushedAt":"2026-03-17T06:38:41Z","apiLicense":"Apache-2.0"},
+    {"repository":"SYSTRAN/faster-whisper","stars":25468,"archived":false,"pushedAt":"2025-11-19T14:40:46Z","apiLicense":"MIT"},
+    {"repository":"myshell-ai/MeloTTS","stars":7643,"archived":false,"pushedAt":"2024-12-24T19:17:13Z","apiLicense":"MIT"}
+  ],
+  "limitations": [
+    "Repository metadata does not establish weight, voice, dependency, trademark or redistribution rights.",
+    "Star counts and pushedAt are volatile; pushedAt is not proof of maintained releases or security support.",
+    "No new model weights were downloaded or benchmarked by this research snapshot.",
+    "Published model quality claims are not measurements on the Radeon Pro 560X development computer."
+  ]
+}

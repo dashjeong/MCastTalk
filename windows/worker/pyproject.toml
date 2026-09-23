@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcasttalk-worker"
+version = "0.1.0"
+description = "Bounded offline model adapters for MCastTalk Windows"
+requires-python = ">=3.11"
+
+[project.scripts]
+mcasttalk-worker = "mcasttalk_worker.__main__:main"
+
+[tool.setuptools]
+packages = ["mcasttalk_worker"]
