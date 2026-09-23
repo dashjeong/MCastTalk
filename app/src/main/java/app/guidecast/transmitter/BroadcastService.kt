@@ -387,6 +387,7 @@ class BroadcastService : Service() {
     private var listenerJob: Job? = null
     private var translationPreparationJob: Job? = null
     private var translationSupportPreparationJob: Job? = null
+    private var selectiveRefinementRecovery: SelectiveRefinementRecovery? = null
     private var translationHealthJob: Job? = null
     private var translationPipeline: RunningTranslationPipeline? = null
     private var sharedTranslationQueue: FairQueuedTranslationEngineProvider? = null
@@ -1635,6 +1636,8 @@ class BroadcastService : Service() {
         translationHealthJob = null
         translationSupportPreparationJob?.cancel()
         translationSupportPreparationJob = null
+        selectiveRefinementRecovery?.close()
+        selectiveRefinementRecovery = null
         recognitionFrames?.close()
         recognitionFrames = null
         translationPipeline?.close()
@@ -2678,6 +2681,61 @@ class BroadcastService : Service() {
             }
         }
         val refinementRoutes = java.util.concurrent.ConcurrentHashMap<String, String>()
+        val refinementRecovery = if (selectiveTranslationRefinement && gemmaEligible) {
+            fun recoveryAllowed(): Boolean = isTranslationSessionCurrent(sessionId) &&
+                app.gemmaTranslationProvider.modelManager.status.value.readiness == GemmaModelReadiness.READY &&
+                !app.gemmaTranslationProvider.isAutomaticRetryBlocked()
+            SelectiveRefinementRecovery(
+                scope = serviceScope,
+                canRecover = ::recoveryAllowed,
+                isPrepared = app.gemmaTranslationProvider::hasActivePreparedWorker,
+                cleanupLatestFailure = { app.resetGemmaAfterFailureIf(::recoveryAllowed) },
+                recover = {
+                    // Cancellation does not enter Gemma's failed-generation ledger. A false
+                    // reset result therefore means no reset was needed, not that preparation
+                    // succeeded. Only a real warmup can restore the provider's prepared state.
+                    ensureTranslationSessionCurrent(sessionId)
+                    if (!recoveryAllowed()) throw CancellationException("Gemma recovery is no longer allowed")
+                    nativeTranslationGate.initialize(gemmaNativeFirstUseKey(gemmaWarmupTarget)) {
+                        ensureTranslationSessionCurrent(sessionId)
+                        if (!recoveryAllowed()) throw CancellationException("Gemma recovery is no longer allowed")
+                        // Retain the existing process lease, worker-generation barrier and native
+                        // terminal acknowledgement. Never force-ready or release a cancelled call.
+                        app.gemmaTranslationProvider.warmup(
+                            targetLanguageTag = gemmaWarmupTarget,
+                            sourceLanguageTag = sourceLanguageTag,
+                            timeoutMillis = if (gemmaCapability.constrainedMemoryMode) {
+                                GEMMA_CONSTRAINED_WARMUP_TIMEOUT_MILLIS
+                            } else {
+                                GEMMA_STANDARD_WARMUP_TIMEOUT_MILLIS
+                            },
+                        )
+                    }
+                    ensureTranslationSessionCurrent(sessionId)
+                },
+                onResult = { result ->
+                    synchronized(translationResourceLock) {
+                        if (isTranslationSessionCurrent(sessionId)) {
+                            if (result == SelectiveRefinementRecoveryResult.RECOVERED) {
+                                gemmaLiveActive.set(true)
+                            } else {
+                                appendTranslationProviderWarning(
+                                    "선택적 보완 엔진 재준비를 마치지 못했습니다. " +
+                                        "ML Kit 초안으로 계속합니다. 자동 재준비는 다음 세션에서 다시 시도합니다.",
+                                )
+                            }
+                            RuntimeDiagnosticLog.record("translation_refinement_recovery", "outcome=$result")
+                        }
+                    }
+                },
+            ).also { recovery ->
+                synchronized(translationResourceLock) {
+                    ensureTranslationSessionCurrent(sessionId)
+                    selectiveRefinementRecovery?.close()
+                    selectiveRefinementRecovery = recovery
+                }
+            }
+        } else null
         val selectiveProvider = SelectiveRefinementTranslationEngineProvider(
             draftProvider = admittedFallbackTranslationProvider,
             reviewerAvailable = { target ->
@@ -2694,6 +2752,7 @@ class BroadcastService : Service() {
                 fairGemma.engineFor(target)
             },
             onDiagnostic = { diagnostic ->
+                refinementRecovery?.onDiagnostic(diagnostic.outcome)
                 refinementRoutes[diagnostic.targetLanguageTag] = when (diagnostic.outcome) {
                     SelectiveRefinementOutcome.REVIEW_ACCEPTED -> "ML Kit → Gemma 보완"
                     SelectiveRefinementOutcome.DRAFT_ACCEPTED -> "ML Kit · 보완 불필요"
