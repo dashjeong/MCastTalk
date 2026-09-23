@@ -41,8 +41,7 @@ class SentenceMemoryScreenDeviceTest {
             val device = UiDevice.getInstance(instrumentation)
             assertTrue(device.wait(Until.hasObject(By.text("내용 확인·적용")), 5_000))
             device.findObject(By.text("내용 확인·적용")).click()
-            assertTrue("Confirmed row must remain reachable after the status message is inserted",
-                device.findTextByVerticalScroll("사용자 확인 완료") != null)
+            assertTrue(device.wait(Until.hasObject(By.text("사용자 확인 완료")), 5_000))
             assertEquals(SentenceMemoryOrigin.USER, memory.lookup("ko", "en", TranslationRegister.FORMAL,
                 "합성 검증 문장입니다.")?.origin)
             device.pressBack()

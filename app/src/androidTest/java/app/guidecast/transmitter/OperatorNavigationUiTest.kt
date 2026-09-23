@@ -49,7 +49,6 @@ class OperatorNavigationUiTest {
             ),
         )
         instrumentation.waitForIdleSync()
-        device.openServiceWorkspace(MCastService.MULTILINGUAL)
         assertTrue(
             "운영자 화면이 열리지 않았습니다.",
             device.wait(Until.hasObject(By.text("DMZ 평화걷기 안내 방송")), UI_TIMEOUT_MILLIS),
@@ -117,7 +116,7 @@ class OperatorNavigationUiTest {
         try {
             assertNotNull(scrollDownUntilText("공개"))
             assertTrue("새 운영 화면의 공개 기본값이 적용되어야 합니다.", waitUntilTextAncestorChecked("공개"))
-            openSection(tabLabel = "운영", heading = MCastService.MULTILINGUAL.title)
+            openSection(tabLabel = "운영", heading = "안내방송 운영")
             lateinit var vm: AudioInputViewModel
             instrumentation.runOnMainSync {
                 vm = ViewModelProvider(requireNotNull(activity) as MainActivity)[AudioInputViewModel::class.java]
@@ -360,7 +359,7 @@ class OperatorNavigationUiTest {
             // License now belongs to Tools; exercise the actual language-page scroll here.
             scrollDownUntilText("베트남어 · Tiếng Việt"),
         )
-        openSection(tabLabel = "운영", heading = MCastService.MULTILINGUAL.title)
+        openSection(tabLabel = "운영", heading = "안내방송 운영")
     }
 
     @Test
@@ -514,7 +513,7 @@ class OperatorNavigationUiTest {
             assertEquals(original, GemmaModelManager(targetContext).selectedVariant)
             assertEquals(originalSize, originalFile.length())
             assertEquals(originalModified, originalFile.lastModified())
-            openSection(tabLabel = "운영", heading = MCastService.MULTILINGUAL.title)
+            openSection(tabLabel = "운영", heading = "안내방송 운영")
             openSection(tabLabel = "설정", heading = "언어·모델 설정")
             tap(requireNotNull(scrollDownUntilText(GemmaModelVariant.STANDARD.label)))
             assertEquals(original, GemmaModelManager(targetContext).selectedVariant)

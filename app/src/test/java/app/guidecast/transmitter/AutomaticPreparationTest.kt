@@ -11,24 +11,6 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class AutomaticPreparationTest {
-    @Test fun serviceHomeDoesNotDownloadAndLeavingCancelsDeferredPreparation() = runTest {
-        val requests = MutableStateFlow(AutomaticPreparationRequest("ko", setOf("en"), emptyMap(), true))
-        val workspace = MutableStateFlow(false)
-        var idle = true
-        var starts = 0
-        val worker = backgroundScope.launch {
-            requests.inTranslationWorkspace(workspace).prepareAutomatically({ idle }) { starts++ }
-        }
-        runCurrent(); advanceTimeBy(60_000); runCurrent(); assertEquals(0, starts)
-        workspace.value = true; runCurrent(); advanceTimeBy(750); runCurrent(); assertEquals(1, starts)
-        workspace.value = false; runCurrent()
-        requests.value = requests.value.copy(targets = setOf("ja")); runCurrent()
-        advanceTimeBy(60_000); runCurrent(); assertEquals(1, starts)
-        idle = false; workspace.value = true; runCurrent(); advanceTimeBy(1_000); runCurrent()
-        workspace.value = false; runCurrent(); idle = true
-        advanceTimeBy(60_000); runCurrent(); assertEquals(1, starts)
-        worker.cancel()
-    }
     @Test fun rapidSelectionsCoalesceAndActiveAudioDefersOnlyTheLatestRequest() = runTest {
         val flow = MutableStateFlow(AutomaticPreparationRequest("ko", setOf("en"), emptyMap(), true))
         val prepared = mutableListOf<AutomaticPreparationRequest>()

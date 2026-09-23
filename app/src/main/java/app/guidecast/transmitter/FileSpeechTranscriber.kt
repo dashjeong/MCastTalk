@@ -63,7 +63,6 @@ object FileSpeechTranscriber {
         context: Context,
         uri: Uri,
         sourceLanguageTag: String? = null,
-        allowedLanguageTags: List<String>? = null,
         onProgress: (FileTranscriptionProgress) -> Unit = {},
     ): FileTranscriptionResult {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) throw FileTranscriptionException(
@@ -87,7 +86,7 @@ object FileSpeechTranscriber {
             onProgress(FileTranscriptionProgress(0, duration, 0, "파일 음성을 읽고 있습니다"))
         }
         return transcribeFileFrames(frames, manualLanguage, { duration }, onProgress) { bytes, start, end, language ->
-            recognizeFileChunk(context.applicationContext, bytes, start, end, language, allowedLanguageTags)
+            recognizeFileChunk(context.applicationContext, bytes, start, end, language)
         }
     }
 }
@@ -181,7 +180,6 @@ private suspend fun recognizeFileChunk(
     startMs: Long,
     endMs: Long,
     manualLanguage: String?,
-    allowedLanguageTags: List<String>? = null,
 ): List<FileSpeechSegment> = coroutineScope {
     val pipe = ParcelFileDescriptor.createPipe()
     val input = pipe[0]
@@ -267,7 +265,7 @@ private suspend fun recognizeFileChunk(
                         )) complete(FileTranscriptionException("감지한 언어의 오프라인 모델로 전환하지 못했습니다. 원문 언어를 직접 선택하고 언어팩을 준비하세요."))
                 }
             })
-            client.startListening(fileRecognitionIntent(input, manualLanguage, allowedLanguageTags))
+            client.startListening(fileRecognitionIntent(input, manualLanguage))
         }
         val writer = launch(Dispatchers.IO) {
             try {
@@ -335,7 +333,7 @@ private suspend fun recognizeFileChunk(
 }
 
 @androidx.annotation.RequiresApi(33)
-internal fun fileRecognitionIntent(input: ParcelFileDescriptor, sourceLanguageTag: String?, allowedLanguageTags: List<String>? = null): Intent =
+internal fun fileRecognitionIntent(input: ParcelFileDescriptor, sourceLanguageTag: String?): Intent =
     Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
         putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
@@ -352,10 +350,6 @@ internal fun fileRecognitionIntent(input: ParcelFileDescriptor, sourceLanguageTa
             if (sourceLanguageTag == null) {
                 putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_DETECTION, true)
                 putExtra(RecognizerIntent.EXTRA_ENABLE_LANGUAGE_SWITCH, RecognizerIntent.LANGUAGE_SWITCH_BALANCED)
-                if (!allowedLanguageTags.isNullOrEmpty()) {
-                    putStringArrayListExtra(RecognizerIntent.EXTRA_LANGUAGE_DETECTION_ALLOWED_LANGUAGES, ArrayList(allowedLanguageTags))
-                    putStringArrayListExtra(RecognizerIntent.EXTRA_LANGUAGE_SWITCH_ALLOWED_LANGUAGES, ArrayList(allowedLanguageTags))
-                }
             }
         }
     }

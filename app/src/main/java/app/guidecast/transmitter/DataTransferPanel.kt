@@ -71,8 +71,8 @@ internal class DataTransferViewModel private constructor(
 
     init {
         viewModelScope.launch {
-            combine(app.broadcastRuntime.state, app.localFileWorkActive, app.localModelWorkActive, app.localVoiceNoteWorkActive) { runtime, fileBusy, modelBusy, noteBusy ->
-                runtime.dataTransferUnavailable() || fileBusy || modelBusy || noteBusy
+            combine(app.broadcastRuntime.state, app.localFileWorkActive, app.localModelWorkActive) { runtime, fileBusy, modelBusy ->
+                runtime.dataTransferUnavailable() || fileBusy || modelBusy
             }.distinctUntilChanged().collect { busy ->
                 if (busy) work?.cancel()
             }
@@ -174,7 +174,7 @@ fun DataTransferPanel(
                     Text(when (kind) {
                         DataTransferKind.SETTINGS -> "원문·번역 언어·송출 방식·잡음 처리·화면 표시·음성 선택·사전 프로필·보관 방식과 실험 옵션을 이관합니다. 암호·PIN·인증서·API 키는 제외하며 클라우드 전송 동의는 다시 받아야 합니다."
                         DataTransferKind.DICTIONARY -> "수정한 용어, 인식 교정, 사용자 확정·AI 학습 문장을 포함합니다. 기본 사전은 앱에 포함되어 있습니다. 개인 문장이 포함될 수 있습니다."
-                        DataTransferKind.SCRIPTS -> "전체 방송 기록·일일 백업·파일 스크립트와 녹톡 노트·직접 수정·화자·녹음 원음을 포함합니다. 녹톡은 가져오기에서 원음까지 복원합니다. 외부 파일 음원은 별도로 보관하고 ‘파일 찾기’로 연결하세요. 저장 공간과 최대 2GB 압축·8GB 복원 한도를 확인하세요."
+                        DataTransferKind.SCRIPTS -> "전체 방송 기록과 조회 가능한 일일 백업, 파일 스크립트·번역·시간·파일 위치 정보를 포함합니다. 원본 음원은 별도로 보관하고 이관 후 ‘파일 찾기’로 연결하세요."
                     }, style = MaterialTheme.typography.bodyMedium)
                     OutlinedButton(onClick = { requestedKind = kind.name; picker.launch(arrayOf("application/zip", "application/octet-stream")) },
                         enabled = !state.busy && unavailableReason == null, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {

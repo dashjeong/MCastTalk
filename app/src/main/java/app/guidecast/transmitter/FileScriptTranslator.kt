@@ -21,14 +21,10 @@ internal suspend fun translateFileScript(
     entry: FileLibraryEntry,
     target: String,
     mode: FileTranslationEngine,
-    allowCloudReview: Boolean = true,
-    contextSegments: List<FileSpeechSegment> = entry.segments,
-    onLine: suspend (Int, String) -> Unit = { _, _ -> },
     onProgress: (Int, Int) -> Unit,
 ): FileScriptTranslation = app.withTranslationBackendUse {
     val notes = linkedSetOf<String>()
     val results = MutableList(entry.segments.size) { "" }
-    val contexts = fileTranslationContexts(contextSegments)
     var allReviewsCompleted = mode == FileTranslationEngine.GEMMA
     var allApiCompleted = mode == FileTranslationEngine.API
     if (mode == FileTranslationEngine.API) check(app.translationApiSettings.state.value.provider != TranslationApiProvider.LOCAL) {
@@ -42,11 +38,7 @@ internal suspend fun translateFileScript(
     for ((source, indexes) in grouped) {
         currentCoroutineContext().ensureActive()
         if (source == target.substringBefore('-')) {
-            indexes.forEach { index ->
-                results[index] = entry.segments[index].text
-                onLine(index, results[index])
-                onProgress(++completed, results.size)
-            }
+            indexes.forEach { index -> results[index] = entry.segments[index].text; onProgress(++completed, results.size) }
             continue
         }
         val owner = app.beginSettingsPreparation(source, setOf(target))
@@ -116,15 +108,13 @@ internal suspend fun translateFileScript(
                             draft
                         } else reviewed
                     }
-                    val refined = if (allowCloudReview) app.cloudTranslationReviewer.refine(source, target, chunk, localResult,
-                        contextBefore = contexts[entry.segments[index]]) else localResult
+                    val refined = app.cloudTranslationReviewer.refine(source, target, chunk, localResult)
                     if (refined != localResult) notes += "문장 사전 또는 사용자가 활성화한 API 검토 보정을 반영했습니다."
                     if (target.equals("zh-TW", true)) convertToTraditionalChinese(refined) else refined
                     }
                 }.joinToString(" ")
                 if (translationNumbersNeedReview(original, translated)) notes += "숫자 표현이 원문과 다른 번역이 있습니다. 원음과 대조하세요."
                 results[index] = translated
-                onLine(index, translated)
                 onProgress(++completed, results.size)
             }
         } finally { app.endPreparation(owner) }
@@ -135,12 +125,6 @@ internal suspend fun translateFileScript(
     if (mode == FileTranslationEngine.API && !allApiCompleted) notes += "일부 구간은 기기 내 번역으로 대체했습니다."
     FileScriptTranslation(results, notes.toList(), if (allApiCompleted) FileTranslationEngine.API else if (allReviewsCompleted) FileTranslationEngine.GEMMA else FileTranslationEngine.MLKIT)
 }
-
-/** Resolve against the full transcript, including already translated sentences during a retry. */
-internal fun fileTranslationContexts(segments: List<FileSpeechSegment>): Map<FileSpeechSegment, String> =
-    segments.mapIndexed { index, segment ->
-        segment to segments.subList(maxOf(0, index - 2), index).joinToString(" ") { it.text }.takeLast(1_000)
-    }.toMap()
 
 internal fun fileTranslationChunks(text: String, maximum: Int = 500): List<String> {
     require(maximum >= 2)

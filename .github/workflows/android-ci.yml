@@ -36,7 +36,6 @@ jobs:
       - name: Web audio and localization regression
         run: |
           node scripts/verify-listener-player.mjs
-          node scripts/verify-listener-resampling.mjs
           node scripts/verify-listener-i18n.mjs
           node scripts/verify-speaker-mic.mjs
           node scripts/verify-public-branding.mjs

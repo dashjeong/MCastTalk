@@ -62,6 +62,3 @@ docs/PUBLIC_RELEASE_AUDIT_*
 artifacts/*.png
 artifacts/*.jpg
 artifacts/*.xml
-# Local Python tooling bytecode is never a source or release artifact.
-__pycache__/
-*.py[cod]
