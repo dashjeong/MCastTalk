@@ -61,10 +61,35 @@ internal fun List<String>.hasIncompleteEnglishMeaning(): Boolean {
 }
 
 /** A detached reported-speech suffix belongs to the apparent sentence on its left. */
-internal fun hasKoreanDependentRightContext(tokens: List<String>): Boolean =
+internal fun hasKoreanDependentRightContext(tokens: List<String>, leftWord: String): Boolean =
     tokens.firstOrNull()?.trimStart('"', '\'', '“', '‘')?.let { token ->
-        KOREAN_DEPENDENT_RIGHT_PREFIXES.any(token::startsWith)
+        KOREAN_REPORTED_SPEECH_PREFIXES.any(token::startsWith) ||
+            // "좋지 못해서" belongs together, but "기량이 떨어져. 못 쉬어서" starts
+            // a postposed explanation. A negative word in a new clause must not hold every
+            // preceding finite sentence forever. Keep auxiliary dependencies on -지/-고.
+            ((leftWord.endsWith("지") || leftWord.endsWith("고")) &&
+                KOREAN_AUXILIARY_PREFIXES.any(token::startsWith))
     } == true
+
+/** Never publish the interior of an open reported-speech quote as an independent claim. */
+internal fun List<String>.hasUnclosedSpeechQuote(): Boolean {
+    val text = joinToString(" ")
+    var straightQuoteOpen = false
+    var singleQuoteOpen = false
+    var curvedQuoteDepth = 0
+    for ((index, character) in text.withIndex()) {
+        when (character) {
+            '"' -> straightQuoteOpen = !straightQuoteOpen
+            '\'' -> if (!(text.getOrNull(index - 1)?.isLetter() == true &&
+                    text.getOrNull(index + 1)?.isLetter() == true)) {
+                singleQuoteOpen = !singleQuoteOpen
+            }
+            '“', '‘' -> curvedQuoteDepth++
+            '”', '’' -> curvedQuoteDepth = (curvedQuoteDepth - 1).coerceAtLeast(0)
+        }
+    }
+    return straightQuoteOpen || singleQuoteOpen || curvedQuoteDepth > 0
+}
 
 internal fun String.withoutSpeculativeIncompleteEnglishPunctuation(): String {
     val text = trim()
@@ -108,4 +133,10 @@ private val ENGLISH_NUMBER_WORDS = setOf(
 )
 private val ENGLISH_ABBREVIATION = Regex("(?i)(?:(?:[a-z]\\.){2,}|(?:dr|mr|mrs|ms|no|vs|etc)\\.)")
 private val ENGLISH_DECIMAL = Regex("[+-]?\\d+\\.\\d+%?\\.?")
-private val KOREAN_DEPENDENT_RIGHT_PREFIXES = setOf("라고", "라는", "라며", "라던", "라니")
+private val KOREAN_REPORTED_SPEECH_PREFIXES = setOf(
+    "라고", "라는", "라며", "라던", "라니",
+)
+private val KOREAN_AUXILIARY_PREFIXES = setOf(
+    // “좋지 않은/못한 …” is one dependent meaning, not an affirmative “좋지”.
+    "않", "못", "말아", "말고", "싶",
+)

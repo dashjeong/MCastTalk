@@ -37,6 +37,7 @@ class VoiceNoteScreenDeviceTest {
             withTimeout(35_000) { model.state.first { !it.unavailable } }
             withContext(Dispatchers.Main) { model.open(note.id) }
             withTimeout(10_000) { model.state.first { it.selected?.id == note.id && !it.busy } }
+            var expectedOriginal = "Synthetic example"
             for ((height, scale) in listOf(640 to 2f, 320 to 1f)) {
                 instrumentation.runOnMainSync {
                     activity.setContent {
@@ -48,7 +49,43 @@ class VoiceNoteScreenDeviceTest {
                     }
                 }
                 instrumentation.waitForIdleSync()
-                for (label in listOf("노트 백업·가져오기", "TXT 내려받기", "SRT 내려받기", "Markdown 내려받기", "JSON 내려받기", "여기서 듣기", "화자 이름")) {
+                val originalText = device.findTextByVerticalScroll(expectedOriginal)
+                assertNotNull("Original text must be visible in default view at $height dp / font $scale", originalText)
+                assertNull("Speaker editor must not be reachable in default view", device.findObject(By.text("화자 이름")))
+                assertNull("Sentence editor must not be reachable in default view", device.findObject(By.text("문장 수정")))
+                assertNull("Play from position must not be reachable in default view", device.findObject(By.text("여기서 듣기")))
+                val play = requireNotNull(device.findObject(By.text("녹음 재생"))) {
+                    "Primary playback must remain visible while reading the transcript"
+                }
+                assertTrue("Playback must stay inside the viewport", play.visibleBounds.bottom <= device.displayHeight)
+                assertNotNull("Overflow must have an accessible name", device.findObject(By.desc("옵션")))
+                device.takeScreenshot(File(context.getExternalFilesDir(null), "synthetic-note-basic-${height}-${scale}.png"))
+                val translation = model.state.value.selected!!.lines.first().translation
+                if (translation.isNotBlank()) {
+                    assertNull("Translation starts hidden", device.findObject(By.text(translation)))
+                    device.clickTextControl("⋮")
+                    device.clickTextControl("번역문 표시")
+                    assertNotNull("Chosen translation must appear below the original", device.findTextByVerticalScroll(translation))
+                    device.clickTextControl("⋮")
+                    device.clickTextControl("번역문 숨기기")
+                    assertTrue(device.wait(Until.gone(By.text(translation)), 5_000))
+                }
+                device.clickTextControl("⋮")
+                device.clickTextControl("노트 도구")
+                for (label in listOf("노트 백업·가져오기", "TXT 내려받기", "SRT 내려받기", "Markdown 내려받기", "JSON 내려받기")) {
+                    val control = device.findTextByVerticalScroll(label)
+                    val bounds = requireNotNull(control) { "Unreachable $label at $height dp / font $scale" }.visibleBounds
+                    assertTrue("Clipped control: $label", bounds.width() > 0 && bounds.left >= 0 && bounds.right <= device.displayWidth)
+                }
+                device.clickTextControl("←")
+                assertNotNull("Returning via back must restore transcript text", device.findTextByVerticalScroll(expectedOriginal))
+                device.clickTextControl("⋮")
+                device.clickTextControl("노트 도구")
+                device.clickTextControl("⋮")
+                device.clickTextControl("문장 보기")
+                device.clickTextControl("⋮")
+                device.clickTextControl("상세보기")
+                for (label in listOf("여기서 듣기", "화자 이름")) {
                     val control = device.findTextByVerticalScroll(label)
                     val bounds = requireNotNull(control) { "Unreachable $label at $height dp / font $scale" }.visibleBounds
                     assertTrue("Clipped control: $label", bounds.width() > 0 && bounds.left >= 0 && bounds.right <= device.displayWidth)
@@ -68,6 +105,9 @@ class VoiceNoteScreenDeviceTest {
                 withTimeout(10_000) { model.state.first { it.selected?.lines?.first()?.original == "Edited synthetic $height" && !it.busy } }
                 assertEquals("Edited synthetic $height", repository.load(note.id).lines.first().original)
                 assertEquals("", repository.load(note.id).lines.first().translation)
+                expectedOriginal = "Edited synthetic $height"
+                device.clickTextControl("⋮")
+                device.clickTextControl("기본 보기")
             }
         } catch (error: Throwable) {
             device.takeScreenshot(File(context.getExternalFilesDir(null), "synthetic-note-failure.png"))

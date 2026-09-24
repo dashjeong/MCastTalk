@@ -71,6 +71,8 @@ class VoiceNoteMicrophoneJourneyDeviceTest {
                 assertTrue("Missing public-fixture keyword in the live microphone UI: $term",
                     device.wait(Until.hasObject(By.textContains(term)), 10_000))
             }
+            click(find(device, listOf("⋮", "옵션")))
+            click(find(device, listOf("상세보기")))
             assertTrue("At least one final sentence must be saved while recording continues",
                 device.wait(Until.hasObject(By.text(java.util.regex.Pattern.compile("실시간 문장 · [1-9][0-9]*개 저장"))), 30_000))
             val liveNote = waitForCompleteLiveNote(requireNotNull(createdMetadata), title)

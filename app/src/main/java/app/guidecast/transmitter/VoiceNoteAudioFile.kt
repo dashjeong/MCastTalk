@@ -1,9 +1,19 @@
 package app.guidecast.transmitter
 
+import app.guidecast.core.stream.PcmAudioFrame
 import java.io.File
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
 
 /** PCM is appended directly to disk. The header is recoverable after process death. */
 internal class VoiceNoteWav(file: File) : AutoCloseable {
@@ -50,4 +60,128 @@ internal fun recoverVoiceNoteWav(file: File): Long {
         it.setLength(44 + bytes); it.seek(0); it.write(voiceNoteWavHeader(bytes)); it.fd.sync()
     }
     return bytes / 32
+}
+
+/**
+ * Streams recorded PCM frames from disk to the speech recognition engine.
+ * The audio recording loop writes directly to the WAV file without blocking.
+ * A committed cursor tracks available audio bytes on disk and delivers them sequentially
+ * to recognition. If recognition is slow, frames are not dropped and the queue is not exhausted;
+ * instead, the cursor continues reading committed audio from disk at the recognizer's pace.
+ */
+internal class VoiceNoteDiskAudioStream(
+    private val file: File,
+    private val startedAtNanos: Long,
+    private val chunkSize: Int = 3_200,
+) : AutoCloseable {
+    init {
+        require(chunkSize > 0) { "chunkSize must be positive: $chunkSize" }
+        require(chunkSize % 2 == 0) { "chunkSize must be an even number of bytes for 16-bit PCM: $chunkSize" }
+    }
+
+    private val committedBytes = AtomicLong(0L)
+    private val deliveredBytes = AtomicLong(0L)
+    private val writerDone = AtomicBoolean(false)
+    private val signal = Channel<Unit>(Channel.CONFLATED)
+    private val collected = AtomicBoolean(false)
+    private val closed = AtomicBoolean(false)
+
+    /**
+     * The audio duration (in ms) delivered so far to the speech recognition engine.
+     * Calculated directly from the committed audio byte offset read by the recognizer:
+     * 16,000 Hz, 16-bit mono = 32 bytes per millisecond.
+     */
+    fun deliveredDurationMs(): Long = deliveredBytes.get() / 32L
+
+    /** Called by the audio recording loop when new bytes have been appended to disk. Never blocks. */
+    fun onBytesCommitted(bytesWritten: Long) {
+        if (closed.get()) return
+        require(bytesWritten >= 0L) { "bytesWritten must not be negative: $bytesWritten" }
+        require(bytesWritten % 2L == 0L) { "bytesWritten must be an even number of bytes: $bytesWritten" }
+        committedBytes.updateAndGet { current ->
+            require(bytesWritten >= current) {
+                "committedBytes cannot move backwards: current=$current, new=$bytesWritten"
+            }
+            bytesWritten
+        }
+        signal.trySend(Unit)
+    }
+
+    /** Called by the audio recording loop when recording has finished. Never blocks. */
+    fun finishWriting() {
+        writerDone.set(true)
+        signal.trySend(Unit)
+    }
+
+    /**
+     * Consumed by SpeechRecognitionEngine.
+     * Enforces single collector.
+     * Sequentially reads from disk up to committedBytes at the consumer's pace.
+     * Timestamps reflect the exact original audio position:
+     * 16000 Hz, 16-bit mono = 32,000 bytes/sec -> 31,250 nanoseconds per byte.
+     */
+    fun flow(): Flow<PcmAudioFrame> = flow {
+        check(collected.compareAndSet(false, true)) { "Only one recognition collector permitted" }
+        var readOffset = 0L
+        val buffer = ByteArray(chunkSize)
+
+        // Wait until file is created or writer is already done
+        while (!file.exists() && !writerDone.get() && !closed.get()) {
+            currentCoroutineContext().ensureActive()
+            delay(10)
+        }
+        if (!file.exists() && committedBytes.get() == 0L) return@flow
+
+        RandomAccessFile(file, "r").use { reader ->
+            while (!closed.get()) {
+                currentCoroutineContext().ensureActive()
+                val committed = committedBytes.get()
+                val fileLength = reader.length()
+
+                if (fileLength < 44L + committed) {
+                    throw java.io.IOException(
+                        "Voice note audio file truncated or corrupt: length=$fileLength, expected at least ${44L + committed}"
+                    )
+                }
+
+                if (readOffset < committed) {
+                    val toRead = minOf(chunkSize.toLong(), committed - readOffset).toInt()
+                    val targetPos = 44L + readOffset
+                    if (reader.filePointer != targetPos) {
+                        reader.seek(targetPos)
+                    }
+                    reader.readFully(buffer, 0, toRead)
+                    val frameBytes = buffer.copyOf(toRead)
+                    val frameTimestamp = startedAtNanos + readOffset * 31_250L
+                    readOffset += toRead
+                    deliveredBytes.set(readOffset)
+                    emit(PcmAudioFrame(frameBytes, frameTimestamp))
+                } else {
+                    // readOffset >= committed
+                    // When writerDone is observed, re-read committedBytes to eliminate race condition
+                    // where writer committed final bytes right as or after writerDone became true.
+                    if (writerDone.get()) {
+                        val latestCommitted = committedBytes.get()
+                        if (readOffset >= latestCommitted) {
+                            break
+                        }
+                        continue
+                    }
+                    // Wait for writer notification or close
+                    val result = signal.receiveCatching()
+                    if (result.isClosed) {
+                        val latestCommitted = committedBytes.get()
+                        if (readOffset >= latestCommitted) break
+                    }
+                }
+            }
+        }
+    }
+
+    override fun close() {
+        if (closed.compareAndSet(false, true)) {
+            writerDone.set(true)
+            signal.close()
+        }
+    }
 }

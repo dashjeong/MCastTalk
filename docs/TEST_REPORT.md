@@ -1,4 +1,162 @@
-# 0.2.44 Alpha validation and 0.2.43 maintenance history
+# 0.2.45-beta-c validation
+
+Validated product source: `7107e69`; version-check alignment: `dfbcfca`.
+[Change scope](RELEASE_0_2_45_BETA_C.md). This is a **prerelease with an unresolved live-microphone gate**, not a stable-release qualification.
+
+## Artifact and source gates
+
+- Package `app.guidecast.transmitter.alpha`, version `0.2.45-beta-c`, code 52.
+- Exact APK: 96,424,000 bytes; SHA-256 `837c9bbf99479b93aa365ed50529cb58b1dbaf25e850963810d046067c16d0d6`.
+- Test APK: 4,829,417 bytes; SHA-256 `8f3c2b02f30669fa25d57659bb8452d04c34e203184cc9c665a828f6a557b541`.
+- Existing public certificate SHA-256: `afd9d964c7161f0052d16b0065e6dec14861900cfb876b18df639734ccf29ff3`.
+- Signature and 16 KiB alignment checks pass. The dedicated emulator installed the public Beta
+  (SHA-256 `64e994a7d0e1c128ae4c131f05f609cbad208f6757119636b97edc289eaa3239`)
+  and then updated with `adb install -r` to this exact C artifact; installed hashes match.
+  This verifies update installation, not a new full settings/data-migration audit.
+- New disk-stream regressions: **12 PASS**. Current Alpha XML: **546 tests**; translation core
+  **255**; stream core **28**, all with zero failures/errors/skips. Unchanged Gradle tasks may
+  reuse results; these counts are not all claimed as fresh executions.
+- Alpha lint: **0 errors**. Packaged third-party license checks pass.
+- [GitHub CI run 36000174735](https://github.com/dashjeong/MCastTalk/actions/runs/36000174735)
+  passed on `dfbcfca`: public-source boundary, web audio/localization, unit tests, lint and assembly.
+  The preceding run failed because the branding gate still expected code 51 / `-beta);
+  it was updated to require code 52 / `-beta-c`, without weakening the version check.
+- Kotlin and Gradle source hashes match the signed artifact's frozen build manifest.
+
+Local commands used JDK 17, offline Gradle and one worker:
+
+```sh
+./gradlew testDebugUnitTest :core:stream:test :core:translation:test :app:lintAlpha --offline --no-daemon --max-workers=1
+./gradlew :app:assembleAlpha :app:assembleAlphaAndroidTest :app:verifyPackagedThirdPartyLicenseAssets --offline --no-daemon --max-workers=1
+node scripts/verify-public-branding.mjs
+python3 scripts/test-public-snapshot.py
+python3 scripts/verify-public-snapshot.py
+git diff --check
+```
+
+## Exact-APK execution results — 2026-09-24 UTC
+
+Antigravity executed these on a dedicated Android 15/API 35 ARM64 AOSP emulator.
+Codex independently checked the terminal JUnit counters, installed APK hashes and receipt files.
+The host microphone was disabled; only synthetic records and the public FLEURS Korean fixture
+were used. These are not physical Galaxy, Samsung One UI or acoustic measurements.
+
+| Group | Result and conditions | JUnit elapsed |
+| --- | --- | ---: |
+| Initial functional journeys | **7 PASS / 2 FAIL**. Home/navigation, file conversion/playback, dictionary priority and repeated speech passed. The two broadcast journeys failed during English TTS preparation on the fresh installation. | 205.061 s |
+| English voice preparation | **1/1 PASS**. Actual Moonshine preparation and non-silent PCM reaching a listener WebSocket. | 45.457 s |
+| Same two broadcast journeys after preparation | **2/2 PASS**. Recorded Korean speech to English listener; operator test button completion and repeat execution. Assertions and APK unchanged. | 134.003 s |
+| Voice notes and HUD | **5/5 PASS**. Live transcription from supplied PCM, large-font/short-viewport controls, editing/persistence, HUD and app search. This supplied-PCM path does not prove microphone capture. | 455.734 s |
+| First virtual-microphone attempt | **0/1 FAIL** due to test-output file write `EACCES`; microphone quality cannot be judged from this run. | 16.694 s |
+| Virtual-microphone rerun after synthetic-output cleanup | **0/1 FAIL**: expected speech text did not appear while recording remained active. | 98.395 s |
+
+Instrumentation used the existing `scripts/run-device-evidence.py` with the exact app/test
+APKs and named classes/methods. The microphone wrapper checked installed hashes before and after
+the real `VoiceNoteMicrophoneJourneyDeviceTest` execution. Its AOSP-sample-based injection
+helper submitted 300 ms packets; this packet size is an experimental setting, not a proven
+protocol requirement. Failed receipts remain retained, including the initial preparation failures.
+
+The failed microphone rerun does not establish whether the fault is application capture,
+recognition, injected audio delivery or the emulator environment. A new recorded WAV was not
+retrieved for this exact rerun, so no earlier waveform's amplitude/correlation is attributed to it.
+
+Full local receipt SHA-256 values (raw logs, recordings and local paths are not published):
+
+| Group | Receipt SHA-256 |
+| --- | --- |
+| `functional-9` | `477213812583ce0bd16d72818452d7a8ad9ac3bd28f2243db3f18dbbea0d91c1` |
+| `english-voice-preparation` | `e9200867514e253e4756b3f6bbb90dba7fe082827c01d1041429081ade81a60a` |
+| `functional-2-post-tts` | `518dbb791f299ac24d132163186c945a807edb2fd6d4270f045ba6de4de107c0` |
+| `voicenote-hud` | `c876853026d1be817e4c1348f57fc7206bd6ddd4e4d2de257a4544c629f8eaf8` |
+| `beta045c-public-mic` | `33705eda0cde88faf64566636e602a617c71a0c14d3c90ed410a7e3919946c69` |
+| `beta045c-public-mic-rerun` | `75a684bb573cfe45d02ef5bc813029f231732f3ec635af61e3ce283120aa7154` |
+
+## Publication boundary
+
+The user requested publication of the current work. C is published only as a **prerelease**,
+with the microphone failure disclosed; the gate is not waived into a PASS.
+This disk-queue fix does not prove that every reported 5–10 minute stop is resolved.
+The existing ML Kit semantic-quality failure and sentence-finalization delay cases remain.
+Physical Galaxy first-audio p95, human listening quality, the full multilingual 30-clip corpus,
+and 8-hour endurance are unproven. No new physical-device or long-duration claim is made.
+
+## Historical 0.2.45 Beta validation (code 51)
+
+Validated source: conversational sentence finalization, committed-prefix revision alignment,
+unified broadcast entry and content-first voice notes. Detailed before/after evidence and
+failure accounting: [Beta validation report](BETA_0_2_45_VALIDATION.md).
+
+## Artifact and build
+
+- Package `app.guidecast.transmitter.alpha`, code `51`, installed version `0.2.45-beta`.
+- Optimized ARM64 APK: **96,424,000 bytes**, SHA-256
+  `64e994a7d0e1c128ae4c131f05f609cbad208f6757119636b97edc289eaa3239`.
+- Matching test APK: **4,829,417 bytes**, SHA-256
+  `8f3c2b02f30669fa25d57659bb8452d04c34e203184cc9c665a828f6a557b541`.
+- Existing certificate SHA-256
+  `afd9d964c7161f0052d16b0065e6dec14861900cfb876b18df639734ccf29ff3`.
+  `apksigner verify`, 16 KiB `zipalign` and installed-version metadata checks pass.
+- Final build succeeded in **6m 39s**, 615 tasks: 72 executed, 543 up-to-date.
+  Command: `./gradlew testDebugUnitTest :core:stream:test :core:translation:test
+  :app:testAlphaUnitTest :app:lintAlpha :app:assembleAlpha :app:assembleAlphaAndroidTest
+  :app:verifyPackagedThirdPartyLicenseAssets --offline --max-workers=1` with JDK 17.
+- Current-result XML: app Alpha **534**, translation core **255**, stream core **28**;
+  zero failures/errors/skips. These are source-matching result counts; reused tasks are
+  not claimed as freshly rerun or added to Debug counts as unique cases.
+- The newly added explanatory/contracted-past regression failed before the ending fix.
+  All 255 translation-core cases then passed, including conditional, noun and quotation
+  counterexamples. No translation-quality assertion was weakened.
+- GitHub verification for source commit `904ebb2` completed successfully:
+  [run 35946865041](https://github.com/dashjeong/MCastTalk/actions/runs/35946865041).
+  Source-boundary, web regression, unit tests, lint and assembly passed. This CI result
+  does not substitute for the microphone journey or translation-quality gates below.
+
+## Device verification status — APK handoff currently blocked
+
+All current device runs use an Android 15/API 35 ARM64 AOSP emulator. They are not physical
+Samsung/One UI measurements. The exact final artifact above was installed and hash-checked.
+
+| Executed group | Result | JUnit elapsed |
+| --- | --- | ---: |
+| Final APK: four home/navigation journeys and five real-model broadcast/test/file/dictionary/repeated-speech journeys | 9/9 PASS | 307.070 s |
+| Final APK: public 136-second monologue, original amplitude | Execution PASS; 34/34 translations completed, pending 0 | 188.212 s |
+| Final APK: same monologue, amplitude ×0.125 | Execution PASS; 26/26 translations completed, pending 0 | 181.797 s |
+| Antigravity UI cross-check: home, two note viewport configurations, actual editing/persistence and playback | 7/7 PASS on the UI candidate below | 586.641 s |
+| Final APK: virtual-microphone live transcription/save/reopen, first attempt | FAIL; expected live text did not appear | 95.751 s |
+| Final APK: same microphone journey after emulator restart | FAIL; same live-text assertion | 96.172 s |
+| Final APK: client-paced microphone injection experiment | FAIL; live-text assertion retained | See retained receipt |
+| Final APK: full Qt emulator instead of headless | FAIL; live text did not appear, host and JUnit failed | See retained receipt |
+
+The UI candidate SHA-256 is
+`1dfbae5753fa2c68d2a1ba2dfadd74056755156b3fe1fdcd86dd436fd4b1cac4`.
+Its UI source and instrumentation match the final artifact; only the final explanatory/past-ending
+core fix followed it. Its seven-test result is not relabeled as seven executions on the final APK.
+The earlier UI candidate failed the short-viewport path; separating note tools fixed the same
+test without weakening the edit/export assertions.
+
+Microphone investigation: the two failed runs submitted the complete public 7.02-second FLEURS
+fixture, but recorded nearly silent WAVs (peaks 8; 894/2,299 nonzero samples compared with the
+fixture's 112,048). An independent foreground AudioRecord collector, without note UI or ASR,
+also captured only 4,770 nonzero samples. Its read-gap maximum was 73.74 ms with an 8,000-frame
+(500 ms) buffer and no observed Android silencing. Its collection test executed successfully,
+but **input integrity is not proven and that result is not a microphone-quality PASS**.
+Root cause remains under investigation; product capture code has not been changed speculatively.
+The subsequent timing, delivery-mode and emulator-version controls, including incomplete
+attempts, are recorded in [the microphone gate report](MICROPHONE_GATE_0_2_45.md).
+Antigravity executed the full-Qt comparison with the same APK and original injection helper.
+The resulting 90,320 ms WAV contained only 510 nonzero samples, peak 8 and RMS
+0.0000033535768924956625. Changing the emulator window mode did not resolve this observation;
+it does not establish a HAL defect or prove the product capture path correct.
+The unchanged strict waveform verifier also failed: correlation 0.0294334, all 140 active
+windows failed. Receipt SHA-256 and numeric waveform results are retained locally with this run.
+APK publication is withheld until the live-transcription journey is resolved or explicitly
+reported as an unresolved release blocker. Failed receipts are retained.
+
+Separate existing ML Kit semantic-quality failure remains FAIL; see the Beta report. None of
+the passing execution groups erases it. Physical Galaxy first-audio p95, human voice quality,
+the full multilingual 30-clip corpus and eight-hour endurance remain unproven.
+
+## Historical 0.2.44 Alpha validation and 0.2.43 maintenance
 
 > **최신 공개 후보 0.2.44 Alpha / code50:** 사용자 요청에 따라 현재 수정본을 패키징했다.
 > APK SHA-256 `4c344a8375a7ebb0f5724eac79b18b3b8c3a808c21a3e97ade8de2092c0efa0c`.
