@@ -133,7 +133,7 @@ android {
         applicationId = "app.guidecast.transmitter"
         minSdk = 30
         targetSdk = 36
-        versionCode = 51
+        versionCode = 52
         versionName = "0.2.45"
 
         // Galaxy Note9/S23 and newer targets are ARM64. Keeping only the required ABI
@@ -184,7 +184,7 @@ android {
             initWith(getByName("release"))
             applicationIdSuffix = ".alpha"
             // Keep the installed application ID and build task for in-place Alpha -> Beta updates.
-            versionNameSuffix = "-beta"
+            versionNameSuffix = "-beta-c"
             // Never silently fall back to Android's debug key. A checkout without the ignored
             // developer credentials may produce an unsigned CI artifact for compile/testing;
             // every distributable Alpha handoff must pass the explicit signer verification gate.

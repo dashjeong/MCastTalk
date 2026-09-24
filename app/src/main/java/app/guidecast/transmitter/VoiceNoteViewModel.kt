@@ -130,7 +130,7 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
             var note: VoiceNote? = null
             var recorder: AudioRecord? = null
             val duration = AtomicLong(0L)
-            val frames = Channel<PcmAudioFrame>(32)
+            var diskStream: VoiceNoteDiskAudioStream? = null
             var recognition: Job? = null
             val recognitionStopped = AtomicBoolean(false)
             val captureDone = AtomicBoolean(false)
@@ -148,19 +148,21 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
                     .setBufferSizeInBytes(maxOf(minimum, 16_000)).build()
                 recorder = candidate
                 check(candidate.state == AudioRecord.STATE_INITIALIZED)
-                VoiceNoteWav(repository.audio(created.id)).use { wav ->
+                val audioFile = repository.audio(created.id)
+                VoiceNoteWav(audioFile).use { wav ->
                     candidate.startRecording()
                     check(candidate.recordingState == AudioRecord.RECORDSTATE_RECORDING)
                     val startedAt = android.os.SystemClock.elapsedRealtimeNanos()
+                    val stream = if (engine != null) VoiceNoteDiskAudioStream(audioFile, startedAt).also { diskStream = it } else null
                     mutableState.update { it.copy(recording = true, busy = false,
                         message = if (engine == null) "녹음만 진행 중 · 종료하면 원음을 저장합니다." else "녹음·받아쓰기 중 · 말하면 문장이 여기에 나타납니다.",
                         recognitionMessage = if (engine == null) null else "듣고 있습니다") }
                     updateOwnership()
-                    if (engine != null) recognition = launch {
+                    if (engine != null && stream != null) recognition = launch {
                         var savedLineCount = 0
                         try {
-                            collectVoiceNoteLiveTranscript(engine, frames.receiveAsFlow(), requireNotNull(source), startedAt,
-                                duration::get, availability = app.speechRecognitionEngine.status.map { it.isReady }) { snapshot ->
+                            collectVoiceNoteLiveTranscript(engine, stream.flow(), requireNotNull(source), startedAt,
+                                stream::deliveredDurationMs, availability = app.speechRecognitionEngine.status.map { it.isReady }) { snapshot ->
                                 if (snapshot.lines.size != savedLineCount) {
                                     val updated = requireNotNull(note).copy(durationMs = duration.get(), lines = snapshot.lines)
                                     repository.save(updated)
@@ -173,7 +175,7 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
                         } catch (cancelled: CancellationException) { throw cancelled }
                         catch (_: Exception) {
                             mutableState.update { it.copy(recognitionMessage = "받아쓰기가 중단됐습니다. 녹음은 계속 저장되며 이미 저장한 문장은 유지됩니다. 종료 후 원음으로 다시 변환할 수 있습니다.") }
-                        } finally { recognitionStopped.set(true); frames.cancel() }
+                        } finally { recognitionStopped.set(true); stream.close() }
                     }
                     val buffer = ByteArray(3_200)
                     var lastCheckpoint = 0L
@@ -190,11 +192,8 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
                         val retained = minOf(count.toLong(), VOICE_NOTE_MAX_BYTES - wav.byteCount).toInt()
                         wav.append(buffer, retained)
                         duration.set(wav.byteCount / 32)
-                        if (engine != null && !recognitionStopped.get() &&
-                            frames.trySend(PcmAudioFrame(buffer.copyOf(retained), android.os.SystemClock.elapsedRealtimeNanos())).isFailure) {
-                            recognitionStopped.set(true)
-                            mutableState.update { it.copy(recognitionMessage = "받아쓰기가 입력 속도를 따라가지 못해 중단했습니다. 원음 녹음은 계속 저장됩니다. 종료 후 다시 변환해 주세요.") }
-                            recognition?.cancel(CancellationException("Voice-note PCM queue exhausted"))
+                        if (engine != null && !recognitionStopped.get()) {
+                            stream?.onBytesCommitted(wav.byteCount)
                         }
                         if (duration.get() / 250 != state.value.elapsedMs / 250) {
                             mutableState.update { it.copy(elapsedMs = duration.get()) }
@@ -205,6 +204,7 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
                             check(repository.audio(created.id).usableSpace >= 8L * 1024 * 1024)
                         }
                     }
+                    stream?.finishWriting()
                     if (wav.byteCount >= VOICE_NOTE_MAX_BYTES) message = "60분 녹음 한도에 도달해 저장했습니다. 새 노트에서 계속 녹음하세요."
                 }
                 finalized = true
@@ -213,16 +213,17 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
             finally {
                 runCatching { recorder?.stop() }; runCatching { recorder?.release() }
                 captureDone.set(true)
-                frames.close()
+                diskStream?.finishWriting()
                 withContext(NonCancellable) {
                     mutableState.update { it.copy(recording = false, busy = true, message = "녹음과 마지막 문장을 저장하고 있습니다.") }
                     if (withTimeoutOrNull(8_000) { recognition?.join(); true } == null) {
                         mutableState.update { it.copy(recognitionMessage = "마지막 인식 응답을 기다리는 시간이 초과됐습니다. 화면에 도착한 문장과 원음은 보관했습니다.") }
                         recognition?.cancelAndJoin()
                     }
+                    diskStream?.close()
                     if (engine != null && finalized) message = if (note?.lines.isNullOrEmpty())
                         "녹음은 저장했지만 인식된 문장이 없습니다. 원음과 말하는 언어를 확인한 뒤 다시 받아쓰기를 실행하세요."
-                        else "녹음과 ${note?.lines?.size ?: 0}개 문장을 저장했습니다. 원음 대조·문장 수정·번역을 할 수 있습니다."
+                        else "녹음과 ${note.lines.size}개 문장을 저장했습니다. 원음 대조·문장 수정·번역을 할 수 있습니다."
                     val saved = note?.copy(durationMs = duration.get(), interrupted = !finalized,
                         notice = listOfNotNull(message, state.value.recognitionMessage?.takeUnless { it == "듣고 있습니다" }).joinToString("\n"))
                     val persisted = saved?.let { runCatching { repository.save(it); it }.getOrNull() }
