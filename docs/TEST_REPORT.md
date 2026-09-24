@@ -59,6 +59,8 @@ also captured only 4,770 nonzero samples. Its read-gap maximum was 73.74 ms with
 (500 ms) buffer and no observed Android silencing. Its collection test executed successfully,
 but **input integrity is not proven and that result is not a microphone-quality PASS**.
 Root cause remains under investigation; product capture code has not been changed speculatively.
+The subsequent timing, delivery-mode and emulator-version controls, including incomplete
+attempts, are recorded in [the microphone gate report](MICROPHONE_GATE_0_2_45.md).
 Antigravity executed the full-Qt comparison with the same APK and original injection helper.
 The resulting 90,320 ms WAV contained only 510 nonzero samples, peak 8 and RMS
 0.0000033535768924956625. Changing the emulator window mode did not resolve this observation;
