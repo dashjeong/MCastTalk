@@ -1,4 +1,86 @@
-# 0.2.45 Beta validation
+# 0.2.45-beta-c validation
+
+Validated product source: `7107e69`; version-check alignment: `dfbcfca`.
+[Change scope](RELEASE_0_2_45_BETA_C.md). This is a **prerelease with an unresolved live-microphone gate**, not a stable-release qualification.
+
+## Artifact and source gates
+
+- Package `app.guidecast.transmitter.alpha`, version `0.2.45-beta-c`, code 52.
+- Exact APK: 96,424,000 bytes; SHA-256 `837c9bbf99479b93aa365ed50529cb58b1dbaf25e850963810d046067c16d0d6`.
+- Test APK: 4,829,417 bytes; SHA-256 `8f3c2b02f30669fa25d57659bb8452d04c34e203184cc9c665a828f6a557b541`.
+- Existing public certificate SHA-256: `afd9d964c7161f0052d16b0065e6dec14861900cfb876b18df639734ccf29ff3`.
+- Signature and 16 KiB alignment checks pass. The dedicated emulator installed the public Beta
+  (SHA-256 `64e994a7d0e1c128ae4c131f05f609cbad208f6757119636b97edc289eaa3239`)
+  and then updated with `adb install -r` to this exact C artifact; installed hashes match.
+  This verifies update installation, not a new full settings/data-migration audit.
+- New disk-stream regressions: **12 PASS**. Current Alpha XML: **546 tests**; translation core
+  **255**; stream core **28**, all with zero failures/errors/skips. Unchanged Gradle tasks may
+  reuse results; these counts are not all claimed as fresh executions.
+- Alpha lint: **0 errors**. Packaged third-party license checks pass.
+- [GitHub CI run 36000174735](https://github.com/dashjeong/MCastTalk/actions/runs/36000174735)
+  passed on `dfbcfca`: public-source boundary, web audio/localization, unit tests, lint and assembly.
+  The preceding run failed because the branding gate still expected code 51 / `-beta);
+  it was updated to require code 52 / `-beta-c`, without weakening the version check.
+- Kotlin and Gradle source hashes match the signed artifact's frozen build manifest.
+
+Local commands used JDK 17, offline Gradle and one worker:
+
+```sh
+./gradlew testDebugUnitTest :core:stream:test :core:translation:test :app:lintAlpha --offline --no-daemon --max-workers=1
+./gradlew :app:assembleAlpha :app:assembleAlphaAndroidTest :app:verifyPackagedThirdPartyLicenseAssets --offline --no-daemon --max-workers=1
+node scripts/verify-public-branding.mjs
+python3 scripts/test-public-snapshot.py
+python3 scripts/verify-public-snapshot.py
+git diff --check
+```
+
+## Exact-APK execution results — 2026-09-24 UTC
+
+Antigravity executed these on a dedicated Android 15/API 35 ARM64 AOSP emulator.
+Codex independently checked the terminal JUnit counters, installed APK hashes and receipt files.
+The host microphone was disabled; only synthetic records and the public FLEURS Korean fixture
+were used. These are not physical Galaxy, Samsung One UI or acoustic measurements.
+
+| Group | Result and conditions | JUnit elapsed |
+| --- | --- | ---: |
+| Initial functional journeys | **7 PASS / 2 FAIL**. Home/navigation, file conversion/playback, dictionary priority and repeated speech passed. The two broadcast journeys failed during English TTS preparation on the fresh installation. | 205.061 s |
+| English voice preparation | **1/1 PASS**. Actual Moonshine preparation and non-silent PCM reaching a listener WebSocket. | 45.457 s |
+| Same two broadcast journeys after preparation | **2/2 PASS**. Recorded Korean speech to English listener; operator test button completion and repeat execution. Assertions and APK unchanged. | 134.003 s |
+| Voice notes and HUD | **5/5 PASS**. Live transcription from supplied PCM, large-font/short-viewport controls, editing/persistence, HUD and app search. This supplied-PCM path does not prove microphone capture. | 455.734 s |
+| First virtual-microphone attempt | **0/1 FAIL** due to test-output file write `EACCES`; microphone quality cannot be judged from this run. | 16.694 s |
+| Virtual-microphone rerun after synthetic-output cleanup | **0/1 FAIL**: expected speech text did not appear while recording remained active. | 98.395 s |
+
+Instrumentation used the existing `scripts/run-device-evidence.py` with the exact app/test
+APKs and named classes/methods. The microphone wrapper checked installed hashes before and after
+the real `VoiceNoteMicrophoneJourneyDeviceTest` execution. Its AOSP-sample-based injection
+helper submitted 300 ms packets; this packet size is an experimental setting, not a proven
+protocol requirement. Failed receipts remain retained, including the initial preparation failures.
+
+The failed microphone rerun does not establish whether the fault is application capture,
+recognition, injected audio delivery or the emulator environment. A new recorded WAV was not
+retrieved for this exact rerun, so no earlier waveform's amplitude/correlation is attributed to it.
+
+Full local receipt SHA-256 values (raw logs, recordings and local paths are not published):
+
+| Group | Receipt SHA-256 |
+| --- | --- |
+| `functional-9` | `477213812583ce0bd16d72818452d7a8ad9ac3bd28f2243db3f18dbbea0d91c1` |
+| `english-voice-preparation` | `e9200867514e253e4756b3f6bbb90dba7fe082827c01d1041429081ade81a60a` |
+| `functional-2-post-tts` | `518dbb791f299ac24d132163186c945a807edb2fd6d4270f045ba6de4de107c0` |
+| `voicenote-hud` | `c876853026d1be817e4c1348f57fc7206bd6ddd4e4d2de257a4544c629f8eaf8` |
+| `beta045c-public-mic` | `33705eda0cde88faf64566636e602a617c71a0c14d3c90ed410a7e3919946c69` |
+| `beta045c-public-mic-rerun` | `75a684bb573cfe45d02ef5bc813029f231732f3ec635af61e3ce283120aa7154` |
+
+## Publication boundary
+
+The user requested publication of the current work. C is published only as a **prerelease**,
+with the microphone failure disclosed; the gate is not waived into a PASS.
+This disk-queue fix does not prove that every reported 5–10 minute stop is resolved.
+The existing ML Kit semantic-quality failure and sentence-finalization delay cases remain.
+Physical Galaxy first-audio p95, human listening quality, the full multilingual 30-clip corpus,
+and 8-hour endurance are unproven. No new physical-device or long-duration claim is made.
+
+## Historical 0.2.45 Beta validation (code 51)
 
 Validated source: conversational sentence finalization, committed-prefix revision alignment,
 unified broadcast entry and content-first voice notes. Detailed before/after evidence and
