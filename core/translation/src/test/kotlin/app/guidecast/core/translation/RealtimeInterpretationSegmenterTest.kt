@@ -599,14 +599,14 @@ class RealtimeInterpretationSegmenterTest {
         )
         segmenter.observeSpeechActivity(isSpeech = true, capturedAtNanos = 400.ms)
         segmenter.observeSpeechActivity(isSpeech = false, capturedAtNanos = 400.ms)
-        segmenter.observeContinuousQuiet(fromMillis = 650, throughMillis = 1_400)
+        segmenter.observeContinuousQuiet(fromMillis = 650, throughMillis = 1_199)
 
         assertFalse(whileSpeaking.any(RecognizedUtterance::isFinal))
-        assertFalse(segmenter.tick(1_500.ms).any(RecognizedUtterance::isFinal))
-        segmenter.observeSpeechActivity(isSpeech = false, capturedAtNanos = 1_600.ms)
+        assertFalse(segmenter.tick(1_199.ms).any(RecognizedUtterance::isFinal))
+        segmenter.observeSpeechActivity(isSpeech = false, capturedAtNanos = 1_200.ms)
         assertEquals(
             "이 길은 평화를 상징합니다",
-            segmenter.tick(1_600.ms).single { it.isFinal }.text,
+            segmenter.tick(1_200.ms).single { it.isFinal }.text,
         )
     }
 
@@ -667,13 +667,13 @@ class RealtimeInterpretationSegmenterTest {
         commaSegmenter.accept(partial(72, "왼쪽에는 철책이 있습니다,", 300))
         commaSegmenter.observeSpeechActivity(isSpeech = true, capturedAtNanos = 400.ms)
         commaSegmenter.observeSpeechActivity(isSpeech = false, capturedAtNanos = 400.ms)
-        commaSegmenter.observeContinuousQuiet(fromMillis = 650, throughMillis = 1_400)
+        commaSegmenter.observeContinuousQuiet(fromMillis = 650, throughMillis = 1_199)
 
-        assertFalse(commaSegmenter.tick(1_500.ms).any(RecognizedUtterance::isFinal))
-        commaSegmenter.observeSpeechActivity(isSpeech = false, capturedAtNanos = 1_600.ms)
+        assertFalse(commaSegmenter.tick(1_199.ms).any(RecognizedUtterance::isFinal))
+        commaSegmenter.observeSpeechActivity(isSpeech = false, capturedAtNanos = 1_200.ms)
         assertEquals(
             "왼쪽에는 철책이 있습니다,",
-            commaSegmenter.tick(1_600.ms).single { it.isFinal }.text,
+            commaSegmenter.tick(1_200.ms).single { it.isFinal }.text,
         )
 
         val hesitation = RealtimeInterpretationSegmenter(sentenceCompletionInterpretationPolicy())

@@ -10,8 +10,9 @@ assert.equal(label, 'MCastTalk');
 assert.equal(subtitle, '실시간 다국어 통역방송(feat. DMZ peace walk)');
 const build = read('app/build.gradle.kts');
 const version = build.match(/versionName\s*=\s*"([^"]+)"/)?.[1];
-assert.equal(version, '0.2.44');
-assert.match(build, /versionCode\s*=\s*50\b/);
+assert.equal(version, '0.2.45');
+assert.match(build, /versionCode\s*=\s*51\b/);
+assert.match(build, /versionNameSuffix\s*=\s*"-beta"/);
 assert.match(read('app/src/main/AndroidManifest.xml'), /android:label="@string\/app_name"/);
 const screen = read('app/src/main/java/app/guidecast/transmitter/MainActivity.kt');
 assert.match(screen, /stringResource\(R\.string\.app_name\)/);
@@ -25,7 +26,7 @@ assert.match(read('client-app/src/main/res/values/strings.xml'), /name="app_name
 const readme = read('README.md');
 assert.ok(readme.startsWith(`# ${label}\n`));
 assert.ok(readme.includes(subtitle));
-assert.ok(readme.includes(`${version}-alpha`));
+assert.ok(readme.includes(`${version}-beta`));
 assert.equal(read('LICENSE').trimEnd(), read('app/src/main/assets/licenses/APACHE-2.0.txt').trimEnd(),
   'The in-app license text must match the repository license (ignoring trailing whitespace).');
 for (const path of ['LICENSE', 'NOTICE', 'README.md', 'CONTRIBUTING.md',
