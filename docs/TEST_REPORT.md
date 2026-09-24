@@ -24,6 +24,10 @@ failure accounting: [Beta validation report](BETA_0_2_45_VALIDATION.md).
 - The newly added explanatory/contracted-past regression failed before the ending fix.
   All 255 translation-core cases then passed, including conditional, noun and quotation
   counterexamples. No translation-quality assertion was weakened.
+- GitHub verification for source commit `904ebb2` completed successfully:
+  [run 35946865041](https://github.com/dashjeong/MCastTalk/actions/runs/35946865041).
+  Source-boundary, web regression, unit tests, lint and assembly passed. This CI result
+  does not substitute for the microphone journey or translation-quality gates below.
 
 ## Device verification status — APK handoff currently blocked
 
@@ -38,6 +42,8 @@ Samsung/One UI measurements. The exact final artifact above was installed and ha
 | Antigravity UI cross-check: home, two note viewport configurations, actual editing/persistence and playback | 7/7 PASS on the UI candidate below | 586.641 s |
 | Final APK: virtual-microphone live transcription/save/reopen, first attempt | FAIL; expected live text did not appear | 95.751 s |
 | Final APK: same microphone journey after emulator restart | FAIL; same live-text assertion | 96.172 s |
+| Final APK: client-paced microphone injection experiment | FAIL; live-text assertion retained | See retained receipt |
+| Final APK: full Qt emulator instead of headless | FAIL; live text did not appear, host and JUnit failed | See retained receipt |
 
 The UI candidate SHA-256 is
 `1dfbae5753fa2c68d2a1ba2dfadd74056755156b3fe1fdcd86dd436fd4b1cac4`.
@@ -53,6 +59,12 @@ also captured only 4,770 nonzero samples. Its read-gap maximum was 73.74 ms with
 (500 ms) buffer and no observed Android silencing. Its collection test executed successfully,
 but **input integrity is not proven and that result is not a microphone-quality PASS**.
 Root cause remains under investigation; product capture code has not been changed speculatively.
+Antigravity executed the full-Qt comparison with the same APK and original injection helper.
+The resulting 90,320 ms WAV contained only 510 nonzero samples, peak 8 and RMS
+0.0000033535768924956625. Changing the emulator window mode did not resolve this observation;
+it does not establish a HAL defect or prove the product capture path correct.
+The unchanged strict waveform verifier also failed: correlation 0.0294334, all 140 active
+windows failed. Receipt SHA-256 and numeric waveform results are retained locally with this run.
 APK publication is withheld until the live-transcription journey is resolved or explicitly
 reported as an unresolved release blocker. Failed receipts are retained.
 
