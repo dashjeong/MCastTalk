@@ -1,4 +1,66 @@
-# 0.2.44 Alpha validation and 0.2.43 maintenance history
+# 0.2.45 Beta validation
+
+Validated source: conversational sentence finalization, committed-prefix revision alignment,
+unified broadcast entry and content-first voice notes. Detailed before/after evidence and
+failure accounting: [Beta validation report](BETA_0_2_45_VALIDATION.md).
+
+## Artifact and build
+
+- Package `app.guidecast.transmitter.alpha`, code `51`, installed version `0.2.45-beta`.
+- Optimized ARM64 APK: **96,424,000 bytes**, SHA-256
+  `64e994a7d0e1c128ae4c131f05f609cbad208f6757119636b97edc289eaa3239`.
+- Matching test APK: **4,829,417 bytes**, SHA-256
+  `8f3c2b02f30669fa25d57659bb8452d04c34e203184cc9c665a828f6a557b541`.
+- Existing certificate SHA-256
+  `afd9d964c7161f0052d16b0065e6dec14861900cfb876b18df639734ccf29ff3`.
+  `apksigner verify`, 16 KiB `zipalign` and installed-version metadata checks pass.
+- Final build succeeded in **6m 39s**, 615 tasks: 72 executed, 543 up-to-date.
+  Command: `./gradlew testDebugUnitTest :core:stream:test :core:translation:test
+  :app:testAlphaUnitTest :app:lintAlpha :app:assembleAlpha :app:assembleAlphaAndroidTest
+  :app:verifyPackagedThirdPartyLicenseAssets --offline --max-workers=1` with JDK 17.
+- Current-result XML: app Alpha **534**, translation core **255**, stream core **28**;
+  zero failures/errors/skips. These are source-matching result counts; reused tasks are
+  not claimed as freshly rerun or added to Debug counts as unique cases.
+- The newly added explanatory/contracted-past regression failed before the ending fix.
+  All 255 translation-core cases then passed, including conditional, noun and quotation
+  counterexamples. No translation-quality assertion was weakened.
+
+## Device verification status — APK handoff currently blocked
+
+All current device runs use an Android 15/API 35 ARM64 AOSP emulator. They are not physical
+Samsung/One UI measurements. The exact final artifact above was installed and hash-checked.
+
+| Executed group | Result | JUnit elapsed |
+| --- | --- | ---: |
+| Final APK: four home/navigation journeys and five real-model broadcast/test/file/dictionary/repeated-speech journeys | 9/9 PASS | 307.070 s |
+| Final APK: public 136-second monologue, original amplitude | Execution PASS; 34/34 translations completed, pending 0 | 188.212 s |
+| Final APK: same monologue, amplitude ×0.125 | Execution PASS; 26/26 translations completed, pending 0 | 181.797 s |
+| Antigravity UI cross-check: home, two note viewport configurations, actual editing/persistence and playback | 7/7 PASS on the UI candidate below | 586.641 s |
+| Final APK: virtual-microphone live transcription/save/reopen, first attempt | FAIL; expected live text did not appear | 95.751 s |
+| Final APK: same microphone journey after emulator restart | FAIL; same live-text assertion | 96.172 s |
+
+The UI candidate SHA-256 is
+`1dfbae5753fa2c68d2a1ba2dfadd74056755156b3fe1fdcd86dd436fd4b1cac4`.
+Its UI source and instrumentation match the final artifact; only the final explanatory/past-ending
+core fix followed it. Its seven-test result is not relabeled as seven executions on the final APK.
+The earlier UI candidate failed the short-viewport path; separating note tools fixed the same
+test without weakening the edit/export assertions.
+
+Microphone investigation: the two failed runs submitted the complete public 7.02-second FLEURS
+fixture, but recorded nearly silent WAVs (peaks 8; 894/2,299 nonzero samples compared with the
+fixture's 112,048). An independent foreground AudioRecord collector, without note UI or ASR,
+also captured only 4,770 nonzero samples. Its read-gap maximum was 73.74 ms with an 8,000-frame
+(500 ms) buffer and no observed Android silencing. Its collection test executed successfully,
+but **input integrity is not proven and that result is not a microphone-quality PASS**.
+Root cause remains under investigation; product capture code has not been changed speculatively.
+APK publication is withheld until the live-transcription journey is resolved or explicitly
+reported as an unresolved release blocker. Failed receipts are retained.
+
+Separate existing ML Kit semantic-quality failure remains FAIL; see the Beta report. None of
+the passing execution groups erases it. Physical Galaxy first-audio p95, human voice quality,
+the full multilingual 30-clip corpus and eight-hour endurance remain unproven.
+
+## Historical 0.2.44 Alpha validation and 0.2.43 maintenance
 
 > **최신 공개 후보 0.2.44 Alpha / code50:** 사용자 요청에 따라 현재 수정본을 패키징했다.
 > APK SHA-256 `4c344a8375a7ebb0f5724eac79b18b3b8c3a808c21a3e97ade8de2092c0efa0c`.

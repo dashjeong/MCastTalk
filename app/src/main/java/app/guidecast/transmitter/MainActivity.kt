@@ -359,7 +359,6 @@ private fun GuideCastScreen(
     var section by rememberSaveable { mutableStateOf(GuideCastSection.BROADCAST) }
     var service by rememberSaveable { mutableStateOf<MCastService?>(null) }
     val serviceScreens = rememberSaveableStateHolder()
-    var broadcastWorkspace by rememberSaveable { mutableStateOf<MCastService?>(null) }
     var showLicenses by rememberSaveable { mutableStateOf(false) }
     var showGlossary by rememberSaveable { mutableStateOf(false) }
     var showSpeechCorrections by rememberSaveable { mutableStateOf(false) }
@@ -414,7 +413,7 @@ private fun GuideCastScreen(
         !fileState.isConverting && !fileState.isLoading && filePlayback?.isPlaying != true && filePlayback?.isTranslating != true
     val activeService = when {
         inputActive || broadcastActive || broadcast.translationTestActive ->
-            broadcastWorkspace ?: if (translationModels.broadcastTranslationEnabled) MCastService.MULTILINGUAL else MCastService.VOICE
+            MCastService.MULTILINGUAL
         voiceNoteState.recording || voiceNoteState.busy || voiceNoteState.playback.isPlaying -> MCastService.NOTES
         fileState.isConverting || fileState.isLoading || filePlayback?.isPlaying == true || filePlayback?.isTranslating == true -> MCastService.FILES
         else -> null
@@ -435,12 +434,12 @@ private fun GuideCastScreen(
     }
     val selectService: (MCastService) -> Unit = { selected ->
         // Opening a workspace is navigation, never a change to the operator's saved audio mode.
-        if (selected in setOf(MCastService.VOICE, MCastService.MULTILINGUAL)) broadcastWorkspace = selected
+        val destination = if (selected == MCastService.VOICE) MCastService.MULTILINGUAL else selected
         section = GuideCastSection.BROADCAST
         showLicenses = false; showGlossary = false; showSpeechCorrections = false
         showAssistant = false; showDataTransfer = false; showSentenceMemory = false
         showDeveloperLab = false; showFileTranslation = false; showLiveHud = false; showLiveTranscript = false
-        service = selected
+        service = destination
     }
     BackHandler(enabled = (service != null || section != GuideCastSection.BROADCAST) &&
         !showLicenses && !showGlossary && !showSpeechCorrections && !showAssistant &&
@@ -500,7 +499,7 @@ private fun GuideCastScreen(
                     showGlossary = false
                     showSpeechCorrections = false
                     showAssistant = false; showDataTransfer = false; showSentenceMemory = false; showDeveloperLab = false; showFileTranslation = false
-                    service = broadcastWorkspace ?: if (translationModels.broadcastTranslationEnabled) MCastService.MULTILINGUAL else MCastService.VOICE
+                    service = MCastService.MULTILINGUAL
                     section = GuideCastSection.BROADCAST
                     sectionTopRequest += 1
                 },
@@ -510,14 +509,16 @@ private fun GuideCastScreen(
                 },
                 onStopTranslationTest = onStopTranslationTest,
             )
-            if (activeService != null && (section != GuideCastSection.BROADCAST || service != activeService)) {
+            val displayedService = if (service == MCastService.VOICE) MCastService.MULTILINGUAL else service
+            if (activeService != null && (section != GuideCastSection.BROADCAST || displayedService != activeService)) {
                 activeWorkNotice?.let { notice ->
                     Text(notice, style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp)
                             .semantics { liveRegion = LiveRegionMode.Polite })
                 }
-                FilledTonalButton(onClick = { selectService(activeService) }, modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-                    Text("진행 중인 작업으로 · ${activeService.title}")
+                val normalizedActive = if (activeService == MCastService.VOICE) MCastService.MULTILINGUAL else activeService
+                FilledTonalButton(onClick = { selectService(normalizedActive) }, modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+                    Text("진행 중인 작업으로 · ${normalizedActive.title}")
                 }
             }
           }
@@ -543,7 +544,7 @@ private fun GuideCastScreen(
                     showAssistant -> OperatorAssistantScreen(broadcast, translationModels, onBack = { showAssistant = false }, onNavigate = { destination ->
                         showAssistant = false
                         when (destination) {
-                            AssistantDestination.INPUT -> { service = broadcastWorkspace ?: MCastService.MULTILINGUAL; section = GuideCastSection.BROADCAST }
+                            AssistantDestination.INPUT -> { service = MCastService.MULTILINGUAL; section = GuideCastSection.BROADCAST }
                             AssistantDestination.TEST -> section = GuideCastSection.TEST
                             AssistantDestination.LANGUAGES -> { section = GuideCastSection.MODELS; settingsCategory = SettingsCategory.LANGUAGES }
                             AssistantDestination.LEARNING -> { section = GuideCastSection.MODELS; settingsCategory = SettingsCategory.TOOLS; if (developerInfo) showDeveloperLab = true }
@@ -604,8 +605,8 @@ private fun GuideCastScreen(
             item {
                 SectionIntroduction(
                     eyebrow = section.eyebrow,
-                    title = if (section == GuideCastSection.BROADCAST) service?.title.orEmpty() else section.title,
-                    description = if (section == GuideCastSection.BROADCAST) service?.description.orEmpty() else section.description,
+                    title = if (section == GuideCastSection.BROADCAST) (if (service == MCastService.VOICE) MCastService.MULTILINGUAL else service)?.title.orEmpty() else section.title,
+                    description = if (section == GuideCastSection.BROADCAST) (if (service == MCastService.VOICE) MCastService.MULTILINGUAL else service)?.description.orEmpty() else section.description,
                 )
             }
 
