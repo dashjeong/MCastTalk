@@ -18,10 +18,10 @@ class GemmaModelVariantTest {
 
     @Test fun `variants are distinct pinned artifacts with isolated caches`() {
         val variants = GemmaModelVariant.entries
-        assertEquals(2, variants.size)
-        assertEquals(2, variants.map { it.fileName }.distinct().size)
-        assertEquals(2, variants.map { it.sha256 }.distinct().size)
-        assertEquals(2, variants.map { it.cacheDirectoryName }.distinct().size)
+        assertEquals(3, variants.size)
+        assertEquals(3, variants.map { it.fileName }.distinct().size)
+        assertEquals(3, variants.map { it.sha256 }.distinct().size)
+        assertEquals(3, variants.map { it.cacheDirectoryName }.distinct().size)
         variants.forEach {
             assertTrue(it.sha256.matches(Regex("[a-f0-9]{64}")))
             assertTrue(it.revision.matches(Regex("[a-f0-9]{40}")))
@@ -33,7 +33,10 @@ class GemmaModelVariantTest {
         assertEquals(2_008_432_640L, GemmaModelVariant.GPU_OPTIMIZED.sizeBytes)
         assertTrue(GemmaModelVariant.GPU_OPTIMIZED.gpuOnly)
         assertFalse(GemmaModelVariant.STANDARD.gpuOnly)
+        assertFalse(GemmaModelVariant.E4B_IT.gpuOnly)
         assertEquals("cache", GemmaModelVariant.STANDARD.cacheDirectoryName)
+        assertEquals("cache-gpu_optimized", GemmaModelVariant.GPU_OPTIMIZED.cacheDirectoryName)
+        assertEquals("cache-e4b_it", GemmaModelVariant.E4B_IT.cacheDirectoryName)
     }
 
     @Test(expected = IllegalArgumentException::class)
@@ -42,14 +45,17 @@ class GemmaModelVariantTest {
     }
 
     @Test fun `preserves legacy enum compatibility methods and catalog descriptor fields`() {
-        assertEquals(2, GemmaModelVariant.values().size)
+        assertEquals(3, GemmaModelVariant.values().size)
         assertEquals(GemmaModelVariant.STANDARD, GemmaModelVariant.valueOf("STANDARD"))
         assertEquals(GemmaModelVariant.GPU_OPTIMIZED, GemmaModelVariant.valueOf("GPU_OPTIMIZED"))
+        assertEquals(GemmaModelVariant.E4B_IT, GemmaModelVariant.valueOf("E4B_IT"))
         assertTrue(GemmaModelVariant.STANDARD.isBuiltin)
         assertTrue(GemmaModelVariant.GPU_OPTIMIZED.isBuiltin)
+        assertTrue(GemmaModelVariant.E4B_IT.isBuiltin)
         assertEquals("gemma4-translator-v1", GemmaModelVariant.STANDARD.runtimeContract)
         assertEquals(29, GemmaModelVariant.STANDARD.minSdk)
         assertEquals(31, GemmaModelVariant.GPU_OPTIMIZED.minSdk)
+        assertEquals(29, GemmaModelVariant.E4B_IT.minSdk)
     }
 
     @Test fun `selection cannot race nested download and runtime verification`() = runBlocking {

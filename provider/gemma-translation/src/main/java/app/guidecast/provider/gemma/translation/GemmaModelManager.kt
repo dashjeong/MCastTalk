@@ -264,7 +264,12 @@ class GemmaModelManager(context: Context, private val stagingVariant: GemmaModel
 
     private fun ensureStorageAvailable(directory: File, remainingBytes: Long) {
         val available = StatFs(directory.absolutePath).availableBytes
-        val required = remainingBytes + STORAGE_SAFETY_BYTES
+        val cacheNeeded = GemmaStoragePolicy.requiredDownloadCacheBudget(
+            cacheDir = modelFile.parentFile?.resolve(selectedVariant.cacheDirectoryName),
+            modelFile = modelFile.takeIf(File::isFile),
+            variant = selectedVariant,
+        )
+        val required = remainingBytes + cacheNeeded + STORAGE_SAFETY_BYTES
         check(available >= required) {
             "저장 공간이 부족합니다. 최소 ${required.toGiBText()}가 필요하지만 " +
                 "현재 ${available.toGiBText()}만 사용할 수 있습니다."
