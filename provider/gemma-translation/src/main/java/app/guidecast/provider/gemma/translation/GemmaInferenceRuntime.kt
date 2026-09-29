@@ -2,6 +2,7 @@ package app.guidecast.provider.gemma.translation
 
 import android.content.Context
 import android.os.Build
+import android.os.StatFs
 import android.os.SystemClock
 import android.util.Log
 import com.google.ai.edge.litertlm.Backend
@@ -215,8 +216,8 @@ internal class GemmaInferenceRuntime(context: Context) : Closeable {
         val startedAt = SystemClock.elapsedRealtime()
         Log.i(LOG_TAG, "Gemma LiteRT-LM engine initialization started: model=${requestedVariant.id}")
         Engine.setNativeMinLogSeverity(LogSeverity.ERROR)
-        val cacheDirectory = model.parentFile?.resolve(requestedVariant.cacheDirectoryName)
-            ?.apply { mkdirs() }?.absolutePath
+        val cacheDirFile = model.parentFile?.resolve(requestedVariant.cacheDirectoryName)
+            ?.apply { mkdirs() }
         if (shouldTryGemmaGpu(
                 sdkInt = Build.VERSION.SDK_INT,
                 gpuDisabledForProcess = gpuDisabledForWorkerProcess.get() && !requestedVariant.gpuOnly,
@@ -224,7 +225,7 @@ internal class GemmaInferenceRuntime(context: Context) : Closeable {
             )
         ) {
             try {
-                return initializeEngine(model.absolutePath, cacheDirectory, GemmaRuntimeBackend.GPU)
+                return initializeEngine(model, cacheDirFile, GemmaRuntimeBackend.GPU)
                     .also {
                         Log.i(
                             LOG_TAG,
@@ -242,7 +243,7 @@ internal class GemmaInferenceRuntime(context: Context) : Closeable {
         check(!requestedVariant.gpuOnly) {
             "GPU 최적화형을 이 기기의 GPU에서 실행할 수 없습니다. E2B 기본형을 선택해 다시 점검하세요."
         }
-        return initializeEngine(model.absolutePath, cacheDirectory, GemmaRuntimeBackend.CPU)
+        return initializeEngine(model, cacheDirFile, GemmaRuntimeBackend.CPU)
             .also {
                 Log.i(
                     LOG_TAG,
@@ -253,23 +254,44 @@ internal class GemmaInferenceRuntime(context: Context) : Closeable {
     }
 
     private fun initializeEngine(
-        modelPath: String,
-        cacheDirectory: String?,
+        modelFile: File,
+        cacheDir: File?,
         backend: GemmaRuntimeBackend,
     ): Engine {
+        if (GemmaStoragePolicy.isCacheBudgetRequired(requestedVariant)) {
+            val availableBytes = runCatching {
+                StatFs(modelFile.parentFile!!.absolutePath).availableBytes
+            }.getOrElse { error ->
+                throw IllegalStateException("저장 공간을 확인할 수 없습니다: ${error.message}", error)
+            }
+            GemmaStoragePolicy.ensureRuntimeStorage(
+                cacheDir = cacheDir,
+                modelFile = modelFile,
+                variant = requestedVariant,
+                backend = backend.name,
+                availableBytes = availableBytes,
+            )
+        }
+
         val created = Engine(
             EngineConfig(
-                modelPath = modelPath,
+                modelPath = modelFile.absolutePath,
                 backend = when (backend) {
                     GemmaRuntimeBackend.GPU -> Backend.GPU()
                     GemmaRuntimeBackend.CPU -> Backend.CPU()
                 },
                 maxNumTokens = engineMaxNumTokens,
-                cacheDir = cacheDirectory,
+                cacheDir = cacheDir?.absolutePath,
             ),
         )
         return try {
             created.initialize()
+            GemmaStoragePolicy.recordCacheCompletionSafely(
+                cacheDir = cacheDir,
+                modelFile = modelFile,
+                variant = requestedVariant,
+                backend = backend.name,
+            )
             activeBackend = backend
             created
         } catch (error: Throwable) {

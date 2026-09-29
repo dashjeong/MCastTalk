@@ -72,6 +72,7 @@ APK의 Eigen 실행 코드는 MPL-2.0 Covered Software를 포함합니다. 수�
 |---|---|---|---|
 | Gemma 4 E2B IT 기본형 | `gemma-4-E2B-it.litertlm`, revision `6e5c4f1e395deb959c494953478fa5cec4b8008f` | [Gemma 4 Apache License 2.0](https://ai.google.dev/gemma/apache_2) | 고정 [모델 파일](https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/blob/6e5c4f1e395deb959c494953478fa5cec4b8008f/gemma-4-E2B-it.litertlm) 사용 |
 | Gemma 4 E2B IT GPU형 | `gemma-4-E2B-it-gpu.litertlm`, revision `6b78abd019e61a1ca4cbe3b212d2c9ce8ff38a94` | [Gemma 4 Apache License 2.0](https://ai.google.dev/gemma/apache_2) | 고정 [모델 파일](https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/blob/6b78abd019e61a1ca4cbe3b212d2c9ce8ff38a94/gemma-4-E2B-it-gpu.litertlm) 사용 |
+| Gemma 4 E4B IT 기본형 | `gemma-4-E4B-it.litertlm`, revision `2eee7ac325f20eb8c9ac1d0e972f7c84663062da` | [Gemma 4 Apache License 2.0](https://ai.google.dev/gemma/apache_2) | [일반 E4B 모델](https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/tree/2eee7ac325f20eb8c9ac1d0e972f7c84663062da), 3,659,530,240 bytes, SHA-256 `0b2a8980ce155fd97673d8e820b4d29d9c7d99b8fa6806f425d969b145bd52e0`; 별도 다운로드, 번역 특화 GGUF와 구분 |
 | ML Kit 번역 모델 | ML Kit Translate `17.0.3` 관리 모델 | ML Kit Terms 및 Google APIs Terms | 현재 공식 약관 적용 |
 | Moonshine 한국어 STT | `ko`, TINY, legacy non-streaming; Moonshine Voice `0.1.5` | **Moonshine AI Community License** | 상업 사용 자격과 배포 형태를 권리자 조건에 따라 별도 확인해야 함 |
 | Kokoro 영어 | `kokoro_af_heart` | 모델·voice·ONNX Apache-2.0; CMUdict 고지 | 부속 데이터 attribution·재배포 조건 확인 필요 |

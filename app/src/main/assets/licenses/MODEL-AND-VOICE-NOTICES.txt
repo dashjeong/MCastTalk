@@ -76,3 +76,17 @@ License: Apache License 2.0 (Gemma 4)
 Official license: https://ai.google.dev/gemma/apache_2
 Pinned model page:
 https://huggingface.co/litert-community/gemma-4-E2B-it-litert-lm/blob/6e5c4f1e395deb959c494953478fa5cec4b8008f/gemma-4-E2B-it.litertlm
+
+Gemma 4 E4B IT LiteRT-LM
+------------------------
+MCastTalk optional asset: gemma-4-E4B-it.litertlm
+Download repository: litert-community/gemma-4-E4B-it-litert-lm
+Pinned revision: 2eee7ac325f20eb8c9ac1d0e972f7c84663062da
+File size: 3659530240 bytes
+SHA-256: 0b2a8980ce155fd97673d8e820b4d29d9c7d99b8fa6806f425d969b145bd52e0
+License: Apache License 2.0 (Gemma 4); full text included in APACHE-2.0.txt.
+Official license: https://ai.google.dev/gemma/apache_2
+Pinned model page:
+https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/blob/2eee7ac325f20eb8c9ac1d0e972f7c84663062da/gemma-4-E4B-it.litertlm
+This is the general E4B-IT model, not the Translate Gemma 4 Sub GGUF fine-tune.
+The unmodified model is downloaded separately and is not bundled in the APK.

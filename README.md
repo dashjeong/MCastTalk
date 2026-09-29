@@ -1,6 +1,8 @@
 # MCastTalk
 
-> **0.2.45-beta-c 시험판 — 음성노트 전사 대기열 보완**
+> **0.2.46-beta — E2B 유지와 일반 E4B-IT 선택 추가**
+> 일반 Gemma 4 E4B-IT의 별도 내려받기·점검·선택을 추가했습니다. API 35 ARM64 에뮬레이터에서 실제 추론·E2B 복귀·저공간 보호를 검증했습니다.
+> 번역 특화 Translate Gemma 4 Sub E4B GGUF는 이번 변경에 포함하지 않습니다.
 > 인식기가 늦어질 때 음성노트 전사가 취소되던 대기열 경로를 녹음 파일 기반의 순차 전달로 변경했습니다.
 > 혼자 이어서 말할 때 완료된 구어체 문장을 먼저 번역으로 넘기고 미완 문장은 보존합니다.
 > 방송·통역 진입을 합치고 음성노트는 본문 중심 화면과 선택형 상세보기로 정리했습니다.
@@ -12,16 +14,17 @@
 
 **실시간 다국어 통역방송(feat. DMZ peace walk)**
 
-**0.2.45-beta-c — 음성노트 전사 대기열 및 구어체 문장 확정 보완**
+**0.2.46-beta — 기존 E2B와 일반 E4B-IT 모델 선택**
 
 실시간 방송·통역 / 음성노트 / 파일 변환·재생을 세 작업 공간으로
 구분했습니다. 음성노트는 녹음 중 전사와 저장 후 확인, 원문과 괄호 번역, 원음 재생,
 TXT·SRT·Markdown·JSON·WAV 저장과 녹음까지 포함하는 백업·가져오기를 제공합니다.
 [사용 방법과 지원 범위](docs/VOICE_NOTES.md) · [문맥 교차 검토](docs/COMPARATIVE_LEARNING.md)
 
-[공개 시험판 APK: 0.2.45-beta-c](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.45-beta-c) ·
+[시험판 APK: 0.2.46-beta](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.46-beta) ·
 [실행한 시험과 그 한계](docs/TEST_REPORT.md)
-(`0.2.45-beta-c`, `versionCode 52`). 기존 공개 앱과 같은 패키지 ID와 배포자 서명을 사용합니다.
+버전은 `0.2.46-beta`, `versionCode 53`입니다. [변경 범위와 제한](docs/RELEASE_0_2_46_BETA.md)을 확인하세요.
+기존 [0.2.45-beta-c](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.45-beta-c)도 보존합니다.
 
 아스트라 미니미는 기기 상태를 진단하고 개선안을 안내합니다. 실험실에서는 필요한 문장만
 스승 API와 비교하고, 전후 리포트를 확인한 사용자가 승인·보류합니다. 승인 전에는 기존

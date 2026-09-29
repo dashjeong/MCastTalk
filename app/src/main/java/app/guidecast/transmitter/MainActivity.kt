@@ -3881,8 +3881,10 @@ private fun GemmaModelCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                "두 모델 모두 모바일 양자화 계열입니다. GPU형은 새 QAT 학습 모델이 아닌 별도 실행 파일이며, " +
-                    "속도·메모리·번역 품질 개선은 기기에서 비교해야 합니다. 한 번에 하나만 실행합니다.",
+                "E2B는 기존 모델입니다. E4B는 약 3.41 GiB 파일과 실행 캐시가 필요하며, " +
+                    "처음 준비할 때 약 6.3 GiB의 여유 공간을 확보해 주세요. 더 많은 메모리도 필요합니다. " +
+                    "일반 E4B-IT 모델이며 번역 특화 모델은 아닙니다. 속도와 품질은 기기에서 비교해 주세요. " +
+                    "기존 모델은 보관하고 한 번에 하나만 실행합니다.",
                 style = MaterialTheme.typography.bodySmall,
             )
             state.availableModels.forEach { variant ->

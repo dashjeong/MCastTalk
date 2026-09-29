@@ -1,4 +1,87 @@
-# 0.2.45-beta-c validation
+# 0.2.46-beta E4B validation (package and device gates completed)
+
+Date: 2026-09-29. Base: public `v0.2.45-beta-c`, `ac8039f`.
+Scope: preserve existing E2B models and add general E4B-IT LiteRT-LM as a separate option.
+The Translate Sub E4B GGUF model is excluded. See [compatibility review](E4B_MODEL_COMPATIBILITY.md).
+
+Completed checks for this release candidate:
+
+- `python3 scripts/test-public-snapshot.py`: 9 tests, OK.
+- `python3 scripts/verify-public-snapshot.py`: PASS (725 tracked source files at execution).
+- Listener scheduling, resampling, localization, speaker-mic JavaScript regression scripts: PASS.
+  These are script tests, not physical microphone/browser measurements.
+- Public branding/version/license parity regression: PASS.
+- Previous public C APK hash and extracted glossary size/hash matched their pinned records.
+  The exact glossary was restored solely as an ignored local build input.
+
+- Full Gradle gate (`final-gradle-gates-online.log`): **BUILD SUCCESSFUL in 4m 57s**, 610 tasks (89 executed,
+  21 from cache, 500 up-to-date). Unit XML totals: **1,400 tests; 0 failures/errors/skips**. This includes
+  app Debug 546, Gemma 134 (including 13 new pure-Kotlin storage policy and marker regression tests),
+  translation core 255 and stream core 28. Cached task reuse is not claimed as fresh execution.
+- Alpha lint: **0 errors, 83 warnings, 6 hints** (58 baseline warnings + 25 online notifications:
+  15 NewerVersionAvailable + 10 GradleDependency). `verifyPackagedThirdPartyLicenseAssets`: PASS,
+  including pinned Moonshine/ONNX binaries and glossary hash.
+- Final production package: `app.guidecast.transmitter.alpha`, `0.2.46-beta`, code 53; 96,358,265 bytes.
+- Final production APK SHA-256: `3575b5f40ed10496d0cc1683632ed0b2cd72c2ca3ced5a21d4f2fe636491c5ce`.
+- Final androidTest package: `app.guidecast.transmitter.alpha.test`, code 0; 4,796,450 bytes.
+- Final androidTest APK SHA-256: `1576907e7b778f1004530fd2023166b59bdbd00221448116771fdbb3d02a777b`.
+- APK signature verification and 16 KiB alignment: PASS. Scheme v3 signed, certificate SHA-256 matches
+  public release: `afd9d964c7161f0052d16b0065e6dec14861900cfb876b18df639734ccf29ff3`. 16 KiB `zipalign -c -P 16 -v 4`: Verification successful.
+- On-device installation and hash verification on dedicated API 35 ARM64 AVD (`mcasttalk_043_api35`):
+  - `adb install -r` succeeded for both APKs. Production: code 53 / `0.2.46-beta`; test: code 0.
+  - Device file `sha256sum /data/app/.../app.guidecast.transmitter.alpha.../base.apk`:
+    `3575b5f40ed10496d0cc1683632ed0b2cd72c2ca3ced5a21d4f2fe636491c5ce` (bit-for-bit match).
+  - Device file `sha256sum /data/app/.../app.guidecast.transmitter.alpha.test.../base.apk`:
+    `1576907e7b778f1004530fd2023166b59bdbd00221448116771fdbb3d02a777b` (bit-for-bit match).
+- Dedicated on-device instrumentation gate (3 PASS executed individually on API 35 ARM64 emulator):
+  1. Negative low-storage guard test (`GemmaE4BModelDeviceTest#e4bLowStorageRejectsBeforeNativeAndPreservesE2B`):
+     - Result: **OK (1 test)**, elapsed **4.228 s** (`e4b-instrumentation-low-storage-negative.log`).
+     - Condition: 540,307,456 bytes (~515 MiB) free space on `/data` with absent completion marker (< 2,528 MiB required).
+     - Assertion: JNI entry rejected prior to native cache allocation, threw `IllegalStateException` with actionable
+       Korean storage error ("저장 공간"), preserved E2B as `appliedVariant` and `selectedVariant`, and E2B recovery self-test cleanly returned `"Hello"`.
+  2. Positive cache creation test (`GemmaE4BModelDeviceTest#appServicePreparesRunsE4BAndRestoresE2B` Run 1):
+     - Result: **OK (1 test)**, elapsed **36.44 s** (`e4b-instrumentation-positive-run1.log`).
+     - Condition: Host backup created (`/private/tmp/mcasttalk-e4b-cache-backup/`, 2,210,334,416 B, SHA-256 `4792a79795718ad1244daae2994232449687558586fbfb19ca1c78378b151372`)
+       and emulator E4B cache cleared to provide 2.7 GiB free space.
+     - Execution: Baseline E2B passed (`"Hello"`). E4B initialized and translated test Korean `안전하게 대피해 주시기 바랍니다.`
+       to `Please evacuate safely.` in **1,237 ms**.
+     - Cache & Marker: XNNPack cache generated (`gemma-4-E4B-it.litertlm_1790637169_3659530240.xnnpack_cache`, 2,210,334,416 bytes).
+       Atomic completion marker written: `cache_completion_marker.json` (422 bytes, modelSha `0b2a8980...`, backend `CPU`,
+       runtimeVersion `LiteRT-LM Android 0.16.1`, cache length 2,210,334,416 B).
+     - Rollback: Restored E2B standard model, verified exact E2B checksum and size preserved, post-rollback self-test passed (`"Hello"`).
+  3. Positive cache reuse test (`GemmaE4BModelDeviceTest#appServicePreparesRunsE4BAndRestoresE2B` Run 2):
+     - Result: **OK (1 test)**, elapsed **17.468 s** (`e4b-instrumentation-positive-run2.log`).
+     - Condition: Executed directly on 659 MiB free space (< 2,400 MiB cache budget).
+     - Assertion: Valid marker verified, exempting cache regeneration and requiring only 128 MiB runtime safety.
+       E4B initialization & translation completed in ~6.1 s (translation request elapsed: **1,417 ms**, output: `Please evacuate safely.`).
+       Rollback cleanly restored E2B (`"Hello"`).
+- Final crash-buffer verification: `adb logcat -d -b crash` was empty when collected after
+  the two successful runs. This does not erase the earlier native failure or prove long-term stability.
+- UI Verification Note:
+  - Settings UI options for 3 models (`E2B 기본형`, `E2B GPU형 (실험용)`, `E4B 기본형 · LiteRT-LM (시험용)`) were verified
+    with screen hierarchy dumps and screenshots (`10_model_options_dump.xml`, `10_screenshot_model_options.png`,
+    `11_model_e4b_selected_dump.xml`, `11_screenshot_e4b_selected.png`). On the final APK, model switching and selection
+    were verified through the production service/provider by the 3 instrumentation tests above.
+    The 10/11 visual artifacts belong to the earlier candidate, not the final APK. A complete final
+    model-card visual capture was not obtained; only its space-guidance text changed after that capture.
+- Historical Failures Preserved in Local Evidence:
+  - First test run: `FAIL, 1 initialization error` (JUnit rejected non-void return from runBlocking; fixed with `: Unit`).
+  - Resumed download SHA mismatch: `FAIL, 1 test / 1 failure` (`e4b-instrumentation-resumed-range-mismatch.log`, 177.02 s). Cause remains unconfirmed; the upstream pinned hash matched metadata.
+  - Low-storage native XNNPack buffer exhaustion: `SIGABRT` (`e4b-instrumentation-clean-download.log`, 299.143 s, 146 MiB free).
+- Limitations & Release Boundary:
+  - All device tests were conducted on a dedicated API 35 ARM64 AOSP emulator (`mcasttalk_043_api35`).
+  - Never claim physical Galaxy S23, Samsung One UI, physical browser audio scheduling, outdoor-noise, or 2-hour stability.
+  - S23 first-audio p95 release gate (2,000 ms) and human voice naturalness remain unproven on physical hardware.
+  - GPU backend XNNPack cache is not supported/verified (policy restricts cache marker strictly to CPU backend).
+  - Multilingual translation models beyond English/Korean are not tested for E4B.
+
+Disposition: Package and device verification gates completed. Handoff to Codex for final review, commit, and release publication.
+
+Local evidence is under `build/evidence/e4b-20260929/` (excluded from public source).
+
+---
+
+# Historical 0.2.45-beta-c validation
 
 Validated product source: `7107e69`; version-check alignment: `dfbcfca`.
 [Change scope](RELEASE_0_2_45_BETA_C.md). This is a **prerelease with an unresolved live-microphone gate**, not a stable-release qualification.
