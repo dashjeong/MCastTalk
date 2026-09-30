@@ -1,3 +1,65 @@
+# 0.2.46-beta-b E4B quality correction validation
+
+Date: 2026-10-01 KST. Code 55. The listening fix below is retained. E4B-only
+translation instructions preserve spoken meaning without changing model weights,
+source text, E2B prompts or sentence-completion thresholds. See the
+[Gemini comparison, all 23 samples and remaining errors](E4B_TRANSLATION_QUALITY_REPORT.md).
+
+## Build and exact distributable
+
+- Full local Gradle gate: **SUCCESS, 4m 3s**, 610 tasks (63 executed, one from cache,
+  546 up-to-date): `testDebugUnitTest :core:stream:test :core:translation:test
+  :app:lintAlpha :app:assembleAlpha :app:assembleAlphaAndroidTest
+  :app:verifyPackagedThirdPartyLicenseAssets`.
+- 201 Debug/core XML reports: **1,409 tests, zero failures/errors/skips**. Cached and
+  up-to-date results are not represented as freshly executed tests.
+- Alpha lint: **0 errors, 83 warnings, 6 hints**; packaged license checks PASS.
+  Public snapshot unit tests: **9 PASS**; branding, listener scheduling/resampling,
+  localization and speaker-mic script gates PASS.
+- A test-only semantic assertion was added after that build. The Android test APK
+  was rebuilt successfully in 27s (225 tasks, six executed, 219 up-to-date).
+- Product `MCastTalk-0.2.46-beta-b.apk`: **96,440,384 bytes**, SHA-256
+  `759b0df098284ce73744199a754d6a2491b9f035002efee199d39bf08ce435b0`.
+- Test APK: **4,907,241 bytes**, SHA-256
+  `ec412696b6c4a224a40e7c675b55c25237de1b1b97144e8293dcacabb392514e`.
+- Both passed v3 signature and 16 KiB alignment verification with the existing
+  release signer. Both were installed on the API 35 ARM64 emulator and their
+  installed hashes matched. A temporary storage threshold was restored to its
+  original unset value in `finally`; model caches and app data were preserved.
+
+## Exact-artifact native tests
+
+- `RepeatedSemanticSpeechDeviceTest`: **PASS 4/4, 132.976s**. Native STT plus
+  E2B, E4B and E4B with 800ms delayed PCM timestamps each processed three live
+  repetitions of the public FLEURS fixture. All nine translations passed the new
+  assertion that the instruction to follow signs survives recognition and translation.
+  This is a narrow semantic regression check, not general translation certification.
+- Operator E4B broadcast integration: **PASS 1/1, 119.857s**. Real app controls,
+  MediaProjection playback capture, native STT, E4B, TTS and non-silent English
+  WebSocket PCM passed. Broadcast stop preserved independent input operation.
+- Operator first audio after semantic final: **5,117ms**; synthesis observer
+  completion: **8,532ms**. This is one emulator sample, not S23 p95. The physical
+  2,000ms p95 release qualification remains **unproven**; this beta must not be
+  described as satisfying it. Prior beta-a's one-sample timing is retained below.
+- Final E4B quality class: **PASS 2/2, 60.415s**, completing 23 actual native
+  translations. All 23 outputs exactly matched the selected candidate's outputs;
+  semantic assessment therefore remains **20 PASS, 2 WARN, 1 FAIL**. Completion
+  assertions are not semantic approval. Provider latency mean/median was
+  **2,383.50/2,452.50ms** for 16 samples and **2,512.57/2,417ms** for seven controls.
+- After all tests, both installed APK hashes still matched the artifacts above.
+  The crash buffer restricted to this final test window contained no crash entries.
+- Antigravity supplied comparison references and earlier candidate work. Codex
+  executed and reviewed these final beta-b tests while the Mac lock prevented
+  further Antigravity UI approvals. Do not attribute the final run to Antigravity.
+
+Local evidence: `build/evidence/e4b-quality-correction/final-beta-b/`.
+Actual Galaxy/One UI, physical browser playback, human voice naturalness and 2/8-hour
+stability were **not tested**. The existing product minimum SDK is 30, so API 29 is
+not claimed as an installation target. This scoped beta does not re-certify all
+four-language, physical-device or long-running product scenarios.
+
+---
+
 # 0.2.46-beta-a listening regression validation
 
 Date: 2026-09-30. Code 54; base `b3f08cb`. This hotfix preserves E2B/E4B selection,

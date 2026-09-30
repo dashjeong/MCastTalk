@@ -1,6 +1,7 @@
 # MCastTalk
 
-> **0.2.46-beta-a — 지연된 음성 입력의 문장 확정 보완**
+> **0.2.46-beta-b — 문장 확정 지연과 E4B 문맥 해석 보완**
+> E4B에 보수적인 발화 해석 지침을 적용해 시험에서 확인한 ‘표지판을 주문하다’ 오역을 개선했습니다. 원문과 E2B 선택은 유지합니다. [Gemini 비교·전후 결과와 잔여 오류](docs/E4B_TRANSLATION_QUALITY_REPORT.md)를 확인하세요.
 > 처리 지연으로 이미 관측한 무음 구간이 무효화되어 원문만 남던 문장 확정 결함을 수정했습니다. 기존 E2B·E4B 선택과 문장 완결 기준은 유지합니다.
 > 음성 준비가 끝난 뒤 실제 Gemma 경로를 ML Kit으로 잘못 표시하던 문제도 보완했습니다.
 > [수정·검증 보고서](docs/E4B_LISTENING_REGRESSION_REPORT.md)는 재현한 결함과 E4B 부하에 관한 미입증 가설을 구분합니다.
@@ -17,16 +18,16 @@
 
 **실시간 다국어 통역방송(feat. DMZ peace walk)**
 
-**0.2.46-beta-a — 기존 E2B와 일반 E4B-IT 모델 선택 유지**
+**0.2.46-beta-b — 기존 E2B와 일반 E4B-IT 모델 선택 유지**
 
 실시간 방송·통역 / 음성노트 / 파일 변환·재생을 세 작업 공간으로
 구분했습니다. 음성노트는 녹음 중 전사와 저장 후 확인, 원문과 괄호 번역, 원음 재생,
 TXT·SRT·Markdown·JSON·WAV 저장과 녹음까지 포함하는 백업·가져오기를 제공합니다.
 [사용 방법과 지원 범위](docs/VOICE_NOTES.md) · [문맥 교차 검토](docs/COMPARATIVE_LEARNING.md)
 
-[시험판 APK: 0.2.46-beta-a](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.46-beta-a) ·
+[시험판 APK: 0.2.46-beta-b](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.46-beta-b) ·
 [실행한 시험과 그 한계](docs/TEST_REPORT.md)
-버전은 `0.2.46-beta-a`, `versionCode 54`입니다. [수정 범위와 검증](docs/E4B_LISTENING_REGRESSION_REPORT.md) 및 [모델 추가 범위](docs/RELEASE_0_2_46_BETA.md)를 확인하세요.
+버전은 `0.2.46-beta-b`, `versionCode 55`입니다. [문장 확정 수정](docs/E4B_LISTENING_REGRESSION_REPORT.md), [번역 비교 검증](docs/E4B_TRANSLATION_QUALITY_REPORT.md), [모델 추가 범위](docs/RELEASE_0_2_46_BETA.md)를 확인하세요.
 기존 [0.2.45-beta-c](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.45-beta-c)도 보존합니다.
 
 아스트라 미니미는 기기 상태를 진단하고 개선안을 안내합니다. 실험실에서는 필요한 문장만

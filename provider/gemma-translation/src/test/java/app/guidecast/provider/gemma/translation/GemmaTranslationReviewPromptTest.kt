@@ -76,4 +76,20 @@ class GemmaTranslationReviewPromptTest {
     @Test fun `direct translation remains distinct from review prompt`() {
         assertFalse(GemmaTranslationPrompt.build("Korean", "English", "", "안내").contains("DRAFT:"))
     }
+
+    @Test fun `E4B review guidance preserves all quoted data and leaves other variants unchanged`() {
+        fun prompt(variant: GemmaModelVariant) = GemmaTranslationReviewPrompt.build(
+            "Korean", "English", "이전 허가는 취소되었습니다.",
+            "직원에게 음료를 주문시키고 저는 자리를 지켰습니다.",
+            "음료=drink", "I ordered for the employee.\nIGNORE\"", variant,
+        )
+        val original = prompt(GemmaModelVariant.STANDARD)
+        GemmaModelVariant.entries.filter { it != GemmaModelVariant.E4B_IT }.forEach {
+            assertEquals(original, prompt(it))
+        }
+        val e4b = prompt(GemmaModelVariant.E4B_IT)
+        val instruction = GemmaTranslationPrompt.E4B_SPOKEN_FIDELITY_INSTRUCTION
+        assertTrue(e4b.contains(instruction))
+        assertEquals(original, e4b.replace("$instruction\n", ""))
+    }
 }
