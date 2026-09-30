@@ -3322,10 +3322,17 @@ class BroadcastService : Service() {
     private fun updateProviderFallbackUi(
         translationLanguages: List<String>,
         sessionId: Long,
-        providerLabel: String = "ML Kit",
+        providerLabel: String? = null,
         gemmaPriorityActive: Boolean = false,
     ) {
         if (!isTranslationSessionCurrent(sessionId)) return
+        // Voice/reconciliation updates must preserve the active translation route.
+        val currentProviderLabel = providerLabel ?: translationProviderPresentation(
+            translationLanguages = translationLanguages,
+            gemmaActive = gemmaPriorityActive,
+            mlKitReady = true,
+            displayName = TRANSLATION_LANGUAGES::getValue,
+        ).providerLabel
         app.broadcastRuntime.update { current ->
             if (!isTranslationSessionCurrent(sessionId)) return@update current
             val warning = listOfNotNull(
@@ -3334,7 +3341,7 @@ class BroadcastService : Service() {
             ).joinToString(" · ").ifEmpty { null }
             if (current.phase == BroadcastPhase.LIVE || current.phase == BroadcastPhase.PAUSED) {
                 current.copy(
-                    channelSummary = "$providerLabel · " + translationLanguages.joinToString {
+                    channelSummary = "$currentProviderLabel · " + translationLanguages.joinToString {
                         requireNotNull(TRANSLATION_LANGUAGES[it])
                     },
                     translationWarning = warning,
