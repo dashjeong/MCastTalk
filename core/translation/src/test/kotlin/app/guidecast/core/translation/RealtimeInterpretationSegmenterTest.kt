@@ -745,6 +745,151 @@ class RealtimeInterpretationSegmenterTest {
         }
     }
 
+    @Test
+    fun `lagged audio stream where capture timestamp lags behind wallclock still commits complete sentence after verified quiet`() {
+        val segmenter = RealtimeInterpretationSegmenter(sentenceCompletionInterpretationPolicy())
+        segmenter.observeSpeechActivity(isSpeech = true, capturedAtNanos = 0)
+        segmenter.accept(partial(201, "이 길은 평화를 상징합니다", 100))
+        segmenter.accept(partial(201, "이 길은 평화를 상징합니다", 300))
+        segmenter.observeSpeechActivity(isSpeech = true, capturedAtNanos = 400L.ms)
+        segmenter.observeSpeechActivity(isSpeech = false, capturedAtNanos = 400L.ms)
+
+        // Continuous quiet frames are received from 650ms to 1,500ms (1,100ms of quiet audio).
+        segmenter.observeContinuousQuiet(fromMillis = 650, throughMillis = 1_500)
+
+        // But due to pipeline lag (e.g. CPU load or buffer backlog), wall clock (tick) is at 2,200ms
+        // which is 700ms ahead of the latest audio observation (1,500ms > 500ms age limit).
+        val tickOutput = segmenter.tick(nowNanos = 2_200L.ms)
+        assertTrue(
+            "Lagged audio observation must not reset verified quiet to zero and starve sentence finalization",
+            tickOutput.any(RecognizedUtterance::isFinal),
+        )
+        assertEquals("이 길은 평화를 상징합니다", tickOutput.single { it.isFinal }.text)
+    }
+
+    @Test
+    fun `short quiet followed by stalled PCM does not manufacture premature sentence final`() {
+        val segmenter = RealtimeInterpretationSegmenter(sentenceCompletionInterpretationPolicy())
+        segmenter.observeSpeechActivity(isSpeech = true, capturedAtNanos = 0)
+        segmenter.accept(partial(301, "이 길은 평화를 상징합니다", 100))
+        segmenter.accept(partial(301, "이 길은 평화를 상징합니다", 300))
+        segmenter.observeSpeechActivity(isSpeech = true, capturedAtNanos = 400L.ms)
+        segmenter.observeSpeechActivity(isSpeech = false, capturedAtNanos = 400L.ms)
+
+        // Only 300ms of quiet audio received (through 700ms), then PCM stream halts completely.
+        segmenter.observeContinuousQuiet(fromMillis = 500, throughMillis = 700)
+
+        // Wall clock advances far into the future (3,000ms), but confirmed audio quiet was only 300ms (< 800ms).
+        val tickOutput = segmenter.tick(nowNanos = 3_000L.ms)
+        assertFalse(
+            "Stalled PCM with insufficient quiet must not manufacture a final sentence",
+            tickOutput.any(RecognizedUtterance::isFinal),
+        )
+    }
+
+    @Test
+    fun `discontinuous quiet gap resets quiet accumulation and prevents early commit`() {
+        val segmenter = RealtimeInterpretationSegmenter(sentenceCompletionInterpretationPolicy())
+        segmenter.observeSpeechActivity(isSpeech = true, capturedAtNanos = 0)
+        segmenter.accept(partial(302, "이 길은 평화를 상징합니다", 100))
+        segmenter.accept(partial(302, "이 길은 평화를 상징합니다", 300))
+        segmenter.observeSpeechActivity(isSpeech = true, capturedAtNanos = 400L.ms)
+        segmenter.observeSpeechActivity(isSpeech = false, capturedAtNanos = 400L.ms)
+
+        // 400ms to 700ms quiet (300ms)
+        segmenter.observeContinuousQuiet(fromMillis = 500, throughMillis = 700)
+        // Discontinuous gap: next observation is at 1,400ms (gap of 700ms > 500ms max gap)
+        segmenter.observeSpeechActivity(isSpeech = false, capturedAtNanos = 1_400L.ms)
+        // From 1,400ms to 1,900ms is only 500ms continuous quiet after the gap reset
+        segmenter.observeContinuousQuiet(fromMillis = 1_500, throughMillis = 1_900)
+
+        // At 1,900ms, continuous quiet is 500ms (< 800ms required)
+        val tickOutput = segmenter.tick(nowNanos = 1_900L.ms)
+        assertFalse(
+            "Gap in quiet observation must reset quiet counter and prevent early commit",
+            tickOutput.any(RecognizedUtterance::isFinal),
+        )
+
+        // Additional quiet reaching 800ms from the gap restart (1,400ms + 850ms = 2,250ms)
+        segmenter.observeContinuousQuiet(fromMillis = 2_000, throughMillis = 2_250)
+        val commitOutput = segmenter.tick(nowNanos = 2_250L.ms)
+        assertTrue(
+            "Once new contiguous quiet reaches threshold, sentence commits safely",
+            commitOutput.any(RecognizedUtterance::isFinal),
+        )
+        assertEquals("이 길은 평화를 상징합니다", commitOutput.single { it.isFinal }.text)
+    }
+
+    @Test
+    fun `incomplete Korean predicate is not committed across quiet pause and awaits completion`() {
+        val segmenter = RealtimeInterpretationSegmenter(sentenceCompletionInterpretationPolicy())
+        segmenter.observeSpeechActivity(isSpeech = true, capturedAtNanos = 0)
+        segmenter.accept(partial(303, "이 길은 평화를 상징하고", 100))
+        segmenter.accept(partial(303, "이 길은 평화를 상징하고", 300))
+        segmenter.observeSpeechActivity(isSpeech = true, capturedAtNanos = 400L.ms)
+        segmenter.observeSpeechActivity(isSpeech = false, capturedAtNanos = 400L.ms)
+
+        // Even long verified quiet with delayed processing cannot complete a connective.
+        segmenter.observeContinuousQuiet(fromMillis = 650, throughMillis = 8_000)
+
+        val tickOutput = segmenter.tick(nowNanos = 8_900L.ms)
+        assertFalse(
+            "Incomplete connective predicate (-고) must survive lagged, prolonged quiet",
+            tickOutput.any(RecognizedUtterance::isFinal),
+        )
+    }
+
+    @Test
+    fun `speech resumption during quiet resets verified quiet and unifies sentence`() {
+        val segmenter = RealtimeInterpretationSegmenter(sentenceCompletionInterpretationPolicy())
+        segmenter.observeSpeechActivity(isSpeech = true, capturedAtNanos = 0)
+        segmenter.accept(partial(304, "이 길은 평화를", 100))
+        segmenter.observeSpeechActivity(isSpeech = false, capturedAtNanos = 300L.ms)
+
+        // Brief hesitation quiet of 400ms (through 700ms < 800ms)
+        segmenter.observeContinuousQuiet(fromMillis = 400, throughMillis = 700)
+
+        // Speech resumes at 800ms
+        segmenter.observeSpeechActivity(isSpeech = true, capturedAtNanos = 800L.ms)
+        segmenter.accept(partial(304, "이 길은 평화를 상징합니다", 850))
+        segmenter.accept(partial(304, "이 길은 평화를 상징합니다", 1_000))
+
+        val tickWhileSpeaking = segmenter.tick(nowNanos = 1_050L.ms)
+        assertFalse("Resumed speech must not trigger prior quiet commit", tickWhileSpeaking.any(RecognizedUtterance::isFinal))
+
+        // Now speech ends at 1,200ms
+        segmenter.observeSpeechActivity(isSpeech = false, capturedAtNanos = 1_200L.ms)
+        segmenter.observeContinuousQuiet(fromMillis = 1_300, throughMillis = 2_050)
+
+        val completedOutput = segmenter.tick(nowNanos = 2_050L.ms)
+        assertTrue(completedOutput.any(RecognizedUtterance::isFinal))
+        assertEquals("이 길은 평화를 상징합니다", completedOutput.single { it.isFinal }.text)
+    }
+
+    @Test
+    fun `prolonged quiet commits exactly once without duplicate final emissions`() {
+        val segmenter = RealtimeInterpretationSegmenter(sentenceCompletionInterpretationPolicy())
+        segmenter.observeSpeechActivity(isSpeech = true, capturedAtNanos = 0)
+        segmenter.accept(partial(305, "안내를 마칩니다", 100))
+        segmenter.accept(partial(305, "안내를 마칩니다", 200))
+        segmenter.observeSpeechActivity(isSpeech = false, capturedAtNanos = 300L.ms)
+
+        // Quiet reaches 800ms at 1,150ms
+        segmenter.observeContinuousQuiet(fromMillis = 400, throughMillis = 1_150)
+        val firstCommit = segmenter.tick(nowNanos = 1_150L.ms)
+        assertEquals(1, firstCommit.count { it.isFinal })
+        assertEquals("안내를 마칩니다", firstCommit.single { it.isFinal }.text)
+
+        // Quiet continues through 3,000ms with repeated ticks
+        segmenter.observeContinuousQuiet(fromMillis = 1_200, throughMillis = 2_000)
+        val secondTick = segmenter.tick(nowNanos = 2_000L.ms)
+        assertFalse("Further ticks on already committed sentence must not duplicate final", secondTick.any(RecognizedUtterance::isFinal))
+
+        segmenter.observeContinuousQuiet(fromMillis = 2_100, throughMillis = 3_000)
+        val thirdTick = segmenter.tick(nowNanos = 3_000L.ms)
+        assertFalse("Prolonged quiet must not re-emit final", thirdTick.any(RecognizedUtterance::isFinal))
+    }
+
     private fun partial(sequence: Long, text: String, millis: Long) = utterance(
         sequence = sequence,
         text = text,

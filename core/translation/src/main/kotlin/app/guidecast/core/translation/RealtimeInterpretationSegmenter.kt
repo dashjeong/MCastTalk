@@ -367,13 +367,15 @@ class RealtimeInterpretationSegmenter(
         if (speechActive) return 0L
         val latestObservation = lastAudioObservationAtNanos ?: return 0L
         val quietStart = continuousQuietStartedAtNanos ?: return 0L
-        if (
-            elapsedMillis(latestObservation, nowNanos) >
-            policy.maximumQuietObservationAgeMillis
-        ) {
-            return 0L
+        val audioQuietMillis = elapsedMillis(quietStart, latestObservation)
+        val observationAgeMillis = elapsedMillis(latestObservation, nowNanos)
+        return if (observationAgeMillis <= policy.maximumQuietObservationAgeMillis) {
+            audioQuietMillis + observationAgeMillis
+        } else {
+            // Scheduling lag must not erase quiet already measured in contiguous PCM.
+            // Freeze at the last observed frame: missing input is not additional silence.
+            audioQuietMillis
         }
-        return elapsedMillis(quietStart, nowNanos)
     }
 
     private fun requiresPositiveKoreanCompletion(): Boolean =

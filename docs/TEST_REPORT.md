@@ -1,4 +1,175 @@
-# 0.2.46-beta E4B validation (package and device gates completed)
+# 0.2.46-beta-a listening regression validation
+
+Date: 2026-09-30. Code 54; base `b3f08cb`. This hotfix preserves E2B/E4B selection,
+models and sentence-completion thresholds. See [cause and evidence](E4B_LISTENING_REGRESSION_REPORT.md).
+
+## Reproduced defect and scope
+
+An observation more than 500 ms behind the segmenter tick erased silence already measured
+in contiguous PCM. A completed sentence therefore remained pending in the controlled lag
+case. Both timestamps use the same monotonic clock. The change retains measured silence,
+without adding unobserved time when observations are stale. Whether E4B contention caused
+that delay on the reporting user's device is **not proven**.
+
+- Before-fix regression: **FAIL 1/1** (`baseline-lagged-quiet-FAIL.xml`).
+- After-fix segmenter suite: **43 PASS**, including six added cases for delayed observation,
+  interrupted input, discontinuous frames, incomplete clauses, resumed speech and duplicate finals.
+- Full Gradle gate: **BUILD SUCCESSFUL**, 610 tasks (48 executed, 562 up-to-date),
+  `testDebugUnitTest :core:stream:test :core:translation:test :app:lintAlpha
+  :app:assembleAlpha :app:assembleAlphaAndroidTest :app:verifyPackagedThirdPartyLicenseAssets`.
+  Selected Debug/core XML totals: **1,406 tests, zero failures/errors/skips**; cached/up-to-date
+  tasks are not claimed as fresh executions. Translation core: 261 tests.
+- Alpha lint: **0 errors, 83 warnings, 6 hints**. Packaged license/native/glossary checks: PASS.
+- Public snapshot unit tests: **9 PASS**. Public snapshot, branding, listener scheduling,
+  resampling, localization and speaker-mic script checks: PASS.
+
+## Final package and build after the provider-label correction
+
+- Full unit/lint/distributable/license gate: **SUCCESS in 3m 52s**, 610 tasks
+  (29 executed, 581 up-to-date), `provider-label-final-build.log`.
+- Debug/core XML rechecked: **1,406 tests, 0 failures/errors/skips**, 201 XML reports.
+  Alpha lint: **0 errors, 83 warnings, 6 hints**.
+- Product APK: **96,440,384 bytes**; SHA-256
+  `ae7ee7c7e8932f326af13a897530bfedce188823a690f156e6488ad21fb6bfc1`.
+- Test APK: **4,894,953 bytes**; SHA-256
+  `d7557b79a845230b21f13edc07d569bb938a3b56395ae75dce2c546f4c72c96a`.
+- Both signature/alignment checks passed. Product APK installed over the earlier candidate;
+  both installed file hashes match (`installed-final-apk-hashes.txt`).
+- Installation initially failed for emulator space. Existing E4B XNNPACK cache was temporarily
+  offloaded only after its on-device SHA matched the existing host backup, then restored with
+  the same owner/mode/mtime/security context. Restored cache SHA-256:
+  `4792a79795718ad1244daae2994232449687558586fbfb19ca1c78378b151372`.
+  Models and user data preserved; `/data` returned to 404 MiB available. Temporary storage
+  threshold changes were restored to the original unset value and were insufficient alone.
+- Exact-artifact operator recheck by Antigravity, reviewed against stdout by Codex:
+  **PASS 1/1, 165.083 s** (`device-e4b-operator-provider-label-fixed.txt`).
+  Real operator start/stop, MediaProjection capture of recorded FLEURS speech, native STT,
+  E4B translation, TTS and non-silent English WebSocket PCM all passed. Stopping broadcast
+  preserved the independently active input. This is a WebSocket PCM assertion, not physical
+  browser playback or human listening approval.
+- Actual native translation: **2,994 ms** for the 52-character recognized utterance.
+  First audio after semantic final: **3,714 ms**; synthesis observer completion: **8,045 ms**.
+  One emulator sample exceeds 2,000 ms and does **not** satisfy the physical S23 p95 gate.
+  Timing evidence: `operator-final-public-fixture-timing.log`.
+- Exact-artifact `RepeatedSemanticSpeechDeviceTest`: **PASS 4/4, 127.972 s**
+  (`final-repeated-speech.txt`). Includes baseline STT plus E2B, E4B and 800 ms delayed E4B;
+  each case receives the recorded utterance three times. No skips. Nine actual translations
+  are retained in `final-fixture-translations.txt`.
+- Crash buffer collected after the final repeated-speech run: **empty (0 bytes)**.
+  This describes that run window only; earlier tool collisions/interrupted runs remain documented.
+
+An installation-environment recovery attempt failed **1/1 in 2.934 s**: cache bytes matched,
+but the temporary offload restoration initially preserved seconds instead of milliseconds.
+The existing completion marker correctly rejected the changed mtime and required cache-generation
+space. The original mtime `1790642522472` was restored exactly from the unchanged marker;
+no marker was forged or validation bypassed. Codex read the failure output before the
+next run overwrote `device-e4b-operator-provider-label-fixed.txt`; the separate raw file was
+not preserved. The observed failure remains recorded here and in the task's tool output,
+and is not counted as a PASS or represented as a surviving raw log.
+Antigravity subsequently copied its captured tool transcript into
+`operator-mtime-mismatch-2.934s-FAIL.txt`. The file is explicitly marked transcript-derived;
+it is not represented as the overwritten original file.
+
+## Initial signed candidate (before the provider-label correction)
+
+- Application: `MCastTalk-0.2.46-beta-a.apk`, 96,358,265 bytes, code 54.
+  SHA-256: `f01b433c1717921be5621dbe6597fc1f7fb288630eaea74ed71bfaea1d11b49a`.
+- Initial instrumentation (four speech checks and English TTS preparation): 4,825,122 bytes.
+  SHA-256: `1f6ea7a0c864ca8952c51a6bf675a40c5aaa900da184d6a4eb7053ee151a1b83`.
+- A subsequent test-only diagnostic build adds changed-state logging while waiting for broadcast
+  preparation. It preserves the success predicate and production APK. Build: 44 s, 225 tasks
+  (6 executed, 219 up-to-date). New test APK SHA-256:
+  `923830cb7c89f89e60660ce8eda1497e1806010bb1235b533128198d3eea6fa6`.
+  Signature/alignment passed and installed test hash matched. Original test APK is retained.
+- Final test-only build recognizes the **whole** normal 6 GB memory-mode notice, rather than
+  waiting indefinitely before playing the fixture. Errors are not matched by this added rule;
+  actual Gemma output and non-silent audio assertions remain required. Build: 32 s, 225 tasks
+  (6 executed, 219 up-to-date). Test APK: 4,894,953 bytes, SHA-256
+  `d7557b79a845230b21f13edc07d569bb938a3b56395ae75dce2c546f4c72c96a`.
+  Signature/alignment and installed hash checks passed; production APK hash unchanged.
+- Both: v3 signature and 16 KiB alignment PASS. Existing certificate SHA-256:
+  `afd9d964c7161f0052d16b0065e6dec14861900cfb876b18df639734ccf29ff3`.
+- Both installed with `adb install --no-incremental -r` on dedicated ARM64 API 35 AVD.
+  Installed `base.apk` hashes match the signed files above. Models and app data preserved.
+  Emulator-only installation storage threshold was temporarily reduced to 200 MiB and restored
+  to its original unset value; no production storage policy was changed.
+
+## Initial candidate speech checks
+
+All use the recorded public Google FLEURS `ko_kr/test` row 7, sample 1959: 7.02 seconds,
+16 kHz mono S16LE, 224,640 bytes. Fixture SHA-256:
+`b35aa5acf7ff72a4ec1b68415957ac9e7fe89268312cc8f5e5325a88acea841f`.
+[Source](https://huggingface.co/datasets/google/fleurs), revision
+`70bb2e84b976b7e960aa89f1c648e09c59f894dd`, CC-BY-4.0;
+see `app/src/androidTest/assets/fixtures/FLEURS_NOTICE.txt` for attribution.
+
+| Instrumentation method | Observed result |
+|---|---|
+| `repeatedPublicKoreanSpeechKeepsMeaningWordsInEachLiveSentence` | PASS, 29.277 s, three utterances |
+| `e2bStandardSpeechToTranslationPipelineSucceeds` | PASS, 32.054 s, three utterances and translations |
+| `e4bModelOptionSpeechToTranslationPipelineSucceeds` | PASS, 39.440 s, three utterances and translations |
+| `e4bModelOptionWithDelayedPcmCaptureTimestampsSucceeds` | PASS, 35.487 s, three utterances and translations, 800 ms injected capture timestamp lag |
+
+These four tests exercise real recognition/segmentation; the three model cases use actual
+Gemma inference through a test channel consumer. They do not by themselves prove the
+BroadcastService/operator UI journey. The final exact-artifact operator PASS is recorded above.
+
+First operator UI attempt: **not passed; interrupted after a confirmed preparation error**.
+The AOSP emulator had no available Android TTS engine and no prepared Moonshine English
+voice. `SpeechSynthesisPreparationException` for `en` is preserved in
+`operator-tts-unprepared-failure.log`. The helper waited for provider readiness instead of
+surfacing this preparation failure promptly. This attempt does not prove translated audio
+delivery. Voice preparation and the subsequent operator run are separate evidence.
+
+Environment preparation: existing
+`MoonshineTtsDeviceIntegrationTest#sequentialEnglishGuideUtterancesSynthesizePlayablePcmWithMonotonicFrames`
+on the same installed artifacts **PASS, 38.597 s**. The production provider prepared English
+assets and synthesized five test sentences, checking non-silent PCM and monotonic frames.
+This is emulator buffer/PCM evidence, not a human listening judgment.
+
+The next operator attempt also waited at preparation; it was interrupted for the diagnostic
+test APK replacement. Interruption by `am force-stop` is not a spontaneous app crash or a
+test PASS. A separate concurrent `uiautomator dump` process crashed with “UiAutomationService
+already registered”; it was stopped and is not counted as successful application validation.
+
+The diagnostic run identified a test readiness mismatch: the service reached `LIVE` with
+`Gemma · 영어 · English`, but the expected-notice helper rejected its normal 6 GB memory
+mode message. Therefore no speech fixture had yet played. This was interrupted and preserved
+in `operator-memory-notice-diagnostics.log`; the final test helper accepts that exact normal
+notice with an anchored whole-string match. Product behavior is unchanged by this test fix.
+
+With that test fix, the operator journey reached actual translation and synthesis, but **FAILED
+1/1 in 104.234 s** at the provider-label assertion (`operator-provider-label-FAIL.txt`). E4B
+processed the 52-character recognized utterance in 2,999 ms. The voice-preparation callback
+overwrote `channelSummary` with the default `ML Kit` label despite an active Gemma route.
+`updateProviderFallbackUi` now derives an omitted label from its supplied active-route flag;
+explicit failure/recovery labels remain authoritative. The package was rebuilt and the same
+operator test passed as recorded above; initial candidate hashes are historical only.
+
+## Translation quality finding — functional PASS does not mean semantic PASS
+
+Reference: “그래도 관계자의 조언을 듣고 모든 표지판을 **지키고** 안전 경고에 세심한 주의를 기울여야 합니다.”
+Observed ASR substituted **시키고** for **지키고**. E2B rendered “follow all signs”, while
+E4B rendered **“order all signs”**, a contextual mistranslation. On the final APK this
+occurred in all six E4B repetitions of the same recording, while all three E2B repetitions
+rendered “follow all signs”. All nine tagged outputs were retained locally by Codex.
+This one repeated sample is not a multilingual accuracy benchmark. No claim of improved
+E4B translation quality is supported. E2B remains available and is the default selection.
+
+Final provider translation times (not first-audio latency): E2B **1909/1233/1207 ms**;
+ordinary E4B **2226/2136/2093 ms**; delayed E4B **2196/2211/2174 ms**.
+These few emulator samples cannot establish a p95 or the Galaxy S23 2,000 ms gate.
+
+## Limits
+
+No physical Galaxy/Samsung One UI, physical microphone/browser, outdoor noise, voice-naturalness,
+two-hour/eight-hour stability or S23 first-audio p95 result is claimed. The user's precise
+device cause and broad multilingual behavior remain unproven. Local evidence is under
+`build/evidence/e4b-listening-hotfix/`; private device logs and signing data are not published.
+
+---
+
+# Historical: 0.2.46-beta E4B validation (package and device gates completed)
 
 Date: 2026-09-29. Base: public `v0.2.45-beta-c`, `ac8039f`.
 Scope: preserve existing E2B models and add general E4B-IT LiteRT-LM as a separate option.
