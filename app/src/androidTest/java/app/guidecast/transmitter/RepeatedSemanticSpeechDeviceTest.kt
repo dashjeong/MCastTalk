@@ -9,6 +9,7 @@ import app.guidecast.core.translation.RecognizedUtterance
 import app.guidecast.core.translation.SpeechRecognitionConfig
 import app.guidecast.provider.gemma.translation.GemmaModelVariant
 import java.security.MessageDigest
+import java.util.Locale
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.CompletableDeferred
@@ -207,6 +208,12 @@ class RepeatedSemanticSpeechDeviceTest {
                                     targetLanguageTag = "en",
                                 )
                                 assertTrue("Translated text must not be blank", translated.isNotBlank())
+                                assertTrue(
+                                    "Public safety fixture must retain compliance with signs: $translated",
+                                    Regex(
+                                        """\b(?:follow|obey|observe|heed|respect|comply with|adhere to|abide by)\s+(?:(?:all|the|posted|safety)\s+)*sign(?:s|age|posts)\b""",
+                                    ).containsMatchIn(translated.lowercase(Locale.ROOT)),
+                                )
                                 // Only the bundled public fixture enters this test-only evidence.
                                 Log.i("GemmaSpeechGate", "model=${variant.id} delayMs=${captureDelayNanos / 1_000_000} " +
                                     "sequence=${utterance.sequence} elapsedMs=${SystemClock.elapsedRealtime() - started} " +
