@@ -232,6 +232,7 @@ class MainActivity : ComponentActivity() {
                     onClearTranslationLanguages = viewModel::clearTranslationLanguages,
                     onPrepareTranslationModels = viewModel::prepareSelectedTranslationModels,
                     onSelectSpeechVoice = viewModel::selectSpeechVoice,
+                    onRecheckSpeechVoices = viewModel::recheckInstalledSpeechVoices,
                     onCancelModelPreparation = viewModel::cancelModelPreparation,
                     onRemoveTranslationModel = viewModel::removeTranslationModel,
                     onSetTranslationBroadcastEnabled = viewModel::setTranslationBroadcastEnabled,
@@ -325,6 +326,7 @@ private fun GuideCastScreen(
     onClearTranslationLanguages: () -> Unit,
     onPrepareTranslationModels: () -> Unit,
     onSelectSpeechVoice: (String, SpeechVoicePreference) -> Unit,
+    onRecheckSpeechVoices: () -> Unit = {},
     onCancelModelPreparation: () -> Unit,
     onRemoveTranslationModel: (String) -> Unit,
     onSetTranslationBroadcastEnabled: (Boolean) -> Unit,
@@ -900,6 +902,7 @@ private fun GuideCastScreen(
                         onClearSelection = onClearTranslationLanguages,
                         onPrepare = onPrepareTranslationModels,
                         onSelectSpeechVoice = onSelectSpeechVoice,
+                        onRecheckSpeechVoices = onRecheckSpeechVoices,
                         onCancelPreparation = onCancelModelPreparation,
                         onRemove = onRemoveTranslationModel,
                     )
@@ -937,7 +940,7 @@ private fun GuideCastScreen(
                             Text("문장·회화 사전 · 확인 / 수정")
                         }
                         SettingsInformationCard(onOpenLicenses = { showLicenses = true })
-                        DiagnosticsAndVoiceSettings()
+                        DiagnosticsAndVoiceSettings(onRecheckSpeechVoices)
                         if (developerInfo) OutlinedButton(onClick = { showDeveloperLab = true },
                             modifier = Modifier.fillMaxWidth().sizeIn(minHeight = 56.dp)) {
                             Text("개발자 실험실 · 표현 TTS / 의역 / API")
@@ -3297,6 +3300,7 @@ private fun TranslationModelCard(
     onClearSelection: () -> Unit,
     onPrepare: () -> Unit,
     onSelectSpeechVoice: (String, SpeechVoicePreference) -> Unit,
+    onRecheckSpeechVoices: () -> Unit,
     onCancelPreparation: () -> Unit,
     onRemove: (String) -> Unit,
 ) {
@@ -3312,9 +3316,18 @@ private fun TranslationModelCard(
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("번역 ${state.translationDisplayName(tag)}")
-                    Text("통역 음성 ${state.ttsDisplayName(tag)}")
+                    Text("통역 음성 · ${state.voicePreparationPresentation(tag).text}")
+                    state.ttsUnavailableReason(tag)?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error)
+                    }
                     translationError?.let { Text("번역 오류 · ${it.take(1200)}", color = MaterialTheme.colorScheme.error) }
                     moonshineTtsFailureDetail(speechStatus)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    SystemVoiceSetupActions(
+                        languageLabel = state.options.firstOrNull { it.languageTag == tag }?.label ?: tag,
+                        preference = state.voicePreferences[tag] ?: SpeechVoicePreference.AUTO,
+                        enabled = enabled && !state.isBusy,
+                        onRecheck = onRecheckSpeechVoices,
+                    )
                     Text("다른 언어와 원음 방송은 별도로 동작합니다. 준비 상태를 확인한 뒤 다시 준비할 수 있습니다.")
                 }
             },
@@ -3505,18 +3518,18 @@ private fun TranslationModelCard(
                         Text(
                             text = "번역 ${state.translationDisplayName(option.languageTag)}",
                             style = MaterialTheme.typography.bodySmall,
-                            color = if (!translationModelReadyForChannel(state, option.languageTag) ||
-                                !state.ttsReady(option.languageTag)
-                            ) MaterialTheme.colorScheme.error else GuideCastSuccess,
+                            color = if (!translationModelReadyForChannel(state, option.languageTag))
+                                MaterialTheme.colorScheme.error else GuideCastSuccess,
                         )
+                        val voicePresentation = state.voicePreparationPresentation(option.languageTag)
                         Text(
-                            text = when {
-                                state.ttsUnavailableReason(option.languageTag) != null -> "통역 음성 · 확인 필요"
-                                state.ttsFallbackReady(option.languageTag) -> "통역 음성 · Galaxy 대체 음성 준비"
-                                else -> "통역 음성 · ${state.ttsReadiness(option.languageTag).displayName()}"
-                            },
+                            text = "통역 음성 · ${voicePresentation.text}",
                             style = MaterialTheme.typography.bodySmall,
-                            color = if (state.ttsReady(option.languageTag)) GuideCastSuccess else MaterialTheme.colorScheme.error,
+                            color = when (voicePresentation.phase) {
+                                VoicePreparationPhase.READY -> GuideCastSuccess
+                                VoicePreparationPhase.FAILED -> MaterialTheme.colorScheme.error
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            },
                         )
                         if (tts?.readiness == MoonshineTtsReadiness.DOWNLOADING) {
                             LinearProgressIndicator(
@@ -3538,14 +3551,21 @@ private fun TranslationModelCard(
                             )
                         }
                         if (translationModel?.errorMessage != null || moonshineTtsFailureDetail(tts) != null ||
-                            state.ttsUnavailableReason(option.languageTag) != null
+                            state.ttsUnavailableReason(option.languageTag) != null ||
+                            (selected && !state.ttsReady(option.languageTag))
                         ) {
                             TextButton(
                                 onClick = { detailLanguageTag = option.languageTag },
                                 modifier = Modifier.sizeIn(minHeight = 48.dp).semantics {
                                     contentDescription = "${option.label} 문제 상세"
                                 },
-                            ) { Text("문제 상세 · 복구 안내", color = MaterialTheme.colorScheme.error) }
+                            ) {
+                                Text(
+                                    if (!state.ttsReady(option.languageTag)) "음성팩 설치 · 복구" else "문제 상세 · 복구 안내",
+                                    color = if (voicePresentation.phase == VoicePreparationPhase.FAILED)
+                                        MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                )
+                            }
                         }
                     }
                     if (readiness == ModelReadiness.READY) {
@@ -3676,7 +3696,7 @@ private fun SpeechVoicePreferencePicker(
         }
     }
     Text(
-        "자동은 설치된 오프라인 음성을 사용합니다. Moonshine 파일은 해당 옵션 선택 후 준비할 때 내려받습니다. 음성 실패 시 설치된 다른 엔진으로 복구합니다.",
+        "이미 설치한 음성은 재사용합니다. Google·Samsung 음성팩은 해당 엔진의 설치 화면에서 준비하고, Moonshine 파일은 Moonshine 선택 후 준비할 때 내려받습니다.",
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -4771,13 +4791,7 @@ private fun TranslationModelUiState.translationDisplayName(languageTag: String):
 }
 
 private fun TranslationModelUiState.ttsDisplayName(languageTag: String): String =
-    if (ttsUnavailableReason(languageTag) != null) {
-        "사용 불가 · ${ttsUnavailableReason(languageTag)?.take(120)}"
-    } else if (ttsFallbackReady(languageTag)) {
-        "설치된 Android 오프라인 음성 준비"
-    } else {
-        ttsReadiness(languageTag).displayName()
-    }
+    voicePreparationPresentation(languageTag).text
 
 internal fun moonshineTtsFailureDetail(status: MoonshineTtsStatus?): String? = status
     ?.takeIf { it.readiness == MoonshineTtsReadiness.FAILED }

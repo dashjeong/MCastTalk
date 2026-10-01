@@ -54,6 +54,14 @@ class AndroidOfflineVoiceSelectionTest {
     }
 
     @Test
+    fun `zh rejects zh-TW voice when only traditional voice is installed`() {
+        val zhTwVoice = createVoiceInfo("cmn-tw-x-ttt", Locale.TRADITIONAL_CHINESE)
+
+        val selected = selectBestOfflineVoiceInfo(listOf(zhTwVoice), "zh")
+        assertNull("zh (Simplified) must not select a Traditional Chinese voice", selected)
+    }
+
+    @Test
     fun `vi selects Vietnamese offline voice`() {
         val viVoice = createVoiceInfo("vie-vnm-x-vvv", Locale.forLanguageTag("vi-VN"))
         val enVoice = createVoiceInfo("eng-usa-x-eee", Locale.US)

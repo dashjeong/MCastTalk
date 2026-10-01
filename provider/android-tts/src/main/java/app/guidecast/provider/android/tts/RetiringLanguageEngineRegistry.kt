@@ -58,6 +58,18 @@ internal class RetiringLanguageEngineRegistry<T : Any>(
         reconcileLanguageOwners(mapOf(owner to retainedLanguageTags))
     }
 
+    fun retireLanguages(languageTags: Set<String>) {
+        if (languageTags.isEmpty()) return
+        val retiring = synchronized(lock) {
+            val removed = mutableListOf<T>()
+            for (tag in languageTags) {
+                current.remove(tag)?.let { removed += it }
+            }
+            removed
+        }
+        retiring.forEach(retireWhenIdle)
+    }
+
     fun reconcileLanguageOwners(updates: Map<String, Set<String>>) {
         require(updates.isNotEmpty())
         require(updates.all { (owner, languages) ->

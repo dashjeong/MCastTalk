@@ -37,13 +37,25 @@ internal class SpeechSynthesisPreparationException(
     val moonshineError: Throwable,
     val androidOfflineError: Throwable,
 ) : IllegalStateException(
-    "통역 음성을 준비하지 못했습니다: $languageTag" +
-        " · Moonshine: ${moonshineError.conciseMessage()}" +
-        " · Galaxy 오프라인 음성: ${androidOfflineError.conciseMessage()}",
+    buildSpeechSynthesisPreparationErrorMessage(languageTag, moonshineError, androidOfflineError),
     androidOfflineError,
 ) {
     init {
         addSuppressed(moonshineError)
+    }
+}
+
+internal fun buildSpeechSynthesisPreparationErrorMessage(
+    languageTag: String,
+    moonshineError: Throwable,
+    androidOfflineError: Throwable,
+): String {
+    val androidMessage = androidOfflineError.conciseMessage()
+    return when (moonshineError) {
+        is InstalledOfflineVoiceSelected, is MoonshineVoiceUnavailableException ->
+            "통역 음성 준비 실패: $languageTag · 기기 오프라인 음성: $androidMessage"
+        else ->
+            "통역 음성 준비 실패: $languageTag · 기기 오프라인 음성: $androidMessage · Moonshine: ${moonshineError.conciseMessage()}"
     }
 }
 
@@ -90,7 +102,7 @@ internal suspend fun prepareOptionalSpeechStandby(
             true
         } ?: false
         if (completed) null else {
-            IllegalStateException("Galaxy 오프라인 대체 음성 준비 시간 초과: $languageTag")
+            IllegalStateException("기기 오프라인 대체 음성 준비 시간 초과: $languageTag")
         }
     } catch (cancelled: CancellationException) {
         throw cancelled
@@ -148,10 +160,10 @@ internal fun synthesizeSpeechWithFallback(
                 emitAll(
                     fallback.synthesizeWithFirstAudibleFrameWithin(
                         text, languageTag, fallbackFirstFrameTimeoutMillis,
-                        "Galaxy 오프라인 TTS",
+                        "기기 오프라인 TTS",
                         onExecutionWaitStarted, onExecutionStarted,
                     )
-                        .requireNonSilentPcm("Galaxy 오프라인 TTS")
+                        .requireNonSilentPcm("기기 오프라인 TTS")
                         .onEach { frame ->
                             if (frame.hasAudiblePcm16()) onFallbackAudibleFrame(frame)
                         }
@@ -161,7 +173,7 @@ internal fun synthesizeSpeechWithFallback(
                             throw IllegalStateException(
                                 "통역 음성 생성 실패 · 고품질 음성: " +
                                     primaryError.conciseMessage() +
-                                    " · Galaxy 오프라인 음성: " +
+                                    " · 기기 오프라인 음성: " +
                                     fallbackError.conciseMessage(),
                                 fallbackError,
                             ).also { it.addSuppressed(primaryError) }
@@ -209,10 +221,10 @@ internal fun synthesizeSpeechWithStickyFallback(
 } else {
     fallback.synthesizeWithFirstAudibleFrameWithin(
         text, languageTag, fallbackFirstFrameTimeoutMillis,
-        "Galaxy 오프라인 TTS",
+        "기기 오프라인 TTS",
         onExecutionWaitStarted, onExecutionStarted,
     )
-        .requireNonSilentPcm("Galaxy 오프라인 TTS")
+        .requireNonSilentPcm("기기 오프라인 TTS")
         .onEach { frame ->
             if (frame.hasAudiblePcm16()) onFallbackAudibleFrame(frame)
         }
@@ -220,7 +232,7 @@ internal fun synthesizeSpeechWithStickyFallback(
             fallbackError.findCancellation()?.let { throw it }
             onFallbackFailure(fallbackError)
             throw IllegalStateException(
-                "통역 음성 생성 실패 · Galaxy 오프라인 음성: " +
+                "통역 음성 생성 실패 · 기기 오프라인 음성: " +
                     fallbackError.conciseMessage(),
                 fallbackError,
             )
@@ -428,7 +440,7 @@ private suspend fun prepareSpeechSynthesisLanguage(
             languageTag = languageTag,
             moonshineError = moonshineError,
             androidOfflineError = androidProviderError ?: IllegalStateException(
-                "$languageTag Galaxy 오프라인 음성 준비 시간 초과 " +
+                "$languageTag 기기 오프라인 음성 준비 시간 초과 " +
                     "(${androidFallbackPreparationTimeoutMillis}ms). " +
                     "기기 TTS 설정에서 이 언어의 오프라인 음성을 설치한 뒤 다시 준비하세요.",
             ),

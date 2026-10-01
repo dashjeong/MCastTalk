@@ -7,6 +7,24 @@ import org.junit.Test
 class GemmaTranslationOutputGuardTest {
     private val original = "담당자는 회의 일정이 바뀌었다고 안내했습니다."
 
+    @Test fun fullEnglishSentenceCannotSilentlySucceedAsJapaneseOrChinese() {
+        for (target in listOf("ja", "zh", "zh-TW")) {
+            try {
+                requireGemmaTargetScript(original, "The coordinator announced that the meeting schedule had changed today.", target)
+                fail("English sentence must not enter a Japanese/Chinese output channel")
+            } catch (error: IllegalStateException) {
+                assertEquals("GEMMA_TARGET_SCRIPT_MISMATCH", error.message)
+            }
+        }
+    }
+
+    @Test fun scriptGuardAllowsActualTranslationsAndShortNamesOrAcronyms() {
+        requireGemmaTargetScript(original, "担当者は会議の日程が変更されたと案内しました。", "ja")
+        requireGemmaTargetScript(original, "负责人通知会议日程已更改。", "zh")
+        requireGemmaTargetScript(original, "MSS / TIPS / IR", "ja")
+        requireGemmaTargetScript("브랜드 이름은 Open AI Test Company LLC 입니다.", "Open AI Test Company LLC", "zh")
+    }
+
     @Test fun copiedKoreanSentenceIsNotASuccessfulDifferentScriptTranslation() {
         for (target in listOf("en", "es", "ar", "ja", "zh", "zh-TW")) {
             rejected(original, original, target)

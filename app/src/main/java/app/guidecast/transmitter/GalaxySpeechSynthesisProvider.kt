@@ -103,6 +103,19 @@ class GalaxySpeechSynthesisProvider(
         mutableFallbackLanguageTags.update { it - languageTag }
         mutableUnavailableLanguageReasons.update { it + (languageTag to "음성 선택 변경 · 준비 버튼으로 확인하세요.") }
     }
+
+    /** Rechecks installed offline speech voices after returning from system/vendor voice installer. */
+    fun refreshInstalledVoices(languageTags: Set<String>) {
+        require(languageTags.all(String::isNotBlank))
+        languageTags.forEach { tag ->
+            engines.remove(tag)
+        }
+        android.refreshLanguages(languageTags)
+        workerFailures.reset(languageTags)
+        mutableUnavailableLanguageReasons.update { it - languageTags }
+        mutableFallbackLanguageTags.update { it - languageTags }
+    }
+
     private val recoveryTiming = context.speechSynthesisRecoveryTiming()
     private val moonshine = MoonshineSpeechSynthesisProvider(context)
     private val android = AndroidOfflineSpeechSynthesisProvider(
@@ -929,7 +942,7 @@ internal suspend fun prepareSpeechSynthesisOutcomesIndependently(
     }
 }
 
-private class MoonshineVoiceUnavailableException(languageTag: String) :
+internal class MoonshineVoiceUnavailableException(languageTag: String) :
     IllegalStateException("Moonshine 오프라인 음성이 제공되지 않는 언어입니다: $languageTag")
 
 private fun Context.speechSynthesisRecoveryTiming(): SpeechSynthesisRecoveryTiming {
