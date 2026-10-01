@@ -1,0 +1,1777 @@
+{
+  "reportTitle": "MCastTalk E4B baseline and final beta-c comparison",
+  "evaluationDateUtc": "2026-10-01T03:35:00Z",
+  "apkVersion": "0.2.46-beta-c",
+  "apkSha256": "b73844cad224e733ccea843cbcb1d47b9d56494b82c118e4d16a6c7d9a4bd330",
+  "gitCommit": "bf25bf1",
+  "junitDurationSeconds": 273.076,
+  "totalCases": 66,
+  "groundTruthAuthority": "User-supplied Korean Source Text",
+  "publicTerminologyReference": "docs/E4B_TRANSLATION_REVIEW.md (MSS English, Korea.net Japanese, Korea.net Chinese)",
+  "executionDisclaimer": "Recorded elapsedMs represents emulator text-input translation compute time only; it is NOT physical Galaxy S23 first-PCM audio latency (2,000 ms p95 release gate). Model weights were NOT trained. No zero-latency simultaneous interpretation claimed.",
+  "latencySummary": {
+    "baselineMedianMs": {
+      "en": 4607.0,
+      "ja": 4953.5,
+      "zh": 4446.5
+    },
+    "fidelityRestoredMedianMs": {
+      "en": 3827.5,
+      "ja": 4107.5,
+      "zh": 3747.5
+    },
+    "fidelityRestoredP95Ms": {
+      "en": 5806.0,
+      "ja": 6052.0,
+      "zh": 5371.0
+    },
+    "deltaMedianMs": {
+      "en": -779.5,
+      "ja": -846.0,
+      "zh": -699.0
+    }
+  },
+  "verdictSummary": {
+    "baselineAdequacy": {
+      "MINOR": 13,
+      "PASS": 46,
+      "MAJOR": 6,
+      "NO_OUTPUT": 1
+    },
+    "finalReleaseAdequacy": {
+      "MINOR": 11,
+      "PASS": 52,
+      "MAJOR": 3
+    },
+    "finalReleaseNaturalness": {
+      "PASS": 64,
+      "MINOR": 2
+    },
+    "finalReleaseDeltaBreakdown": {
+      "SAME": 59,
+      "IMPROVED": 6,
+      "RECOVERED_COMPLETION": 1
+    }
+  },
+  "cases": [
+    {
+      "id": "IR01",
+      "targetLanguage": "en",
+      "koreanSource": "정부가 생애 첫 투자 유치에 도전하는 기술창업자와 투자사를 연결하기 위해 연내 300회 이상의 투자설명회(IR)를 연다.",
+      "geminiReference": {
+        "raw": "The government will hold more than 300 investor relations (IR) sessions within this year to connect tech startup founders seeking their first-ever investment with investment firms.",
+        "independentDiagnosis": "300회 이상 -> 'more than 300' (초과/exclusive 뉘앙스로 원문 300회 이상/inclusive 경계 불일치); 생애 첫 투자 유치 -> 'seeking their first-ever investment' (자금조달 의미 보존)"
+      },
+      "e4bBaseline": {
+        "raw": "The government will hold over 300 investment presentations (IRs) this year to connect tech startups making their first investment challenge with investors.",
+        "state": "COMPLETED",
+        "elapsedMs": 4943,
+        "adequacyVerdict": "MINOR",
+        "naturalnessVerdict": "awkward",
+        "evaluationDetails": "'첫 투자 유치'를 'first investment challenge'로 직역하여 자금 조달 의미가 다소 모호하며, '300회 이상'을 'over 300'으로 표현"
+      },
+      "e4bFinal": {
+        "raw": "The government will hold over 300 investment briefings (IRs) within the year to connect tech startups attempting their first funding round with investors.",
+        "state": "COMPLETED",
+        "elapsedMs": 4013,
+        "adequacyVerdict": "MINOR",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "연내(within the year) 및 시도(attempting) 반영 양호. 단, 300회 이상 대비 초과(over 300) 하한선 경계 미세 불일치 잔존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR01",
+      "targetLanguage": "ja",
+      "koreanSource": "정부가 생애 첫 투자 유치에 도전하는 기술창업자와 투자사를 연결하기 위해 연내 300회 이상의 투자설명회(IR)를 연다.",
+      "geminiReference": {
+        "raw": "政府は、生涯初の資金調達に挑む技術創業者と投資会社をつなぐため、年内に300回以上の投資説明会（IR）を開催する。",
+        "independentDiagnosis": "정합 (300回以上 수량경계 보존, 投資説明会, 生涯初の資金調達 일치)"
+      },
+      "e4bBaseline": {
+        "raw": "政府は、初めての投資誘致に挑戦する技術起業家と投資会社を結びつけるため、年内に300回以上の投資説明会（IR）を開催します。",
+        "state": "COMPLETED",
+        "elapsedMs": 5974,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "300회 이상(300回以上) 및 기술起業家-투자회사 매칭 취지를 자연스럽게 전달"
+      },
+      "e4bFinal": {
+        "raw": "政府は、人生で初めての投資誘致に挑戦する技術起業家と投資会社を繋ぐため、年内に300回以上の投資説明会（IR）を開催する。",
+        "state": "COMPLETED",
+        "elapsedMs": 4830,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR01",
+      "targetLanguage": "zh",
+      "koreanSource": "정부가 생애 첫 투자 유치에 도전하는 기술창업자와 투자사를 연결하기 위해 연내 300회 이상의 투자설명회(IR)를 연다.",
+      "geminiReference": {
+        "raw": "韩国政府将在年内举办300余场投资者关系活动（IR），以对接首次挑战招商引资的科技初创企业与投资机构。",
+        "independentDiagnosis": "300회 이상 -> '300余场' (대략/근사치 표현으로 이상/inclusive 경계 불일치); 생애 첫 투자 유치 -> '首次挑战招商引资' (정부의 기업유치 행위 용어인 招商引资로 오역, 스타트업 자금조달/투자유치인 融资/吸引投资 의미와 불일치)"
+      },
+      "e4bBaseline": {
+        "raw": "政府将在今年内举办超过300场投资说明会（IR），以连接首次吸引投资的技术创业者和投资公司。",
+        "state": "COMPLETED",
+        "elapsedMs": 4627,
+        "adequacyVerdict": "MINOR",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "'300회 이상'을 '超过300场'으로 번역하였으나 투자설명회 및 첫 투자 유치 의미는 명확함"
+      },
+      "e4bFinal": {
+        "raw": "政府将在今年内举办超过300场投资路演（IR），以连接首次寻求融资的技术创业者与投资公司。",
+        "state": "COMPLETED",
+        "elapsedMs": 3559,
+        "adequacyVerdict": "MINOR",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "목표 뉘앙스 정상화(首次寻求融资, 기존 首次获得投资의 완료형 오류 해소). 단, 수량 이상(>=) 대비 초과(超过300场) 미세 경계 불일치 잔존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR02",
+      "targetLanguage": "en",
+      "koreanSource": "중소벤처기업부는 1일 서울 강남구 팁스타운 S1에서 ‘도전의 IR 퍼스트 밋업’을 개최하고 ‘도전의 IR 프로젝트’를 본격적으로 시작한다고 밝혔다.",
+      "geminiReference": {
+        "raw": "The Ministry of SMEs and Startups announced on the 1st that it held the 'Challenge IR First Meetup' at TIPS Town S1 in Gangnam-gu, Seoul, and is officially launching the 'Challenge IR Project'.",
+        "independentDiagnosis": "정합 (announced on the 1st that it held ... is officially launching 과거 개최 및 1일 발표 시제 보존, TIPS Town 명칭 유지)"
+      },
+      "e4bBaseline": {
+        "raw": "The Ministry of SMEs and Startups announced that it will hold the 'Challenge IR First Meetup' at Tip Town S1 in Gangnam-gu, Seoul on the 1st and officially launch the 'Challenge IR Project.'",
+        "state": "COMPLETED",
+        "elapsedMs": 5713,
+        "adequacyVerdict": "MAJOR",
+        "naturalnessVerdict": "awkward",
+        "evaluationDetails": "이미 1일 개최된 행사를 미래 시제(will hold, will launch)로 왜곡하였고, 'TIPS Town'을 'Tip Town'으로 축약 오역"
+      },
+      "e4bFinal": {
+        "raw": "The Ministry of SMEs and Startups announced that it will hold the 'Challenge IR First Meetup' at Tip Town S1 in Gangnam-gu, Seoul on the 1st and officially launch the 'Challenge IR Project.'",
+        "state": "COMPLETED",
+        "elapsedMs": 4800,
+        "adequacyVerdict": "MAJOR",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "당일 완료 행사 시제 왜곡 미해결(MAJOR): 1일 개최된 행사이나 will hold... on the 1st 미래형 잔존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR02",
+      "targetLanguage": "ja",
+      "koreanSource": "중소벤처기업부는 1일 서울 강남구 팁스타운 S1에서 ‘도전의 IR 퍼스트 밋업’을 개최하고 ‘도전의 IR 프로젝트’를 본격적으로 시작한다고 밝혔다.",
+      "geminiReference": {
+        "raw": "中小ベンチャー企業部は1日、ソウル市江南区のTIPSタウンS1で「挑戦のIRファーストミートアップ」を開催し、「挑戦のIRプロジェクト」を本格的に始動すると発表した。",
+        "independentDiagnosis": "정합 (中小ベンチャー企業部 공식 부처명, 1日開催・本格的に始動 시제 및 TIPSタウン 표기 일치)"
+      },
+      "e4bBaseline": {
+        "raw": "中小企業庁は1日、ソウル江南区のティップタウンS1で「挑戦のIRファーストミートアップ」を開催し、「挑戦のIRプロジェクト」を本格的に開始すると発表した。",
+        "state": "COMPLETED",
+        "elapsedMs": 5265,
+        "adequacyVerdict": "MAJOR",
+        "naturalnessVerdict": "awkward",
+        "evaluationDetails": "공식 부처명인 '中小ベンチャー企業部' 대신 2017년 이전 구 청급 명칭인 '中小企業庁'으로 오역하였고 'ティップタウン'으로 표기하여 기관 정합성 훼손"
+      },
+      "e4bFinal": {
+        "raw": "中小ベンチャー企業部は1日、ソウル江南区のティップタウンS1で「挑戦のIRファーストミートアップ」を開催し、「挑戦のIRプロジェクト」を本格的に開始すると発表した。",
+        "state": "COMPLETED",
+        "elapsedMs": 4353,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "IMPROVED"
+      }
+    },
+    {
+      "id": "IR02",
+      "targetLanguage": "zh",
+      "koreanSource": "중소벤처기업부는 1일 서울 강남구 팁스타운 S1에서 ‘도전의 IR 퍼스트 밋업’을 개최하고 ‘도전의 IR 프로젝트’를 본격적으로 시작한다고 밝혔다.",
+      "geminiReference": {
+        "raw": "中小风险企业部于1日在首尔江南区TIPS Town S1举办“挑战IR首次交流会（First Meetup）”，宣布正式启动“挑战IR项目”。",
+        "independentDiagnosis": "정합 (中小风险企业部 공식 부처명, 1日举办 및 TIPS Town 표기 일치)"
+      },
+      "e4bBaseline": {
+        "raw": "中小企业发展部宣布，将于1日在首尔江南区Tip Town S1举办“挑战IR首次见面会”，并正式启动“挑战IR项目”。",
+        "state": "COMPLETED",
+        "elapsedMs": 4587,
+        "adequacyVerdict": "MAJOR",
+        "naturalnessVerdict": "awkward",
+        "evaluationDetails": "공식 부처명('中小风险企业部') 대신 임의의 '中小企业发展部'로 왜곡, 당일 개최 행사를 미래 시제('将于1日举办')로 왜곡, 'Tip Town' 축약 오역"
+      },
+      "e4bFinal": {
+        "raw": "中小风险企业部宣布，将于1日在首尔江南区Tip Town S1举办“挑战IR首次见面会”，并正式启动“挑战IR项目”。",
+        "state": "COMPLETED",
+        "elapsedMs": 3752,
+        "adequacyVerdict": "MAJOR",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "공식 부처명 복원(中小风险企业部). 단, 당일 완료 행사 미래 시제 왜곡 미해결(MAJOR: 将于1日举办)",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR03",
+      "targetLanguage": "en",
+      "koreanSource": "도전의 IR 프로젝트는 기술과 아이디어를 갖고 있지만 투자 네트워크나 관련 정보가 부족해 투자자를 만날 기회가 적었던 창업자와 투자사를 연결하는 프로그램이다.",
+      "geminiReference": {
+        "raw": "The Challenge IR Project is a program that connects startup founders—who possess technology and ideas but have had few opportunities to meet investors due to a lack of investment networks or relevant information—with investment firms.",
+        "independentDiagnosis": "정합 (하이픈 삽입 삽입절 '—who possess technology and ideas but have had few opportunities to meet investors—'로 투자사가 아닌 창업자에게만 수식 한정)"
+      },
+      "e4bBaseline": {
+        "raw": "The Challenge IR Project is a program that connects startups and investors who have technology and ideas but have had few opportunities to meet investors due to a lack of investment networks or related information.",
+        "state": "COMPLETED",
+        "elapsedMs": 4967,
+        "adequacyVerdict": "MAJOR",
+        "naturalnessVerdict": "awkward",
+        "evaluationDetails": "수식 범위 결합 오류로 인해 전문 투자사까지 '투자 네트워크가 부족해 투자자를 만날 기회가 적었던 주체'로 잘못 결합 수식됨"
+      },
+      "e4bFinal": {
+        "raw": "The Challenge IR Project is a program that connects startups and investors who have technology and ideas but lack investment networks or relevant information, resulting in few opportunities to meet investors.",
+        "state": "COMPLETED",
+        "elapsedMs": 4510,
+        "adequacyVerdict": "MAJOR",
+        "naturalnessVerdict": "MINOR",
+        "evaluationDetails": "수식 주체 왜곡 미해결(MAJOR): startups and investors who have... but lack... resulting in few opportunities to meet investors (투자사까지 네트워크 부족/기회 결여 주체로 결합 수식)",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR03",
+      "targetLanguage": "ja",
+      "koreanSource": "도전의 IR 프로젝트는 기술과 아이디어를 갖고 있지만 투자 네트워크나 관련 정보가 부족해 투자자를 만날 기회가 적었던 창업자와 투자사를 연결하는 프로그램이다.",
+      "geminiReference": {
+        "raw": "「挑戦のIRプロジェクト」は、技術やアイデアを持ちながらも、投資ネットワークや関連情報の不足から投資家に出会う機会が少なかった創業者と投資会社を結ぶプログラムだ。",
+        "independentDiagnosis": "정합 (創業者 앞 한정 수식으로 투자사 수식 왜곡 없음)"
+      },
+      "e4bBaseline": {
+        "raw": "挑戦のIRプロジェクトは、技術やアイデアを持っているが、投資ネットワークや関連情報が不足していて投資家と会う機会が少なかった起業家と投資会社を結びつけるプログラムです。",
+        "state": "COMPLETED",
+        "elapsedMs": 4939,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "일본어 수식 구조에서 창업자에게만 한정 수식이 자연스럽게 결합되어 투자사 수식 왜곡이 없음"
+      },
+      "e4bFinal": {
+        "raw": "挑戦のIRプロジェクトは、技術やアイデアはあるものの投資ネットワークや関連情報が不足しており、投資家と会う機会が少なかった起業家と投資会社を繋ぐプログラムです。",
+        "state": "COMPLETED",
+        "elapsedMs": 4972,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR03",
+      "targetLanguage": "zh",
+      "koreanSource": "도전의 IR 프로젝트는 기술과 아이디어를 갖고 있지만 투자 네트워크나 관련 정보가 부족해 투자자를 만날 기회가 적었던 창업자와 투자사를 연결하는 프로그램이다.",
+      "geminiReference": {
+        "raw": "“挑战IR项目”旨在将拥有技术和创意、但因缺乏投资渠道或相关信息而少有机会接触投资者的创业者与投资机构对接起来。",
+        "independentDiagnosis": "정합 (SVO 구문 내 목적어1 创业者 앞 전치 수식절 '拥有技术和创意、但因...的'로 한정되어 投资机构로 수식 누출 없음)"
+      },
+      "e4bBaseline": {
+        "raw": "挑战IR项目是一个连接拥有技术和想法但缺乏投资网络或相关信息、因此很少有机会接触投资者的创业者和投资方的项目。",
+        "state": "COMPLETED",
+        "elapsedMs": 4404,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "중국어는 SVO 언어로 목적어1(创业者) 앞에 위치한 전치 수식절('拥有技术...的')이 목적어2(投资方)로 누출되지 않고 정확히 한정됨"
+      },
+      "e4bFinal": {
+        "raw": "挑战IR项目是一个连接那些拥有技术和想法但缺乏投资网络或相关信息、因此很少有机会接触投资者的创业者和投资方的项目。",
+        "state": "COMPLETED",
+        "elapsedMs": 4248,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR04",
+      "targetLanguage": "en",
+      "koreanSource": "생애 첫 투자 유치를 목표로 하는 창업기업 대표나 예비창업자가 대상이며, 구체적인 사업계획을 갖고 있어야 한다.",
+      "geminiReference": {
+        "raw": "The target participants are prospective entrepreneurs or representatives of startup companies aiming to secure their first-ever investment, and they must have concrete business plans.",
+        "independentDiagnosis": "정합 (prospective entrepreneurs or representatives, first-ever investment, concrete business plans)"
+      },
+      "e4bBaseline": {
+        "raw": "It is for startup company CEOs or prospective entrepreneurs who aim to secure their first investment, and they must have a specific business plan.",
+        "state": "COMPLETED",
+        "elapsedMs": 4256,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "대상 자격 및 구체적 사업계획 보유 조건을 누락 없이 충실하게 전달"
+      },
+      "e4bFinal": {
+        "raw": "It is for startup company CEOs or prospective entrepreneurs who aim to secure funding from investors for the first time, and they must have a specific business plan.",
+        "state": "COMPLETED",
+        "elapsedMs": 3585,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR04",
+      "targetLanguage": "ja",
+      "koreanSource": "생애 첫 투자 유치를 목표로 하는 창업기업 대표나 예비창업자가 대상이며, 구체적인 사업계획을 갖고 있어야 한다.",
+      "geminiReference": {
+        "raw": "生涯初の資金調達を目指すスタートアップの代表者や創業準備中のプレ起業家が対象で、具体的な事業計画を持っている必要がある。",
+        "independentDiagnosis": "정합 (生涯初の資金調達, プレ起業家, 具体的な事業計画)"
+      },
+      "e4bBaseline": {
+        "raw": "生涯で初めての資金調達を目指す起業企業の代表者や予備起業者が対象であり、具体的な事業計画を持っている必要がある。",
+        "state": "COMPLETED",
+        "elapsedMs": 4253,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "'생애 첫 투자 유치'를 '生涯で初めての資金調達'로 자연스럽게 번역"
+      },
+      "e4bFinal": {
+        "raw": "対象は、人生で初めての投資誘致を目指す起業企業の代表者や予備起業家であり、具体的な事業計画を持っている必要がある。",
+        "state": "COMPLETED",
+        "elapsedMs": 3643,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR04",
+      "targetLanguage": "zh",
+      "koreanSource": "생애 첫 투자 유치를 목표로 하는 창업기업 대표나 예비창업자가 대상이며, 구체적인 사업계획을 갖고 있어야 한다.",
+      "geminiReference": {
+        "raw": "该项目面向以实现首次招商引资为目标的初创企业代表或准创业者，且申请者须持有具体的商业计划书。",
+        "independentDiagnosis": "용어 부적절: 생애 첫 투자 유치 -> '实现首次招商引资' (IR01과 동일하게 融资 대신 招商引资 사용)"
+      },
+      "e4bBaseline": {
+        "raw": "面向以获得首次投资为目标的企业创始人或预备创业者，且必须具备具体的商业计划。",
+        "state": "COMPLETED",
+        "elapsedMs": 3829,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "창업자 대상 요건과 사업계획 보유 조건을 충실히 번역"
+      },
+      "e4bFinal": {
+        "raw": "面向以获得首次投资为目标的企业创始人或预备创业者，且必须拥有具体的商业计划。",
+        "state": "COMPLETED",
+        "elapsedMs": 3373,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR05",
+      "targetLanguage": "en",
+      "koreanSource": "중기부와 142개 팁스(TIPS) 운영사가 연말까지 300회 이상의 대면 IR 프로그램을 진행한다.",
+      "geminiReference": {
+        "raw": "The Ministry of SMEs and Startups and 142 TIPS operators will conduct more than 300 in-person IR programs by the end of the year.",
+        "independentDiagnosis": "300회 이상 -> 'more than 300' (초과 표현으로 이상/inclusive 경계 불일치); 중기부/142개 팁스 운영사 주체 보존"
+      },
+      "e4bBaseline": {
+        "raw": "The Ministry of SMEs and Startups and 142 TIPS operators will conduct over 300 in-person IR programs by the end of the year.",
+        "state": "COMPLETED",
+        "elapsedMs": 4607,
+        "adequacyVerdict": "MINOR",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "주체, 기한, 대면 IR 방식을 보존했으나 '300회 이상'을 'over 300'으로 처리"
+      },
+      "e4bFinal": {
+        "raw": "The Ministry of SMEs and Startups and 142 TIPS operators will conduct over 300 in-person IR programs by the end of the year.",
+        "state": "COMPLETED",
+        "elapsedMs": 4402,
+        "adequacyVerdict": "MINOR",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "300회 이상 대비 초과(over 300) 미세 경계 불일치",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR05",
+      "targetLanguage": "ja",
+      "koreanSource": "중기부와 142개 팁스(TIPS) 운영사가 연말까지 300회 이상의 대면 IR 프로그램을 진행한다.",
+      "geminiReference": {
+        "raw": "中小ベンチャー企業部と142社のTIPS運営事業者が、年末までに300回以上の対面IRプログラムを実施する。",
+        "independentDiagnosis": "정합 (300回以上 수량경계 보존, 中小ベンチャー企業部 공식 명칭, 142社 TIPS運営事業者)"
+      },
+      "e4bBaseline": {
+        "raw": "中基部と142のTIPS運営会社が、年末までに300回以上の対面IRプログラムを実施します。",
+        "state": "COMPLETED",
+        "elapsedMs": 4266,
+        "adequacyVerdict": "MINOR",
+        "naturalnessVerdict": "awkward",
+        "evaluationDetails": "공식 약칭 대신 한국 한자음을 그대로 읽은 '中基部'로 직역하여 기관 정합성 및 가독성 저하"
+      },
+      "e4bFinal": {
+        "raw": "中小ベンチャー企業部と142のTIPS運営会社が、年末までに300回以上の対面IRプログラムを実施します。",
+        "state": "COMPLETED",
+        "elapsedMs": 4178,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "IMPROVED"
+      }
+    },
+    {
+      "id": "IR05",
+      "targetLanguage": "zh",
+      "koreanSource": "중기부와 142개 팁스(TIPS) 운영사가 연말까지 300회 이상의 대면 IR 프로그램을 진행한다.",
+      "geminiReference": {
+        "raw": "中小风险企业部将携手142家TIPS运营机构，在年底前开展300场以上的线下IR活动。",
+        "independentDiagnosis": "300회 이상 -> '300场以上' (경계 보존); 팁스 운영사 -> '142家TIPS运营机构' (기관 명칭 정합)"
+      },
+      "e4bBaseline": {
+        "raw": "中小企业发展部和142家TIPS运营机构将在年底前举办300次以上的面对面IR项目。",
+        "state": "COMPLETED",
+        "elapsedMs": 4142,
+        "adequacyVerdict": "MAJOR",
+        "naturalnessVerdict": "awkward",
+        "evaluationDetails": "공식 한국 정부 부처 명칭('中小风险企业部') 대신 임의의 '中小企业发展部'로 지속 오역"
+      },
+      "e4bFinal": {
+        "raw": "中小风险企业部与142家TIPS运营机构将开展300次以上的面对面IR项目，截止到年底。",
+        "state": "COMPLETED",
+        "elapsedMs": 4199,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "IMPROVED"
+      }
+    },
+    {
+      "id": "IR06",
+      "targetLanguage": "en",
+      "koreanSource": "이날 열린 첫 행사에서는 투자 유치를 희망하는 창업기업의 IR 피칭과 팁스 운영사별 일대일 투자 상담 등이 진행됐다.",
+      "geminiReference": {
+        "raw": "At the first event held on this day, IR pitching by startups seeking investment and one-on-one investment consultations by individual TIPS operators were conducted.",
+        "independentDiagnosis": "정합 (IR pitching by startups, one-on-one investment consultations by individual TIPS operators)"
+      },
+      "e4bBaseline": {
+        "raw": "The first event held on that day included IR pitching from startups seeking investment and one-on-one investment consultations with TIPS operators.",
+        "state": "COMPLETED",
+        "elapsedMs": 4054,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "당일 첫 행사 세부 내용(IR 피칭 및 운영사별 1:1 상담)을 명확히 전달"
+      },
+      "e4bFinal": {
+        "raw": "The first event held on that day included IR pitches from startups seeking investment and one-on-one investment consultations with TIPS operators.",
+        "state": "COMPLETED",
+        "elapsedMs": 3372,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR06",
+      "targetLanguage": "ja",
+      "koreanSource": "이날 열린 첫 행사에서는 투자 유치를 희망하는 창업기업의 IR 피칭과 팁스 운영사별 일대일 투자 상담 등이 진행됐다.",
+      "geminiReference": {
+        "raw": "この日開催された第1回イベントでは、資金調達を希望するスタートアップのIRピッチングや、TIPS運営事業者別の1対1の投資相談などが行われた。",
+        "independentDiagnosis": "정합 (資金調達を希望するスタートアップ, 1対1の投資相談)"
+      },
+      "e4bBaseline": {
+        "raw": "この日開催された最初のイベントでは、投資を希望する起業企業のIRピッチや、TIPS運営会社ごとの一対一の投資相談などが実施されました。",
+        "state": "COMPLETED",
+        "elapsedMs": 4777,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "행사 내용과 운영사별 상담 진행을 자연스러운 비즈니스 일본어로 전달"
+      },
+      "e4bFinal": {
+        "raw": "この日開催された最初のイベントでは、投資を希望する起業家のIRピッチや、TIPS運営会社ごとの一対一の投資相談などが実施された。",
+        "state": "COMPLETED",
+        "elapsedMs": 3880,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR06",
+      "targetLanguage": "zh",
+      "koreanSource": "이날 열린 첫 행사에서는 투자 유치를 희망하는 창업기업의 IR 피칭과 팁스 운영사별 일대일 투자 상담 등이 진행됐다.",
+      "geminiReference": {
+        "raw": "在当天举办的首场活动中，进行了有意融资的初创企业的IR路演以及各TIPS运营机构的一对一投资咨询等环节。",
+        "independentDiagnosis": "정합 (有意融资的初创企业, 一对一投资咨询)"
+      },
+      "e4bBaseline": {
+        "raw": "在当天举行的首场活动中，进行了希望获得投资的创业公司的路演和各TIPS运营机构的一对一投资咨询等活动。",
+        "state": "COMPLETED",
+        "elapsedMs": 4489,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "스타트업의 路演 및 1:1 投资咨询을 자연스럽게 전달"
+      },
+      "e4bFinal": {
+        "raw": "在当天举行的首场活动中，进行了希望获得投资的创业公司的 IR 演示和各 TIPS 运营机构的一对一投资咨询等活动。",
+        "state": "COMPLETED",
+        "elapsedMs": 3743,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR07",
+      "targetLanguage": "en",
+      "koreanSource": "팁스 운영사의 투자를 받은 뒤 성장한 선배기업의 경험을 공유하고 팁스 기업의 제품을 선보이는 자리도 마련됐다.",
+      "geminiReference": {
+        "raw": "The event also featured sessions where senior enterprises that grew after receiving investments from TIPS operators shared their experiences, and products of TIPS companies were showcased.",
+        "independentDiagnosis": "정합 (senior enterprises that grew after receiving investments, products showcased)"
+      },
+      "e4bBaseline": {
+        "raw": "A session was also held to share the experiences of senior companies that grew after receiving investment from TIPS operators and to showcase the products of TIPS companies.",
+        "state": "COMPLETED",
+        "elapsedMs": 4318,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "팁스 투자 성장 선배기업의 경험 공유 및 제품 전시 취지를 정확히 전달"
+      },
+      "e4bFinal": {
+        "raw": "A session was also held to share the experiences of senior companies that grew after receiving investment from TIPS operators and to showcase the products of TIPS companies.",
+        "state": "COMPLETED",
+        "elapsedMs": 3631,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR07",
+      "targetLanguage": "ja",
+      "koreanSource": "팁스 운영사의 투자를 받은 뒤 성장한 선배기업의 경험을 공유하고 팁스 기업의 제품을 선보이는 자리도 마련됐다.",
+      "geminiReference": {
+        "raw": "TIPS運営事業者から出資を受けて成長した先輩企業の経験を共有し、TIPS採択企業の製品を披露する場も設けられた。",
+        "independentDiagnosis": "정합 (出資を受けて成長した先輩企業, TIPS採択企業製品披露)"
+      },
+      "e4bBaseline": {
+        "raw": "TIPS運営会社からの投資を受けて成長した先輩企業の経験を共有し、TIPS企業の製品を披露する場も設けられた。",
+        "state": "COMPLETED",
+        "elapsedMs": 4097,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "팁스 투자 성장 선배기업의 경험 공유 취지를 정확히 보존"
+      },
+      "e4bFinal": {
+        "raw": "TIPS運営会社からの投資を受けて成長した先輩企業の経験を共有し、TIPS企業の製品を披露する場も設けられた。",
+        "state": "COMPLETED",
+        "elapsedMs": 3483,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR07",
+      "targetLanguage": "zh",
+      "koreanSource": "팁스 운영사의 투자를 받은 뒤 성장한 선배기업의 경험을 공유하고 팁스 기업의 제품을 선보이는 자리도 마련됐다.",
+      "geminiReference": {
+        "raw": "活动还设置了分享环节，由获得TIPS运营机构投资后实现成长的先辈企业传授经验，并展示了TIPS企业的产品。",
+        "independentDiagnosis": "정합 (先辈企业传授经验, TIPS企业产品展示)"
+      },
+      "e4bBaseline": {
+        "raw": "还安排了分享获得TIPS运营方投资后成长经验的先辈企业的经验，并展示TIPS企业的产品的场合。",
+        "state": "COMPLETED",
+        "elapsedMs": 4138,
+        "adequacyVerdict": "MINOR",
+        "naturalnessVerdict": "awkward",
+        "evaluationDetails": "'선배기업'을 '先辈企业'로 직역하여 다소 생소하나 의미 소통은 가능함"
+      },
+      "e4bFinal": {
+        "raw": "还安排了分享获得TIPS运营方投资后成长经验的先辈企业的经验，并展示TIPS企业的产品的场合。",
+        "state": "COMPLETED",
+        "elapsedMs": 3446,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "MINOR",
+        "evaluationDetails": "의미 보존 양호. 先辈企业的经验 중복적 경험 수식 표현 미세 잔존",
+        "deltaVerdict": "IMPROVED"
+      }
+    },
+    {
+      "id": "IR08",
+      "targetLanguage": "en",
+      "koreanSource": "앞으로 IR은 운영사별 프로그램과 ‘모두의 창업’ 연계 프로그램, 지역·분야별 프로그램 등으로 나눠 진행된다.",
+      "geminiReference": {
+        "raw": "Going forward, IR sessions will be divided into operator-specific programs, programs linked to 'Everyone's Startup,' and regional and sector-specific programs.",
+        "independentDiagnosis": "정합 (operator-specific, Everyone's Startup, regional and sector-specific)"
+      },
+      "e4bBaseline": {
+        "raw": "From now on, IR will be conducted in divided programs such as by operating company, the 'All Startup' linked program, and regional/field-specific programs.",
+        "state": "COMPLETED",
+        "elapsedMs": 4647,
+        "adequacyVerdict": "MINOR",
+        "naturalnessVerdict": "awkward",
+        "evaluationDetails": "'모두의 창업'을 'All Startup'으로 서술 번역하였으며, 'in divided programs such as by operating company' 구문이 다소 어색함"
+      },
+      "e4bFinal": {
+        "raw": "From now on, IR will be conducted in divided programs such as by operating company, the 'All Startup' linked program, and regional/field-specific programs.",
+        "state": "COMPLETED",
+        "elapsedMs": 3691,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "IMPROVED"
+      }
+    },
+    {
+      "id": "IR08",
+      "targetLanguage": "ja",
+      "koreanSource": "앞으로 IR은 운영사별 프로그램과 ‘모두의 창업’ 연계 프로그램, 지역·분야별 프로그램 등으로 나눠 진행된다.",
+      "geminiReference": {
+        "raw": "今後のIRは、運営事業者別プログラム、「みんなの創業」連携プログラム、地域・分野別プログラムなどに分かれて進行する。",
+        "independentDiagnosis": "정합 (運営事業者別, 「みんなの創業」, 地域・分野別)"
+      },
+      "e4bBaseline": {
+        "raw": "今後は、IRは運営会社別のプログラムや「みんなの起業」連携プログラム、地域・分野別のプログラムなどに分けて実施されます。",
+        "state": "COMPLETED",
+        "elapsedMs": 4248,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "'모두의 창업'을 'みんなの起業'로 번역하고 세 갈래 프로그램 구성을 명확히 전달"
+      },
+      "e4bFinal": {
+        "raw": "今後は、IRは運営会社別のプログラムや「みんなの起業」連携プログラム、地域・分野別のプログラムなどに分けて実施されます。",
+        "state": "COMPLETED",
+        "elapsedMs": 3530,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR08",
+      "targetLanguage": "zh",
+      "koreanSource": "앞으로 IR은 운영사별 프로그램과 ‘모두의 창업’ 연계 프로그램, 지역·분야별 프로그램 등으로 나눠 진행된다.",
+      "geminiReference": {
+        "raw": "今后的IR活动将划分为运营机构自主项目、“全民创业”联动项目、区域及行业专属项目等分别推进。",
+        "independentDiagnosis": "정합 (运营机构自主项目, “全民创业”, 区域及行业专属)"
+      },
+      "e4bBaseline": {
+        "raw": "今后，IR将分为各运营机构的计划、与“全民创业”联动的计划、以及按地区和领域划分的计划等进行开展。",
+        "state": "COMPLETED",
+        "elapsedMs": 4558,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "프로그램 분류와 '全民创业' 연계를 명확히 전달"
+      },
+      "e4bFinal": {
+        "raw": "今后，IR将分为各运营机构的计划、与“全民创业”联动的计划、以及按地区和领域划分的计划等进行开展。",
+        "state": "COMPLETED",
+        "elapsedMs": 3736,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR09",
+      "targetLanguage": "en",
+      "koreanSource": "우선 팁스 운영사가 일대일 미팅이나 공개 피칭 등을 자체적으로 기획하는 IR을 10월과 11월 두 차례에 걸쳐 진행한다.",
+      "geminiReference": {
+        "raw": "First, IR events independently planned by TIPS operators, such as one-on-one meetings and open pitches, will be held twice, in October and November.",
+        "independentDiagnosis": "정합 (independently planned by TIPS operators, held twice, in October and November)"
+      },
+      "e4bBaseline": {
+        "raw": "First, TIPS operators will hold IR sessions, including one-on-one meetings or open pitch events planned by them, twice in October and November.",
+        "state": "COMPLETED",
+        "elapsedMs": 4241,
+        "adequacyVerdict": "MINOR",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "10월과 11월에 걸친 2회 진행이 'twice in October and November'로 다소 중의적이나 핵심 일정 정보는 유지됨"
+      },
+      "e4bFinal": {
+        "raw": "First, TIPS operators will hold IR sessions, including one-on-one meetings or open pitch events planned by them, twice in October and November.",
+        "state": "COMPLETED",
+        "elapsedMs": 3537,
+        "adequacyVerdict": "MINOR",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "10월과 11월에 걸친 2회 일정 수식 애매성(twice in October and November) 미세 잔존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR09",
+      "targetLanguage": "ja",
+      "koreanSource": "우선 팁스 운영사가 일대일 미팅이나 공개 피칭 등을 자체적으로 기획하는 IR을 10월과 11월 두 차례에 걸쳐 진행한다.",
+      "geminiReference": {
+        "raw": "まず、TIPS運営事業者が1対1の面談や公開ピッチなどを独自に企画するIRを、10月と11月の2回にわたり実施する。",
+        "independentDiagnosis": "정합 (独自に企画するIR, 10月と11月の2回にわたり)"
+      },
+      "e4bBaseline": {
+        "raw": "まず、TIPS運営会社が1対1のミーティングや公開ピッチングなどを自ら企画するIRを10月と11月の2回にわたって実施します。",
+        "state": "COMPLETED",
+        "elapsedMs": 4979,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "'10月と11月の2回にわたって'로 두 달에 걸친 2회 진행 기간을 정확히 명시"
+      },
+      "e4bFinal": {
+        "raw": "まず、TIPS運営会社が1対1のミーティングや公開ピッチングなどを自ら企画するIRを10月と11月の2回にわたって実施します。",
+        "state": "COMPLETED",
+        "elapsedMs": 4037,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR09",
+      "targetLanguage": "zh",
+      "koreanSource": "우선 팁스 운영사가 일대일 미팅이나 공개 피칭 등을 자체적으로 기획하는 IR을 10월과 11월 두 차례에 걸쳐 진행한다.",
+      "geminiReference": {
+        "raw": "首先，由TIPS运营机构自主策划的一对一面谈或公开路演等IR活动，将在10月和11月分两轮举行。",
+        "independentDiagnosis": "정합 (自主策划的一对一面谈, 10月和11月分两轮举行)"
+      },
+      "e4bBaseline": {
+        "raw": "首先，TIPS运营公司将自行策划并进行两次IR，分别在10月和11月，包括一对一会面和公开路演等。",
+        "state": "COMPLETED",
+        "elapsedMs": 4694,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "10월과 11월 2회 진행을 정확히 전달"
+      },
+      "e4bFinal": {
+        "raw": "首先，TIPS运营公司将自行策划并进行两次IR，分别在10月和11月，包括一对一会面和公开路演等。",
+        "state": "COMPLETED",
+        "elapsedMs": 3871,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR10",
+      "targetLanguage": "en",
+      "koreanSource": "10월 프로그램에는 지난달 15일부터 투자 제안을 받고 있으며 현재 500명 이상의 창업자가 신청을 마쳤다.",
+      "geminiReference": {
+        "raw": "Investment proposals for the October program have been accepted since the 15th of last month, and more than 500 entrepreneurs have already submitted applications.",
+        "independentDiagnosis": "500명 이상 -> 'more than 500' (초과 표현, 원문 500명 이상과 뉘앙스 차이); 9월 15일부터 접수 완료 사실 보존"
+      },
+      "e4bBaseline": {
+        "raw": "For the October program, we have been receiving investment proposals since the 15th of last month, and currently, over 500 entrepreneurs have completed their applications.",
+        "state": "COMPLETED",
+        "elapsedMs": 5074,
+        "adequacyVerdict": "MINOR",
+        "naturalnessVerdict": "awkward",
+        "evaluationDetails": "객관 보도 기사임에도 주체 불명의 1인칭 대명사 'we'를 임의 삽입하였으나 신청 완료 사실은 정확히 유지"
+      },
+      "e4bFinal": {
+        "raw": "For the October program, we have been receiving investment proposals since the 15th of last month, and currently, at least 500 entrepreneurs have completed their applications.",
+        "state": "COMPLETED",
+        "elapsedMs": 3879,
+        "adequacyVerdict": "MINOR",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "객관 보도문에 1인칭 화자(we have been receiving) 임의 주어 삽입",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR10",
+      "targetLanguage": "ja",
+      "koreanSource": "10월 프로그램에는 지난달 15일부터 투자 제안을 받고 있으며 현재 500명 이상의 창업자가 신청을 마쳤다.",
+      "geminiReference": {
+        "raw": "10月のプログラムには先月15日から投資提案を受け付けており、現在500人以上の創業者が申し込みを完了している。",
+        "independentDiagnosis": "정합 (500人以上 수량경계 보존, 先月15日から)"
+      },
+      "e4bBaseline": {
+        "raw": "10月のプログラムでは、先月15日から投資提案を受け付けており、現在500名以上の起業家が申請を完了しています。",
+        "state": "COMPLETED",
+        "elapsedMs": 4375,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "500명 이상(500名以上) 신청 완료 사실을 자연스러운 완료형으로 전달"
+      },
+      "e4bFinal": {
+        "raw": "10月のプログラムでは、先月15日から投資提案を受け付けており、現在500名以上の起業家が申請を完了しました。",
+        "state": "COMPLETED",
+        "elapsedMs": 3691,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR10",
+      "targetLanguage": "zh",
+      "koreanSource": "10월 프로그램에는 지난달 15일부터 투자 제안을 받고 있으며 현재 500명 이상의 창업자가 신청을 마쳤다.",
+      "geminiReference": {
+        "raw": "10月活动已自上月15日起受理投资意向书，目前已有500多名创业者完成了申请。",
+        "independentDiagnosis": "500명 이상 -> '500多名' (대략치 표현); 上月15日起受理 사실 보존"
+      },
+      "e4bBaseline": {
+        "raw": "10月份的计划，自上个月15日起就一直在接收投资提案，目前已完成500名以上创业者的申请。",
+        "state": "COMPLETED",
+        "elapsedMs": 4323,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "500명 이상 신청 완료 사실을 정확히 전달"
+      },
+      "e4bFinal": {
+        "raw": "10月份的计划从上个月15号开始接受投资提案，目前已有500名以上的创业者完成了申请。",
+        "state": "COMPLETED",
+        "elapsedMs": 3489,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR11",
+      "targetLanguage": "en",
+      "koreanSource": "각 운영사는 이 가운데 대면 IR에 참여할 창업자를 선정한다.",
+      "geminiReference": {
+        "raw": "Each operator will select the entrepreneurs from among the applicants who will participate in the in-person IR sessions.",
+        "independentDiagnosis": "정합 (select the entrepreneurs from among the applicants)"
+      },
+      "e4bBaseline": {
+        "raw": "Each operator selects the entrepreneurs who will participate in the in-person IR from among these.",
+        "state": "COMPLETED",
+        "elapsedMs": 3498,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "운영사가 신청자 중 대면 IR 참여자를 선발한다는 사실을 정확히 전달"
+      },
+      "e4bFinal": {
+        "raw": "Each operator selects the entrepreneurs who will participate in the in-person IR from among these.",
+        "state": "COMPLETED",
+        "elapsedMs": 2964,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR11",
+      "targetLanguage": "ja",
+      "koreanSource": "각 운영사는 이 가운데 대면 IR에 참여할 창업자를 선정한다.",
+      "geminiReference": {
+        "raw": "各運営事業者は、この中から対面IRに参加する創業者を選考する。",
+        "independentDiagnosis": "정합 (対面IRに参加する創業者を選考)"
+      },
+      "e4bBaseline": {
+        "raw": "各運営会社は、その中で対面IRに参加する起業家を選定する。",
+        "state": "COMPLETED",
+        "elapsedMs": 4058,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "각 운영사의 대면 IR 참여자 선발 역할을 명확히 번역"
+      },
+      "e4bFinal": {
+        "raw": "各運営会社は、その中で対面IRに参加する起業家を選定する。",
+        "state": "COMPLETED",
+        "elapsedMs": 2992,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR11",
+      "targetLanguage": "zh",
+      "koreanSource": "각 운영사는 이 가운데 대면 IR에 참여할 창업자를 선정한다.",
+      "geminiReference": {
+        "raw": "各运营机构将从中选拔参与线下IR活动的创业者。",
+        "independentDiagnosis": "정합 (选拔参与线下IR活动的创业者)"
+      },
+      "e4bBaseline": {
+        "raw": "每个运营方都会从中选出参与面对面路演的创业者。",
+        "state": "COMPLETED",
+        "elapsedMs": 3417,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "운영사의 대면 참가자 선발 역할을 명확히 전달"
+      },
+      "e4bFinal": {
+        "raw": "每个运营方都会从中选出参与面对面路演的创业者。",
+        "state": "COMPLETED",
+        "elapsedMs": 2888,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR12",
+      "targetLanguage": "en",
+      "koreanSource": "‘모두의 창업’과도 연계한다.",
+      "geminiReference": {
+        "raw": "The initiative will also link with 'Everyone's Startup'.",
+        "independentDiagnosis": "정합 (link with 'Everyone's Startup')"
+      },
+      "e4bBaseline": {
+        "raw": "It is also linked with 'Startup for All'.",
+        "state": "COMPLETED",
+        "elapsedMs": 3102,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "'Startup for All'로 연계 취지를 간결하고 자연스럽게 번역"
+      },
+      "e4bFinal": {
+        "raw": "It is also linked with 'Startup for All'.",
+        "state": "COMPLETED",
+        "elapsedMs": 2541,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR12",
+      "targetLanguage": "ja",
+      "koreanSource": "‘모두의 창업’과도 연계한다.",
+      "geminiReference": {
+        "raw": "「みんなの創業」とも連携する。",
+        "independentDiagnosis": "정합 (「みんなの創業」とも連携)"
+      },
+      "e4bBaseline": {
+        "raw": "「みんなの起業」とも連携する。",
+        "state": "COMPLETED",
+        "elapsedMs": 3250,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "「みんなの起業」とも連携する。 사업 연계 취지를 간결하게 보존"
+      },
+      "e4bFinal": {
+        "raw": "「みんなの起業」とも連携する。",
+        "state": "COMPLETED",
+        "elapsedMs": 2578,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR12",
+      "targetLanguage": "zh",
+      "koreanSource": "‘모두의 창업’과도 연계한다.",
+      "geminiReference": {
+        "raw": "项目还将与“全民创业”开展联动。",
+        "independentDiagnosis": "정합 (与“全民创业”开展联动)"
+      },
+      "e4bBaseline": {
+        "raw": "也与‘全民创业’挂钩。",
+        "state": "COMPLETED",
+        "elapsedMs": 2980,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "也与‘全民创业’挂钩。 간결하고 정확한 전달"
+      },
+      "e4bFinal": {
+        "raw": "也与‘全民创业’挂钩。",
+        "state": "COMPLETED",
+        "elapsedMs": 2517,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR13",
+      "targetLanguage": "en",
+      "koreanSource": "1차 모두의 창업 일반·기술트랙 2라운드에 진출한 창업인재 가운데 보육기관의 추천을 받은 200여명을 사업 아이디어에 적합한 팁스 운영사와 연결해 투자 유치를 지원할 예정이다.",
+      "geminiReference": {
+        "raw": "Among the entrepreneurial talents who advanced to Round 2 of the 1st Everyone's Startup general and tech tracks, around 200 candidates recommended by incubators will be matched with TIPS operators suited to their business ideas to support investment acquisition.",
+        "independentDiagnosis": "200여명 -> 'around 200' (근사치 표현으로 대체로 부합); 적합한 운영사 -> 'TIPS operators suited to their business ideas' (소유격 역전 없는 기준 매칭 표현 우수)"
+      },
+      "e4bBaseline": {
+        "raw": "We plan to support investment attraction by connecting about 200 entrepreneurs recommended by incubation institutions among those who advanced to the second round of the 1st All-for-Startup General and Technology Tracks with TIPS operators whose business ideas are suitable.",
+        "state": "COMPLETED",
+        "elapsedMs": 6331,
+        "adequacyVerdict": "MAJOR",
+        "naturalnessVerdict": "awkward",
+        "evaluationDetails": "'whose business ideas are suitable'로 인해 사업 아이디어의 소유 주체가 창업자가 아닌 팁스 운영사로 오인되도록 관계절이 잘못 구성됨"
+      },
+      "e4bFinal": {
+        "raw": "We plan to support securing funding from investors for about 200 entrepreneurs who received recommendations from incubation institutions among those who advanced to the 2nd round of the 1st All-for-One Startup General and Technology Tracks, by connecting them with TIPS operators suited to their business ideas.",
+        "state": "COMPLETED",
+        "elapsedMs": 5581,
+        "adequacyVerdict": "MINOR",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "적합 관계 소유권 정상화(suited to their business ideas). 단, 브랜드 명칭 차이(All-for-One Startup vs Startup for All) 및 We plan 주어 삽입 잔존",
+        "deltaVerdict": "IMPROVED"
+      }
+    },
+    {
+      "id": "IR13",
+      "targetLanguage": "ja",
+      "koreanSource": "1차 모두의 창업 일반·기술트랙 2라운드에 진출한 창업인재 가운데 보육기관의 추천을 받은 200여명을 사업 아이디어에 적합한 팁스 운영사와 연결해 투자 유치를 지원할 예정이다.",
+      "geminiReference": {
+        "raw": "第1次「みんなの創業」一般・技術トラックの第2ラウンドに進出した創業人材のうち、インキュベーション機関の推薦を受けた約200人を事業アイデアに適したTIPS運営事業者と結びつけ、資金調達を支援する予定だ。",
+        "independentDiagnosis": "200여명 -> '約200人' (원문 200여명 부합); 事業アイデアに適したTIPS運営事業者 (소유격 역전 없음)"
+      },
+      "e4bBaseline": {
+        "raw": "第1回「みんなの起業」一般・技術トラック第2ラウンドに進出した起業人材の中から、育成機関の推薦を受けた200名ほどを、事業アイデアに適したティップス運営会社と結びつけ、投資誘致を支援する予定です。",
+        "state": "COMPLETED",
+        "elapsedMs": 7163,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "200여 명(200名ほど) 및 아이디어 적합 운영사 연결 취지를 자연스럽게 전달"
+      },
+      "e4bFinal": {
+        "raw": "第1回「みんなの起業」一般・技術トラック第2ラウンドに進出した起業人材のうち、育成機関の推薦を受けた200名ほどを、事業アイデアに適したティップス運営会社と繋ぎ、投資誘致を支援する予定です。",
+        "state": "COMPLETED",
+        "elapsedMs": 6052,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR13",
+      "targetLanguage": "zh",
+      "koreanSource": "1차 모두의 창업 일반·기술트랙 2라운드에 진출한 창업인재 가운데 보육기관의 추천을 받은 200여명을 사업 아이디어에 적합한 팁스 운영사와 연결해 투자 유치를 지원할 예정이다.",
+      "geminiReference": {
+        "raw": "入围第一届“全民创业”常规及技术赛道第二轮并获得孵化机构推荐的约200名创业英才，将被对接至与其商业创意相匹配的TIPS运营机构，为其招商引资提供支持。",
+        "independentDiagnosis": "200여명 -> '约200名' (원문 200여명 부합); 与其商业创意相匹配 (소유격 역전 없음); 투자 유치 -> '为其招商引资' (스타트업 자금조달에 招商引资 오용)"
+      },
+      "e4bBaseline": {
+        "raw": "计划将来自第一轮“全民创业”通用/技术赛道第二轮的创业人才中，获得孵化机构推荐的200多名创业者，与适合其商业想法的 TIPS 运营公司对接，以支持其吸引投资。",
+        "state": "COMPLETED",
+        "elapsedMs": 6004,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "200多名 창업자 수량 및 아이디어 부합 운영사 매칭을 자연스럽게 전달"
+      },
+      "e4bFinal": {
+        "raw": "计划将获得孵化机构推荐的200多名在第一轮“全民创业”通用/技术赛道第二轮中入围的创业人才，与适合其商业想法的 TIPS 运营机构进行对接，以支持其获得投资。",
+        "state": "COMPLETED",
+        "elapsedMs": 5371,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR14",
+      "targetLanguage": "en",
+      "koreanSource": "수도권 밖 창업기업과 투자자 간 접점을 늘리기 위한 지역 IR도 열린다.",
+      "geminiReference": {
+        "raw": "Regional IR sessions will also be held to expand touchpoints between startups outside the capital region and investors.",
+        "independentDiagnosis": "정합 (expand touchpoints between startups outside the capital region and investors)"
+      },
+      "e4bBaseline": {
+        "raw": "Regional IR events will also be held to increase contact points between startups outside the Seoul metropolitan area and investors.",
+        "state": "COMPLETED",
+        "elapsedMs": 4568,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "수도권 외 스타트업과 투자자 간 접점 확대 목적을 명확히 표현"
+      },
+      "e4bFinal": {
+        "raw": "Regional IR events will also be held to increase contact points between startups outside the Seoul metropolitan area and investors.",
+        "state": "COMPLETED",
+        "elapsedMs": 3157,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR14",
+      "targetLanguage": "ja",
+      "koreanSource": "수도권 밖 창업기업과 투자자 간 접점을 늘리기 위한 지역 IR도 열린다.",
+      "geminiReference": {
+        "raw": "首都圏外のスタートアップと投資家との接点を増やすための地域IRも開催される。",
+        "independentDiagnosis": "정합 (首都圏外のスタートアップと投資家との接点)"
+      },
+      "e4bBaseline": {
+        "raw": "首都圏外の起業家と投資家の接点を増やすための地域IRも開催されます。",
+        "state": "COMPLETED",
+        "elapsedMs": 4092,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "수도권 외 접점 확대 목적을 정확히 표현"
+      },
+      "e4bFinal": {
+        "raw": "首都圏外の起業家と投資家の接点を増やすための地域IRも開催されます。",
+        "state": "COMPLETED",
+        "elapsedMs": 3270,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR14",
+      "targetLanguage": "zh",
+      "koreanSource": "수도권 밖 창업기업과 투자자 간 접점을 늘리기 위한 지역 IR도 열린다.",
+      "geminiReference": {
+        "raw": "为拓宽首都圈以外初创企业与投资者之间的沟通接触面，还将举办区域IR活动。",
+        "independentDiagnosis": "정합 (首都圈以外初创企业与投资者之间的沟通接触面)"
+      },
+      "e4bBaseline": {
+        "raw": "还将举办区域路演，以增加首都圈以外的创业企业与投资者之间的接触点。",
+        "state": "COMPLETED",
+        "elapsedMs": 3659,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "수도권 외 기업-투자자 접점 확대 목적을 명확히 전달"
+      },
+      "e4bFinal": {
+        "raw": "还将举办区域路演，以增加首都圈以外的创业企业与投资者之间的接触点。",
+        "state": "COMPLETED",
+        "elapsedMs": 3143,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR15",
+      "targetLanguage": "en",
+      "koreanSource": "5극 3특 권역별 ‘웰컴투팁스’를 개최하고 대구·대전·광주·울산에서는 4대 과학기술원과 연계한 ‘창업도시 IR’을 진행한다.",
+      "geminiReference": {
+        "raw": "A regional 'Welcome to TIPS' will be held across the '5 Megaregions and 3 Special Zones', while a 'Startup City IR' linked with the four major Science and Technology Institutes will take place in Daegu, Daejeon, Gwangju, and Ulsan.",
+        "independentDiagnosis": "정합 ('5 Megaregions and 3 Special Zones', 4대 과기원 및 4개 도시 보존)"
+      },
+      "e4bBaseline": {
+        "raw": "We will hold 'Welcome to TIPS' by region for the 5 poles and 3 specialties, and 'Startup City IR' linked with the four science and technology institutes will be held in Daegu, Daejeon, Gwangju, and Ulsan.",
+        "state": "COMPLETED",
+        "elapsedMs": 6721,
+        "adequacyVerdict": "MINOR",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "객관 기사문에 1인칭 화자(We will hold) 주어 임의 삽입 (IR10/17/18-en 일관 적용)"
+      },
+      "e4bFinal": {
+        "raw": "We will hold 'Welcome to TIPS' events for each of the five regional hubs and three special self-governing provinces, and conduct 'Startup City IR' in Daegu, Daejeon, Gwangju, and Ulsan in connection with the four science and technology institutes.",
+        "state": "COMPLETED",
+        "elapsedMs": 5806,
+        "adequacyVerdict": "MINOR",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "5극 3특(five regional hubs and three special self-governing provinces) 권역 번역은 상세 반영되었으나, 객관 보도문에 1인칭 화자(We will hold) 주어 임의 삽입 (IR10/17/18-en 일관 적용)",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR15",
+      "targetLanguage": "ja",
+      "koreanSource": "5극 3특 권역별 ‘웰컴투팁스’를 개최하고 대구·대전·광주·울산에서는 4대 과학기술원과 연계한 ‘창업도시 IR’을 진행한다.",
+      "geminiReference": {
+        "raw": "「5極3特」の広域圏別に「ウェルカム・トゥ・TIPS」を開催し、大邱・大田・光州・蔚山では4大科学技術院と連携した「創業都市IR」を実施する。",
+        "independentDiagnosis": "정합 (「5極3特」, 4大科学技術院, 大邱・大田・光州・蔚山)"
+      },
+      "e4bBaseline": {
+        "raw": "5極3特の権域別「ウェルカムトゥティプス」を開催し、大邱・大田・光州・蔚山では4大科学技術院と連携した「起業都市IR」を実施する。",
+        "state": "COMPLETED",
+        "elapsedMs": 5689,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "이 표본에서 5極3特, 4대 과학기술원, 대구·대전·광주·蔚山 명칭 보존 확인"
+      },
+      "e4bFinal": {
+        "raw": "5極3特の各地域で「ウェルカムトゥティプス」を開催し、大邱・大田・光州・蔚山では4大科学技術院と連携した「起業都市IR」を実施する。",
+        "state": "COMPLETED",
+        "elapsedMs": 5136,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR15",
+      "targetLanguage": "zh",
+      "koreanSource": "5극 3특 권역별 ‘웰컴투팁스’를 개최하고 대구·대전·광주·울산에서는 4대 과학기술원과 연계한 ‘창업도시 IR’을 진행한다.",
+      "geminiReference": {
+        "raw": "活动将在“五大极点三大特区”各区域举办“Welcome to TIPS”，并在大邱、大田、光州、蔚山联动四大科学技术院推进“创业城市IR”。",
+        "independentDiagnosis": "정합 (“五大极点三大特区”, 四大科学技术院, 4개 도시)"
+      },
+      "e4bBaseline": {
+        "raw": "将举办5极3特区域的“欢迎来到TIPS”活动，并在大邱、大田、光州、蔚山举办与4所科学技术院合作的“创业城市IR”。",
+        "state": "COMPLETED",
+        "elapsedMs": 5102,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "5极3特, 4所科学技术院, 4개 도시 명칭을 정확히 보존"
+      },
+      "e4bFinal": {
+        "raw": "将举办5极3特各区域的“欢迎来到TIPS”活动，并在大邱、大田、光州、蔚山举办与四大科学技术院联动的“创业城市IR”。",
+        "state": "COMPLETED",
+        "elapsedMs": 4825,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "5극 3특(5极3特) 고유 정책 권역 수치 정상 표기 복원 확인",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR16",
+      "targetLanguage": "en",
+      "koreanSource": "올해부터 웰컴투팁스 개최 지역을 기존 5대 권역에서 전북·강원·제주까지 확대하고, 권역별 우수기업에는 ‘프리팁스’ 지원사업 우선 선정 기회를 준다.",
+      "geminiReference": {
+        "raw": "Starting this year, the host regions for Welcome to TIPS will expand from the existing five major regions to include Jeonbuk, Gangwon, and Jeju, and outstanding regional companies will be given priority selection opportunities for the 'Pre-TIPS' support program.",
+        "independentDiagnosis": "정합 (Jeonbuk, Gangwon, and Jeju, 'Pre-TIPS' priority selection)"
+      },
+      "e4bBaseline": {
+        "raw": null,
+        "state": "FAILED",
+        "elapsedMs": 10007,
+        "adequacyVerdict": "NO_OUTPUT",
+        "naturalnessVerdict": "NO_OUTPUT",
+        "evaluationDetails": "초기 베이스라인 10,007ms 타임아웃 실행 실패 (NO_OUTPUT, raw translation 미출력/null)",
+        "error": "NO_OUTPUT",
+        "errorType": "GemmaRealtimeTimeoutException"
+      },
+      "e4bFinal": {
+        "raw": "Starting this year, the regions for holding Welcome to TIPS will be expanded from the existing five regions to include Jeonbuk, Gangwon, and Jeju, and excellent companies in each region will be given priority selection opportunities for the 'Pre-TIPS' support program.",
+        "state": "COMPLETED",
+        "elapsedMs": 4792,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "베이스라인 NO_OUTPUT(10,007ms 타임아웃, raw=null)에서 정상 완주 및 의미 보존 회복",
+        "deltaVerdict": "RECOVERED_COMPLETION"
+      }
+    },
+    {
+      "id": "IR16",
+      "targetLanguage": "ja",
+      "koreanSource": "올해부터 웰컴투팁스 개최 지역을 기존 5대 권역에서 전북·강원·제주까지 확대하고, 권역별 우수기업에는 ‘프리팁스’ 지원사업 우선 선정 기회를 준다.",
+      "geminiReference": {
+        "raw": "今年から「ウェルカム・トゥ・TIPS」の開催地域を従来の5大広域圏から全北・江原・済州まで拡大し、地域別の優秀企業には「プレTIPS」支援事業の優先選定機会を提供する。",
+        "independentDiagnosis": "정합 (全北・江原・済州, 「プレTIPS」優先選定機会)"
+      },
+      "e4bBaseline": {
+        "raw": "今年からウェルカムトゥティップスの開催地域を従来の5大圏域から全北・江原・済州まで拡大し、圏域別の優良企業には「プリティップス」支援事業の優先選定機会を付与する。",
+        "state": "COMPLETED",
+        "elapsedMs": 6442,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "확대 지역 3곳 및 '프리팁스(プリティップス)' 우선 선정 기회 조건을 정확히 보존"
+      },
+      "e4bFinal": {
+        "raw": "今年からウェルカムトゥティップスの開催地域を従来の5大圏域から全北・江原・済州まで拡大し、圏域別の優良企業には「プリティップス」支援事業の優先選定機会を付与する。",
+        "state": "COMPLETED",
+        "elapsedMs": 4846,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR16",
+      "targetLanguage": "zh",
+      "koreanSource": "올해부터 웰컴투팁스 개최 지역을 기존 5대 권역에서 전북·강원·제주까지 확대하고, 권역별 우수기업에는 ‘프리팁스’ 지원사업 우선 선정 기회를 준다.",
+      "geminiReference": {
+        "raw": "从今年起，“Welcome to TIPS”的举办范围将由原有的五大区域扩大至全北、江原和济州，并向各区域优秀企业提供“Pre-TIPS”扶持项目的优先入选机会。",
+        "independentDiagnosis": "정합 (全北、江原和济州, “Pre-TIPS”优先入选机会)"
+      },
+      "e4bBaseline": {
+        "raw": "从今年开始，‘Welcome to TIPS’举办地区将从原有的5大区域扩大到全罗北道、江原道和济州岛，并为各区域的优秀企业提供‘Pre-TIPS’支持项目的优先遴选机会。",
+        "state": "COMPLETED",
+        "elapsedMs": 5943,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "이 표본에서 확대 지역 3곳 및 'Pre-TIPS' 우선 선정 기회 전달 확인"
+      },
+      "e4bFinal": {
+        "raw": "从今年开始，‘Welcome to TIPS’举办地区将从原有的5大区域扩大到全罗北道、江原道和济州岛，并为各区域的优秀企业提供‘Pre-TIPS’支持项目的优先遴选机会。",
+        "state": "COMPLETED",
+        "elapsedMs": 4815,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR17",
+      "targetLanguage": "en",
+      "koreanSource": "분야별 투자 연계도 추진한다.",
+      "geminiReference": {
+        "raw": "Sector-specific investment linkages will also be promoted.",
+        "independentDiagnosis": "정합 (Sector-specific investment linkages will also be promoted)"
+      },
+      "e4bBaseline": {
+        "raw": "We will also promote investment linkage by field.",
+        "state": "COMPLETED",
+        "elapsedMs": 3574,
+        "adequacyVerdict": "MINOR",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "분야별 투자 연계 의미는 보존되었으나 1인칭 'We'가 삽입됨"
+      },
+      "e4bFinal": {
+        "raw": "We will also promote investment linkage by field.",
+        "state": "COMPLETED",
+        "elapsedMs": 2556,
+        "adequacyVerdict": "MINOR",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "객관 보도문에 1인칭 화자(We will also promote) 주어 삽입",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR17",
+      "targetLanguage": "ja",
+      "koreanSource": "분야별 투자 연계도 추진한다.",
+      "geminiReference": {
+        "raw": "分野別の投資連携も推進する。",
+        "independentDiagnosis": "정합 (分野別の投資連携も推進する)"
+      },
+      "e4bBaseline": {
+        "raw": "分野別の投資連携も推進する。",
+        "state": "COMPLETED",
+        "elapsedMs": 3017,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "간결하고 정확한 번역"
+      },
+      "e4bFinal": {
+        "raw": "分野別の投資連携も推進する。",
+        "state": "COMPLETED",
+        "elapsedMs": 2423,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR17",
+      "targetLanguage": "zh",
+      "koreanSource": "분야별 투자 연계도 추진한다.",
+      "geminiReference": {
+        "raw": "还将推进各领域的投资联动。",
+        "independentDiagnosis": "정합 (各领域的投资联动)"
+      },
+      "e4bBaseline": {
+        "raw": "还将推进按领域进行的投资对接。",
+        "state": "COMPLETED",
+        "elapsedMs": 2909,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "간결하고 정확한 전달"
+      },
+      "e4bFinal": {
+        "raw": "还将推进按领域进行的投资对接。",
+        "state": "COMPLETED",
+        "elapsedMs": 2465,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR18",
+      "targetLanguage": "en",
+      "koreanSource": "범부처 창업경진대회 ‘올해의 K-스타트업’에서 선발된 기업을 대상으로 9개 부처 12개 특화리그별 IR을 열고, 방산·미디어·해양·R&D 등 각 부처의 창업기업 지원사업과 연계한 IR도 마련한다.",
+      "geminiReference": {
+        "raw": "For companies selected in the pan-governmental startup competition 'K-Startup of the Year,' IR sessions will be held across 12 specialized leagues spanning 9 ministries, alongside IR programs linked with each ministry's startup support initiatives in defense, media, maritime, and R&D.",
+        "independentDiagnosis": "정합 ('K-Startup of the Year', 12 leagues, 9 ministries, defense/media/maritime/R&D)"
+      },
+      "e4bBaseline": {
+        "raw": "We will hold IR sessions for companies selected in the 'Startup of the Year' at the inter-ministerial startup competition across 12 specialized leagues from 9 ministries, and we will also arrange IRs linked to the startup support projects of each ministry, such as defense, media, maritime, and R&D.",
+        "state": "COMPLETED",
+        "elapsedMs": 6659,
+        "adequacyVerdict": "MINOR",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "'올해의 K-스타트업'에서 'K-'가 누락되었으나 부처 수(9개), 특화리그(12개), 주요 지원 연계 분야는 정확히 보존"
+      },
+      "e4bFinal": {
+        "raw": "We will hold IR sessions for companies selected in the 'Startup of the Year' at the inter-ministerial startup competition across 12 specialized leagues from 9 ministries, and we will also arrange IRs linked to the startup support projects of each ministry, such as defense, media, maritime, and R&D.",
+        "state": "COMPLETED",
+        "elapsedMs": 5291,
+        "adequacyVerdict": "MINOR",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "공식 브랜드 K- 누락(Startup of the Year) 및 We will hold 주어 삽입 잔존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR18",
+      "targetLanguage": "ja",
+      "koreanSource": "범부처 창업경진대회 ‘올해의 K-스타트업’에서 선발된 기업을 대상으로 9개 부처 12개 특화리그별 IR을 열고, 방산·미디어·해양·R&D 등 각 부처의 창업기업 지원사업과 연계한 IR도 마련한다.",
+      "geminiReference": {
+        "raw": "汎政府型スタートアップコンテスト「今年のK-スタートアップ」で選抜された企業を対象に、9省庁・12の特化リーグ別IRを開催し、防衛・メディア・海洋・R&Dなど各省庁のスタートアップ支援事業と連携したIRも用意する。",
+        "independentDiagnosis": "정합 (「今年のK-スタートアップ」, 9省庁・12の特化リーグ, 防衛・メディア・海洋・R&D)"
+      },
+      "e4bBaseline": {
+        "raw": "省庁横断的な起業コンテスト「今年のKスタートアップ」で選出された企業を対象に、9省庁の12の特化リーグごとにIRを開催し、防衛・メディア・海洋・R&Dなど各省庁の起業家支援事業と連携したIRも用意する。",
+        "state": "COMPLETED",
+        "elapsedMs": 7806,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "부처 수, 리그 수, 방위·미디어·해양·R&D 분야를 정확히 전달"
+      },
+      "e4bFinal": {
+        "raw": "省庁横断的な起業コンテスト「今年のKスタートアップ」で選出された企業を対象に、9省庁の12の特化リーグごとにIRを開催し、防衛・メディア・海洋・R&Dなど各省庁の起業家支援事業と連携したIRも用意する。",
+        "state": "COMPLETED",
+        "elapsedMs": 5399,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR18",
+      "targetLanguage": "zh",
+      "koreanSource": "범부처 창업경진대회 ‘올해의 K-스타트업’에서 선발된 기업을 대상으로 9개 부처 12개 특화리그별 IR을 열고, 방산·미디어·해양·R&D 등 각 부처의 창업기업 지원사업과 연계한 IR도 마련한다.",
+      "geminiReference": {
+        "raw": "针对泛政府创业大赛“年度K-Startup”入选企业，将按9个部门的12个特色赛道举办IR专场，并开设与国防、媒体、海洋、R&D等各部门初创企业扶持项目相联动的IR活动。",
+        "independentDiagnosis": "정합 (“年度K-Startup”, 9个部门12个特色赛道, 国防/媒体/海洋/R&D)"
+      },
+      "e4bBaseline": {
+        "raw": "针对在部委创业大赛“年度K-Startup”中入选的企业，将举办9个部委12个特色联赛的IR，并准备了与国防、媒体、海洋、研发等各部委创业企业支持项目挂钩的IR。",
+        "state": "COMPLETED",
+        "elapsedMs": 5963,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "부처 수, 리그 수, 국방·미디어·해양·R&D 분야를 정확히 전달"
+      },
+      "e4bFinal": {
+        "raw": "针对在部委创业大赛“年度K-Startup”中入选的企业，将举办9个部委12个特色联赛的IR，并准备了与国防、媒体、海洋、研发等各部委创业企业支持项目挂钩的IR。",
+        "state": "COMPLETED",
+        "elapsedMs": 4858,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR19",
+      "targetLanguage": "en",
+      "koreanSource": "이번 프로젝트는 투자자와 창업기업을 단순히 연결하는 데 그치지 않고 실제 투자 이후 팁스 지원으로 이어지는 구조로 설계됐다.",
+      "geminiReference": {
+        "raw": "This project has been designed with a structure that does not stop at merely connecting investors with startups, but rather leads to TIPS support following actual investment.",
+        "independentDiagnosis": "정합 (structure that leads to TIPS support following actual investment)"
+      },
+      "e4bBaseline": {
+        "raw": "This project is designed not just to connect investors and startups, but to lead to TIPS support after actual investment.",
+        "state": "COMPLETED",
+        "elapsedMs": 4100,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "단순 연결을 넘어 실제 투자 후 팁스 연계로 이어지는 구조적 설계를 정확히 전달"
+      },
+      "e4bFinal": {
+        "raw": "This project is designed not just to connect investors and startups, but to lead to TIPS support after actual investment.",
+        "state": "COMPLETED",
+        "elapsedMs": 3776,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR19",
+      "targetLanguage": "ja",
+      "koreanSource": "이번 프로젝트는 투자자와 창업기업을 단순히 연결하는 데 그치지 않고 실제 투자 이후 팁스 지원으로 이어지는 구조로 설계됐다.",
+      "geminiReference": {
+        "raw": "今回のプロジェクトは、投資家とスタートアップを単に結びつけるにとどまらず、実際の投資後にTIPS支援へとつながる構造として設計された。",
+        "independentDiagnosis": "정합 (実際の投資後にTIPS支援へとつながる構造)"
+      },
+      "e4bBaseline": {
+        "raw": "このプロジェクトは、投資家と起業家を単に繋げるだけでなく、実際の投資後にティップス支援に繋がる構造で設計されています。",
+        "state": "COMPLETED",
+        "elapsedMs": 5157,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "단순 매칭을 넘어선 후속 지원 구조를 자연스럽게 전달"
+      },
+      "e4bFinal": {
+        "raw": "このプロジェクトは、投資家と起業家を単に繋ぐだけでなく、実際の投資後にティップス支援につながる構造で設計されています。",
+        "state": "COMPLETED",
+        "elapsedMs": 4178,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR19",
+      "targetLanguage": "zh",
+      "koreanSource": "이번 프로젝트는 투자자와 창업기업을 단순히 연결하는 데 그치지 않고 실제 투자 이후 팁스 지원으로 이어지는 구조로 설계됐다.",
+      "geminiReference": {
+        "raw": "该项目的设计初衷不仅在于单纯撮合投资者与初创企业，更在于构建后续能将实际投资与TIPS扶持政策相衔接的体系结构。",
+        "independentDiagnosis": "정합 (后续能将实际投资与TIPS扶持政策相衔接)"
+      },
+      "e4bBaseline": {
+        "raw": "这个项目不仅是简单地连接投资者和初创企业，而是设计成在实际投资后能衔接到 TIPS 支持的结构。",
+        "state": "COMPLETED",
+        "elapsedMs": 4204,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "단순 매칭을 넘어선 후속 팁스 연계 설계를 정확히 전달"
+      },
+      "e4bFinal": {
+        "raw": "这个项目不仅是简单地连接投资者和创业公司，而是设计成在实际投资后能延续到 TIPS 支持的结构。",
+        "state": "COMPLETED",
+        "elapsedMs": 4053,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR20",
+      "targetLanguage": "en",
+      "koreanSource": "IR을 통해 투자를 유치한 기업에는 팁스 선정평가 때 가점 등 우대 혜택을 제공한다.",
+      "geminiReference": {
+        "raw": "Companies that secure investment through the IR will be granted preferential benefits, such as bonus points during the TIPS selection evaluation.",
+        "independentDiagnosis": "정합 (preferential benefits, bonus points during TIPS selection evaluation)"
+      },
+      "e4bBaseline": {
+        "raw": "Companies that attract investment through the IR will be provided with preferential benefits, such as extra points during the TIPS selection evaluation.",
+        "state": "COMPLETED",
+        "elapsedMs": 3804,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "투자 유치 기업에 대한 평가 가점 혜택을 투자 확약 오해 없이 조건부 혜택으로 정확히 전달"
+      },
+      "e4bFinal": {
+        "raw": "Companies that attract investment through the IR will be provided with preferential benefits, such as extra points during the TIPS selection evaluation.",
+        "state": "COMPLETED",
+        "elapsedMs": 3246,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR20",
+      "targetLanguage": "ja",
+      "koreanSource": "IR을 통해 투자를 유치한 기업에는 팁스 선정평가 때 가점 등 우대 혜택을 제공한다.",
+      "geminiReference": {
+        "raw": "IRを通じて投資を誘致した企業には、TIPS選定評価時に加点などの優遇措置が提供される。",
+        "independentDiagnosis": "정합 (加点などの優遇措置が提供される)"
+      },
+      "e4bBaseline": {
+        "raw": "IRを通じて投資を誘致した企業には、TIPS選定評価時に加点などの優遇措置を提供する。",
+        "state": "COMPLETED",
+        "elapsedMs": 4968,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "가점 등 우대 혜택 조건을 정확히 명시"
+      },
+      "e4bFinal": {
+        "raw": "IRを通じて投資を誘致した企業には、TIPS選定評価時に加点などの優遇措置を提供する。",
+        "state": "COMPLETED",
+        "elapsedMs": 3462,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR20",
+      "targetLanguage": "zh",
+      "koreanSource": "IR을 통해 투자를 유치한 기업에는 팁스 선정평가 때 가점 등 우대 혜택을 제공한다.",
+      "geminiReference": {
+        "raw": "通过IR活动成功招商引资的企业，将在TIPS选拔评审时享有加分等优惠待遇。",
+        "independentDiagnosis": "투자를 유치한 -> '成功招商引资' (스타트업 자금조달에 招商引资 오용); 加分等优惠待遇 보존"
+      },
+      "e4bBaseline": {
+        "raw": "通过IR融资的企业，在TIPS遴选评估时将提供加分等优惠待遇。",
+        "state": "COMPLETED",
+        "elapsedMs": 3696,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "가점 등 우대 혜택을 정확히 명시"
+      },
+      "e4bFinal": {
+        "raw": "通过IR融资的企业，在TIPS遴选评估时将提供加分等优惠待遇。",
+        "state": "COMPLETED",
+        "elapsedMs": 3114,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR21",
+      "targetLanguage": "en",
+      "koreanSource": "민간 투자사가 먼저 유망 기술기업을 발굴·투자하면 정부가 연구개발(R&D)과 사업화 자금을 연계 지원하는 팁스 체계로 후속 성장을 연결한다는 구상이다.",
+      "geminiReference": {
+        "raw": "The initiative envisions channeling subsequent growth through the TIPS framework, where private investment firms first identify and invest in promising tech companies, and the government subsequently provides matched funding for research and development (R&D) and commercialization.",
+        "independentDiagnosis": "정합 (private investment firms first identify and invest, government subsequently provides matched funding)"
+      },
+      "e4bBaseline": {
+        "raw": "The plan is to connect subsequent growth through the TIPS system, where the government links R&D and commercialization funds after private investors first discover and invest in promising technology companies.",
+        "state": "COMPLETED",
+        "elapsedMs": 5294,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "민간 선투자 후 정부 연계 지원이라는 팁스 체계의 역할 순서를 정확히 보존"
+      },
+      "e4bFinal": {
+        "raw": "The plan is to connect subsequent growth through the TIPS system, where the government provides linked support for research and development (R&D) and commercialization funds if a private investor first discovers and invests in a promising technology company.",
+        "state": "COMPLETED",
+        "elapsedMs": 5460,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "민간투자사 지원금 수혜자 왜곡 해소 확인 및 민간 선투자-정부 연계 체계 정상화",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR21",
+      "targetLanguage": "ja",
+      "koreanSource": "민간 투자사가 먼저 유망 기술기업을 발굴·투자하면 정부가 연구개발(R&D)과 사업화 자금을 연계 지원하는 팁스 체계로 후속 성장을 연결한다는 구상이다.",
+      "geminiReference": {
+        "raw": "民間投資会社がまず有望な技術企業を発掘・投資し、政府が研究開発（R&D）と事業化資金を連携支援するTIPSの枠組みによって、その後の成長へとつなげる構想だ。",
+        "independentDiagnosis": "정합 (民間投資会社がまず発掘・投資, 政府が連携支援する構想)"
+      },
+      "e4bBaseline": {
+        "raw": "民間投資家がまず有望な技術企業を発掘・投資すれば、政府が研究開発（R&D）と事業化資金を連動して支援するTIPS制度で、その後の成長につなげるという構想です。",
+        "state": "COMPLETED",
+        "elapsedMs": 6524,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "민간 선발굴 후 정부 자금 연계의 TIPS 제도를 정확히 전달"
+      },
+      "e4bFinal": {
+        "raw": "民間投資家がまず有望な技術企業を発掘・投資すれば、政府が研究開発（R&D）と事業化資金を連動して支援するTIPS制度で、その後の成長を繋げるという構想です。",
+        "state": "COMPLETED",
+        "elapsedMs": 5618,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR21",
+      "targetLanguage": "zh",
+      "koreanSource": "민간 투자사가 먼저 유망 기술기업을 발굴·투자하면 정부가 연구개발(R&D)과 사업화 자금을 연계 지원하는 팁스 체계로 후속 성장을 연결한다는 구상이다.",
+      "geminiReference": {
+        "raw": "该构想旨在依托TIPS机制衔接后续成长，即由民间投资机构率先发掘并投资潜力科技企业，政府随后联动提供研发（R&D）与商业化配套资金扶持。",
+        "independentDiagnosis": "정합 (民间投资机构率先发掘投资, 政府随后联动提供配套资金)"
+      },
+      "e4bBaseline": {
+        "raw": "该构想是，如果民间投资机构首先发掘并投资有前景的技术企业，政府将通过 TIPS 体系，将研发（R&D）和商业化资金与后续增长挂钩进行关联支持。",
+        "state": "COMPLETED",
+        "elapsedMs": 5380,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "민간 선투자 및 정부 후속 R&D 연계 체계를 충실히 전달"
+      },
+      "e4bFinal": {
+        "raw": "该构想是，如果私人投资者首先发掘并投资有前景的技术企业，政府将通过 TIPS 体系，将研发（R&D）和商业化资金进行关联支持，从而实现后续增长的连接。",
+        "state": "COMPLETED",
+        "elapsedMs": 5324,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR22",
+      "targetLanguage": "en",
+      "koreanSource": "목승환 중기부 창업벤처혁신실장은 “도전의 IR 프로젝트를 통해 혁신 창업가의 첫 도전을 적극 지원하겠다”며 “잠재력 있는 창업자들이 수많은 딥테크 기업을 발굴하고 육성한 팁스 운영사들과 함께 성장의 발판을 만들어가기를 기대한다”고 말했다.",
+      "geminiReference": {
+        "raw": "Mok Seung-hwan, head of the Startup and Venture Innovation Office at the Ministry of SMEs and Startups, said, \"Through the Challenge IR Project, we will actively support the initial endeavors of innovative entrepreneurs,\" adding, \"We expect promising founders to build a stepping stone for growth together with TIPS operators who have discovered and nurtured numerous deep-tech companies.\"",
+        "independentDiagnosis": "정합 (Mok Seung-hwan, head of Startup and Venture Innovation Office at MSS, quotes and deep-tech operators preserved)"
+      },
+      "e4bBaseline": {
+        "raw": "Mok Seung-hwan, Director of the Startup Venture Innovation Office at the Ministry of SMEs and Startups, said, “We will actively support the first attempts of innovative entrepreneurs through the Challenge IR project,” and “We expect that potential entrepreneurs will build a stepping stone for growth together with TIPS operators who have discovered and nurtured numerous deep tech companies.”",
+        "state": "COMPLETED",
+        "elapsedMs": 8855,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "natural",
+        "evaluationDetails": "발언자 직함과 두 인용 발언, 팁스 운영사의 딥테크 육성 실적 주체 관계를 온전히 보존"
+      },
+      "e4bFinal": {
+        "raw": "Mok Seung-hwan, Director of the Startup Venture Innovation Office at the Ministry of SMEs and Startups, said, \"We will actively support the first attempts of innovative entrepreneurs through the Challenge IR project,\" and \"We look forward to potential entrepreneurs building a stepping stone for growth with TIPS operators who have discovered and nurtured numerous deep tech companies.\"",
+        "state": "COMPLETED",
+        "elapsedMs": 6218,
+        "adequacyVerdict": "PASS",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "의미 및 용어 정상 보존",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR22",
+      "targetLanguage": "ja",
+      "koreanSource": "목승환 중기부 창업벤처혁신실장은 “도전의 IR 프로젝트를 통해 혁신 창업가의 첫 도전을 적극 지원하겠다”며 “잠재력 있는 창업자들이 수많은 딥테크 기업을 발굴하고 육성한 팁스 운영사들과 함께 성장의 발판을 만들어가기를 기대한다”고 말했다.",
+      "geminiReference": {
+        "raw": "中小ベンチャー企業部のモク・スンファン創業ベンチャー革新室長は「挑戦のIRプロジェクトを通じて、革新的な創業者の最初の挑戦を積極的に支援する」とした上で、「潜在力のある創業者たちが、数多くのディープテック企業を発掘・育成してきたTIPS運営事業者とともに成長の足がかりを築いていくことを期待する」と述べた。",
+        "independentDiagnosis": "정합 (モク・スンファン創業ベンチャー革新室長, 発言 인용 및 딥테크 육성 주체 보존)"
+      },
+      "e4bBaseline": {
+        "raw": "木承煥中小企業部創業ベンチャー革新室長は、「挑戦のIRプロジェクトを通じて、革新的な起業家の第一歩の挑戦を積極的に支援する」と述べ、「潜在能力のある起業家たちが、数多くのディープテック企業を発掘・育成したTIPS運営者たちと共に、成長の足がかりを築いていくことを期待している」と語った。",
+        "state": "COMPLETED",
+        "elapsedMs": 9509,
+        "adequacyVerdict": "MINOR",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "한글 성명 혼합 표기(木 승환) 및 정식 인명 한자 표기 미확인(unverified proper-name rendering)"
+      },
+      "e4bFinal": {
+        "raw": "木承煥中小ベンチャー企業部創業ベンチャー革新室長は、「挑戦のIRプロジェクトを通じて、革新的な起業家の最初の挑戦を積極的に支援する」と述べ、「潜在能力のある起業家たちが、数多くのディープテック企業を発掘・育成したTIPS運営者たちと共に成長の足がかりを築いていくことを期待する」と語った。",
+        "state": "COMPLETED",
+        "elapsedMs": 6948,
+        "adequacyVerdict": "MINOR",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "한글 혼합 표기 배제(木承煥), 부처명/직함/인용문 주요 내용 보존. 단, 공식 인명 한자 표기 공공 미확인(unverified proper-name rendering)에 따라 MINOR 구분 (실제 오역 확정 아님)",
+        "deltaVerdict": "SAME"
+      }
+    },
+    {
+      "id": "IR22",
+      "targetLanguage": "zh",
+      "koreanSource": "목승환 중기부 창업벤처혁신실장은 “도전의 IR 프로젝트를 통해 혁신 창업가의 첫 도전을 적극 지원하겠다”며 “잠재력 있는 창업자들이 수많은 딥테크 기업을 발굴하고 육성한 팁스 운영사들과 함께 성장의 발판을 만들어가기를 기대한다”고 말했다.",
+      "geminiReference": {
+        "raw": "中小风险企业部创业风险创新室长睦承焕表示：“我们将通过‘挑战IR项目’积极支持创新创业者的首次出征，期待潜力创业者能与发掘并培育了众多深科技企业的TIPS运营机构携手，共同奠定成长的基石。”",
+        "independentDiagnosis": "정합 (睦承焕室长, 两个引言, 深科技企业发掘培育主体 보존)"
+      },
+      "e4bBaseline": {
+        "raw": "中基部创业风险投资创新室室长木承焕说：“我们将通过挑战IR项目积极支持创新创业者的首次尝试”，“我们期待有潜力的创业者能与发掘和培养众多深科技企业的TIPS运营机构一起，为成长奠定基础。”",
+        "state": "COMPLETED",
+        "elapsedMs": 6811,
+        "adequacyVerdict": "MINOR",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "부처명 축약(中小企业部) 및 정식 인명 한자 표기 미확인(unverified proper-name rendering)"
+      },
+      "e4bFinal": {
+        "raw": "中小企业部创业风险企业创新室长木承焕表示：“我们将通过挑战性IR项目积极支持创新创业者的首次尝试”，“我们期待有潜力的创业者能与发掘和培养了众多深科技企业的TIPS运营机构共同创造成长的阶梯。”",
+        "state": "COMPLETED",
+        "elapsedMs": 5593,
+        "adequacyVerdict": "MINOR",
+        "naturalnessVerdict": "PASS",
+        "evaluationDetails": "인명 및 발언 보존. 부처명 축약(中小企业部, 风险 누락) 및 공식 인명 한자 표기 공공 미확인(unverified proper-name rendering)에 따라 MINOR 구분 (실제 오역 확정 아님)",
+        "deltaVerdict": "SAME"
+      }
+    }
+  ],
+  "reviewProvenance": "AI-assisted Antigravity comparison, raw-record integrity and selected judgments checked by Codex. Not independent human certification. See COMPARISON_REPORT.md."
+}

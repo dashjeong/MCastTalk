@@ -1,0 +1,324 @@
+{
+  "run": "syntax-fidelity-restored",
+  "startedAtUtc": "2026-10-01T03:28:02.617437Z",
+  "corpusFile": "syntax-holdout.json",
+  "apkVersion": "0.2.46-beta-c",
+  "apkVersionCode": 56,
+  "fixtureSha256": "ecca5e533e4478ae16ca618c43cb821da4e044b3741e3aa0b8697521e788c1ed",
+  "sourceSha256": "58b8e77f3fc995a3c92f003777b5fa249e92da0c2b3c341ee3b26dad2ed05284",
+  "provider": "ACTUAL_NATIVE_E4B_DIRECT_SOURCE",
+  "modelSha256": "0b2a8980ce155fd97673d8e820b4d29d9c7d99b8fa6806f425d969b145bd52e0",
+  "qualityVerdict": "REVIEW_REQUIRED",
+  "translationStyle": "AUTO",
+  "sessionMemoryEnabled": true,
+  "asrExecuted": false,
+  "ttsExecuted": false,
+  "externalApiUsed": false,
+  "geminiReferenceProvidedToModel": false,
+  "fallbackUsed": false,
+  "state": "COMPLETED_REVIEW_REQUIRED",
+  "cases": [
+    {
+      "id": "F01",
+      "source": "행사에는 20명 이상이 아니라 10명 이하만 참석할 수 있습니다.",
+      "context": "",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "sessionMemory": "",
+      "translation": "At the event, only at most 10 people can attend, not at least 20.",
+      "elapsedMs": 3138
+    },
+    {
+      "id": "F02",
+      "source": "온도가 -3.5 이상이면 작동하고, 2 미만이면 중단합니다.",
+      "context": "",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"행사에는 20명 이상이 아니라 10명 이하만 참석할 수 있습니다.\",\"translation\":\"At the event, only at most 10 people can attend, not at least 20.\"}]",
+      "translation": "It operates if the temperature is at least -3.5, and stops if it is less than 2.",
+      "elapsedMs": 3852
+    },
+    {
+      "id": "F03",
+      "source": "회사는 어제 설명회를 열고, 다음 달에 제품을 출시할 예정이라고 발표했습니다.",
+      "context": "",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"행사에는 20명 이상이 아니라 10명 이하만 참석할 수 있습니다.\",\"translation\":\"At the event, only at most 10 people can attend, not at least 20.\"},{\"source\":\"온도가 -3.5 이상이면 작동하고, 2 미만이면 중단합니다.\",\"translation\":\"It operates if the temperature is at least -3.5, and stops if it is less than 2.\"}]",
+      "translation": "The company announced that it held a briefing yesterday and plans to launch the product next month.",
+      "elapsedMs": 3615
+    },
+    {
+      "id": "F04",
+      "source": "회사는 내일 설명회를 열고 신제품을 공개한다고 오늘 발표했습니다.",
+      "context": "",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"온도가 -3.5 이상이면 작동하고, 2 미만이면 중단합니다.\",\"translation\":\"It operates if the temperature is at least -3.5, and stops if it is less than 2.\"},{\"source\":\"회사는 어제 설명회를 열고, 다음 달에 제품을 출시할 예정이라고 발표했습니다.\",\"translation\":\"The company announced that it held a briefing yesterday and plans to launch the product next month.\"}]",
+      "translation": "The company announced today that it will hold a briefing tomorrow and unveil the new product.",
+      "elapsedMs": 3525
+    },
+    {
+      "id": "F05",
+      "source": "도서관은 책을 구하기 어려운 학생들과 출판사를 연결합니다.",
+      "context": "",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"회사는 어제 설명회를 열고, 다음 달에 제품을 출시할 예정이라고 발표했습니다.\",\"translation\":\"The company announced that it held a briefing yesterday and plans to launch the product next month.\"},{\"source\":\"회사는 내일 설명회를 열고 신제품을 공개한다고 오늘 발표했습니다.\",\"translation\":\"The company announced today that it will hold a briefing tomorrow and unveil the new product.\"}]",
+      "translation": "The library connects students who have difficulty finding books with publishers.",
+      "elapsedMs": 3267
+    },
+    {
+      "id": "F06",
+      "source": "학생의 연구 주제에 적합한 지도 교수를 찾고 있습니다.",
+      "context": "",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"회사는 내일 설명회를 열고 신제품을 공개한다고 오늘 발표했습니다.\",\"translation\":\"The company announced today that it will hold a briefing tomorrow and unveil the new product.\"},{\"source\":\"도서관은 책을 구하기 어려운 학생들과 출판사를 연결합니다.\",\"translation\":\"The library connects students who have difficulty finding books with publishers.\"}]",
+      "translation": "We are looking for an advisor suited to the student's research topic.",
+      "elapsedMs": 3433
+    },
+    {
+      "id": "F07",
+      "source": "이 프로그램의 이름은 별빛입니다.",
+      "context": "",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"도서관은 책을 구하기 어려운 학생들과 출판사를 연결합니다.\",\"translation\":\"The library connects students who have difficulty finding books with publishers.\"},{\"source\":\"학생의 연구 주제에 적합한 지도 교수를 찾고 있습니다.\",\"translation\":\"We are looking for an advisor suited to the student's research topic.\"}]",
+      "translation": "The name of this program is Starlight.",
+      "elapsedMs": 2530
+    },
+    {
+      "id": "F08",
+      "source": "별빛은 무료이지만, 신청이 곧 승인을 뜻하지는 않습니다.",
+      "context": "이 프로그램의 이름은 별빛입니다.",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"학생의 연구 주제에 적합한 지도 교수를 찾고 있습니다.\",\"translation\":\"We are looking for an advisor suited to the student's research topic.\"},{\"source\":\"이 프로그램의 이름은 별빛입니다.\",\"translation\":\"The name of this program is Starlight.\"}]",
+      "translation": "Starlight is free, but applying does not mean approval.",
+      "elapsedMs": 3363
+    },
+    {
+      "id": "F09",
+      "source": "일본 중소기업청이 발표한 자료를 한국 중소벤처기업부가 검토했습니다.",
+      "context": "",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"이 프로그램의 이름은 별빛입니다.\",\"translation\":\"The name of this program is Starlight.\"},{\"source\":\"별빛은 무료이지만, 신청이 곧 승인을 뜻하지는 않습니다.\",\"translation\":\"Starlight is free, but applying does not mean approval.\"}]",
+      "translation": "The Ministry of SMEs and Startups reviewed data released by the Japan Small and Medium Enterprise Agency.",
+      "elapsedMs": 3689
+    },
+    {
+      "id": "F10",
+      "source": "투자를 유치하려는 기업이 직접 다른 기업에 투자하는 것은 아닙니다.",
+      "context": "",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"별빛은 무료이지만, 신청이 곧 승인을 뜻하지는 않습니다.\",\"translation\":\"Starlight is free, but applying does not mean approval.\"},{\"source\":\"일본 중소기업청이 발표한 자료를 한국 중소벤처기업부가 검토했습니다.\",\"translation\":\"The Ministry of SMEs and Startups reviewed data released by the Japan Small and Medium Enterprise Agency.\"}]",
+      "translation": "A company trying to attract investment does not directly invest in another company.",
+      "elapsedMs": 2795
+    },
+    {
+      "id": "F01",
+      "source": "행사에는 20명 이상이 아니라 10명 이하만 참석할 수 있습니다.",
+      "context": "",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "sessionMemory": "",
+      "translation": "イベントには20名以上ではなく、10名以下のみ参加できます。",
+      "elapsedMs": 3045
+    },
+    {
+      "id": "F02",
+      "source": "온도가 -3.5 이상이면 작동하고, 2 미만이면 중단합니다.",
+      "context": "",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"행사에는 20명 이상이 아니라 10명 이하만 참석할 수 있습니다.\",\"translation\":\"イベントには20名以上ではなく、10名以下のみ参加できます。\"}]",
+      "translation": "温度が-3.5以上であれば作動し、2未満であれば停止します。",
+      "elapsedMs": 3652
+    },
+    {
+      "id": "F03",
+      "source": "회사는 어제 설명회를 열고, 다음 달에 제품을 출시할 예정이라고 발표했습니다.",
+      "context": "",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"행사에는 20명 이상이 아니라 10명 이하만 참석할 수 있습니다.\",\"translation\":\"イベントには20名以上ではなく、10名以下のみ参加できます。\"},{\"source\":\"온도가 -3.5 이상이면 작동하고, 2 미만이면 중단합니다.\",\"translation\":\"温度が-3.5以上であれば作動し、2未満であれば停止します。\"}]",
+      "translation": "会社は昨日説明会を開催し、来月製品を発売する予定だと発表しました。",
+      "elapsedMs": 3615
+    },
+    {
+      "id": "F04",
+      "source": "회사는 내일 설명회를 열고 신제품을 공개한다고 오늘 발표했습니다.",
+      "context": "",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"온도가 -3.5 이상이면 작동하고, 2 미만이면 중단합니다.\",\"translation\":\"温度が-3.5以上であれば作動し、2未満であれば停止します。\"},{\"source\":\"회사는 어제 설명회를 열고, 다음 달에 제품을 출시할 예정이라고 발표했습니다.\",\"translation\":\"会社は昨日説明会を開催し、来月製品を発売する予定だと発表しました。\"}]",
+      "translation": "会社は明日説明会を開き、新製品を公開すると本日発表しました。",
+      "elapsedMs": 3581
+    },
+    {
+      "id": "F05",
+      "source": "도서관은 책을 구하기 어려운 학생들과 출판사를 연결합니다.",
+      "context": "",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"회사는 어제 설명회를 열고, 다음 달에 제품을 출시할 예정이라고 발표했습니다.\",\"translation\":\"会社は昨日説明会を開催し、来月製品を発売する予定だと発表しました。\"},{\"source\":\"회사는 내일 설명회를 열고 신제품을 공개한다고 오늘 발표했습니다.\",\"translation\":\"会社は明日説明会を開き、新製品を公開すると本日発表しました。\"}]",
+      "translation": "図書館は、本を見つけるのが難しい学生と出版社を結びつけます。",
+      "elapsedMs": 3481
+    },
+    {
+      "id": "F06",
+      "source": "학생의 연구 주제에 적합한 지도 교수를 찾고 있습니다.",
+      "context": "",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"회사는 내일 설명회를 열고 신제품을 공개한다고 오늘 발표했습니다.\",\"translation\":\"会社は明日説明会を開き、新製品を公開すると本日発表しました。\"},{\"source\":\"도서관은 책을 구하기 어려운 학생들과 출판사를 연결합니다.\",\"translation\":\"図書館は、本を見つけるのが難しい学生と出版社を結びつけます。\"}]",
+      "translation": "学生の研究テーマに適した指導教授を探しています。",
+      "elapsedMs": 3183
+    },
+    {
+      "id": "F07",
+      "source": "이 프로그램의 이름은 별빛입니다.",
+      "context": "",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"도서관은 책을 구하기 어려운 학생들과 출판사를 연결합니다.\",\"translation\":\"図書館は、本を見つけるのが難しい学生と出版社を結びつけます。\"},{\"source\":\"학생의 연구 주제에 적합한 지도 교수를 찾고 있습니다.\",\"translation\":\"学生の研究テーマに適した指導教授を探しています。\"}]",
+      "translation": "このプログラムの名前はスターライトです。",
+      "elapsedMs": 2664
+    },
+    {
+      "id": "F08",
+      "source": "별빛은 무료이지만, 신청이 곧 승인을 뜻하지는 않습니다.",
+      "context": "이 프로그램의 이름은 별빛입니다.",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"학생의 연구 주제에 적합한 지도 교수를 찾고 있습니다.\",\"translation\":\"学生の研究テーマに適した指導教授を探しています。\"},{\"source\":\"이 프로그램의 이름은 별빛입니다.\",\"translation\":\"このプログラムの名前はスターライトです。\"}]",
+      "translation": "スターライトは無料ですが、申請が直ちに承認を意味するわけではありません。",
+      "elapsedMs": 2976
+    },
+    {
+      "id": "F09",
+      "source": "일본 중소기업청이 발표한 자료를 한국 중소벤처기업부가 검토했습니다.",
+      "context": "",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"이 프로그램의 이름은 별빛입니다.\",\"translation\":\"このプログラムの名前はスターライトです。\"},{\"source\":\"별빛은 무료이지만, 신청이 곧 승인을 뜻하지는 않습니다.\",\"translation\":\"スターライトは無料ですが、申請が直ちに承認を意味するわけではありません。\"}]",
+      "translation": "韓国の中小ベンチャー企業部が、日本の中小企業庁が発表した資料を検討しました。",
+      "elapsedMs": 3827
+    },
+    {
+      "id": "F10",
+      "source": "투자를 유치하려는 기업이 직접 다른 기업에 투자하는 것은 아닙니다.",
+      "context": "",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"별빛은 무료이지만, 신청이 곧 승인을 뜻하지는 않습니다.\",\"translation\":\"スターライトは無料ですが、申請が直ちに承認を意味するわけではありません。\"},{\"source\":\"일본 중소기업청이 발표한 자료를 한국 중소벤처기업부가 검토했습니다.\",\"translation\":\"韓国の中小ベンチャー企業部が、日本の中小企業庁が発表した資料を検討しました。\"}]",
+      "translation": "投資を呼び込もうとする企業が、直接他の企業に投資するわけではありません。",
+      "elapsedMs": 3580
+    },
+    {
+      "id": "F01",
+      "source": "행사에는 20명 이상이 아니라 10명 이하만 참석할 수 있습니다.",
+      "context": "",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "sessionMemory": "",
+      "translation": "活动中只能有10人或以下参加，不能有20人或以上。",
+      "elapsedMs": 3256
+    },
+    {
+      "id": "F02",
+      "source": "온도가 -3.5 이상이면 작동하고, 2 미만이면 중단합니다.",
+      "context": "",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"행사에는 20명 이상이 아니라 10명 이하만 참석할 수 있습니다.\",\"translation\":\"活动中只能有10人或以下参加，不能有20人或以上。\"}]",
+      "translation": "如果温度在-3.5以上，则运行；如果低于2，则停止。",
+      "elapsedMs": 3586
+    },
+    {
+      "id": "F03",
+      "source": "회사는 어제 설명회를 열고, 다음 달에 제품을 출시할 예정이라고 발표했습니다.",
+      "context": "",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"행사에는 20명 이상이 아니라 10명 이하만 참석할 수 있습니다.\",\"translation\":\"活动中只能有10人或以下参加，不能有20人或以上。\"},{\"source\":\"온도가 -3.5 이상이면 작동하고, 2 미만이면 중단합니다.\",\"translation\":\"如果温度在-3.5以上，则运行；如果低于2，则停止。\"}]",
+      "translation": "公司宣布昨天举行了说明会，并计划在下个月发布产品。",
+      "elapsedMs": 3616
+    },
+    {
+      "id": "F04",
+      "source": "회사는 내일 설명회를 열고 신제품을 공개한다고 오늘 발표했습니다.",
+      "context": "",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"온도가 -3.5 이상이면 작동하고, 2 미만이면 중단합니다.\",\"translation\":\"如果温度在-3.5以上，则运行；如果低于2，则停止。\"},{\"source\":\"회사는 어제 설명회를 열고, 다음 달에 제품을 출시할 예정이라고 발표했습니다.\",\"translation\":\"公司宣布昨天举行了说明会，并计划在下个月发布产品。\"}]",
+      "translation": "公司今天宣布明天将举行说明会并发布新产品。",
+      "elapsedMs": 3335
+    },
+    {
+      "id": "F05",
+      "source": "도서관은 책을 구하기 어려운 학생들과 출판사를 연결합니다.",
+      "context": "",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"회사는 어제 설명회를 열고, 다음 달에 제품을 출시할 예정이라고 발표했습니다.\",\"translation\":\"公司宣布昨天举行了说明会，并计划在下个月发布产品。\"},{\"source\":\"회사는 내일 설명회를 열고 신제품을 공개한다고 오늘 발표했습니다.\",\"translation\":\"公司今天宣布明天将举行说明会并发布新产品。\"}]",
+      "translation": "图书馆将那些难以获得书籍的学生与出版社联系起来。",
+      "elapsedMs": 3435
+    },
+    {
+      "id": "F06",
+      "source": "학생의 연구 주제에 적합한 지도 교수를 찾고 있습니다.",
+      "context": "",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"회사는 내일 설명회를 열고 신제품을 공개한다고 오늘 발표했습니다.\",\"translation\":\"公司今天宣布明天将举行说明会并发布新产品。\"},{\"source\":\"도서관은 책을 구하기 어려운 학생들과 출판사를 연결합니다.\",\"translation\":\"图书馆将那些难以获得书籍的学生与出版社联系起来。\"}]",
+      "translation": "正在寻找适合学生研究课题的导师。",
+      "elapsedMs": 3081
+    },
+    {
+      "id": "F07",
+      "source": "이 프로그램의 이름은 별빛입니다.",
+      "context": "",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"도서관은 책을 구하기 어려운 학생들과 출판사를 연결합니다.\",\"translation\":\"图书馆将那些难以获得书籍的学生与出版社联系起来。\"},{\"source\":\"학생의 연구 주제에 적합한 지도 교수를 찾고 있습니다.\",\"translation\":\"正在寻找适合学生研究课题的导师。\"}]",
+      "translation": "这个项目的名字是星光。",
+      "elapsedMs": 2392
+    },
+    {
+      "id": "F08",
+      "source": "별빛은 무료이지만, 신청이 곧 승인을 뜻하지는 않습니다.",
+      "context": "이 프로그램의 이름은 별빛입니다.",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"학생의 연구 주제에 적합한 지도 교수를 찾고 있습니다.\",\"translation\":\"正在寻找适合学生研究课题的导师。\"},{\"source\":\"이 프로그램의 이름은 별빛입니다.\",\"translation\":\"这个项目的名字是星光。\"}]",
+      "translation": "星光是免费的，但申请不代表一定会被批准。",
+      "elapsedMs": 3006
+    },
+    {
+      "id": "F09",
+      "source": "일본 중소기업청이 발표한 자료를 한국 중소벤처기업부가 검토했습니다.",
+      "context": "",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"이 프로그램의 이름은 별빛입니다.\",\"translation\":\"这个项目的名字是星光。\"},{\"source\":\"별빛은 무료이지만, 신청이 곧 승인을 뜻하지는 않습니다.\",\"translation\":\"星光是免费的，但申请不代表一定会被批准。\"}]",
+      "translation": "韩国中小风险企业部审查了日本中小企业厅发布的数据。",
+      "elapsedMs": 3385
+    },
+    {
+      "id": "F10",
+      "source": "투자를 유치하려는 기업이 직접 다른 기업에 투자하는 것은 아닙니다.",
+      "context": "",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "sessionMemory": "[{\"source\":\"별빛은 무료이지만, 신청이 곧 승인을 뜻하지는 않습니다.\",\"translation\":\"星光是免费的，但申请不代表一定会被批准。\"},{\"source\":\"일본 중소기업청이 발표한 자료를 한국 중소벤처기업부가 검토했습니다.\",\"translation\":\"韩国中小风险企业部审查了日本中小企业厅发布的数据。\"}]",
+      "translation": "寻求投资的企业不会直接投资于其他企业。",
+      "elapsedMs": 2529
+    }
+  ],
+  "completedCases": 30,
+  "endedAtUtc": "2026-10-01T03:29:43.230183Z"
+}

@@ -1,0 +1,616 @@
+{
+  "run": "baseline",
+  "startedAtUtc": "2026-09-30T23:05:12.844128Z",
+  "apkVersion": "0.2.46-beta-c",
+  "apkVersionCode": 56,
+  "fixtureSha256": "0462b9aad42a1a7d2a3aac501bdcb3a31aaa1d2ff22354f287454c7b474c23b1",
+  "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+  "provider": "ACTUAL_NATIVE_E4B_DIRECT_SOURCE",
+  "modelSha256": "0b2a8980ce155fd97673d8e820b4d29d9c7d99b8fa6806f425d969b145bd52e0",
+  "qualityVerdict": "REVIEW_REQUIRED",
+  "translationStyle": "AUTO",
+  "asrExecuted": false,
+  "ttsExecuted": false,
+  "externalApiUsed": false,
+  "geminiReferenceProvidedToModel": false,
+  "fallbackUsed": false,
+  "state": "INCOMPLETE",
+  "cases": [
+    {
+      "id": "IR01",
+      "source": "정부가 생애 첫 투자 유치에 도전하는 기술창업자와 투자사를 연결하기 위해 연내 300회 이상의 투자설명회(IR)를 연다.",
+      "context": "",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "translation": "The government will hold over 300 investment presentations (IRs) this year to connect tech startups making their first investment challenge with investors.",
+      "elapsedMs": 4943
+    },
+    {
+      "id": "IR02",
+      "source": "중소벤처기업부는 1일 서울 강남구 팁스타운 S1에서 ‘도전의 IR 퍼스트 밋업’을 개최하고 ‘도전의 IR 프로젝트’를 본격적으로 시작한다고 밝혔다.",
+      "context": "정부가 생애 첫 투자 유치에 도전하는 기술창업자와 투자사를 연결하기 위해 연내 300회 이상의 투자설명회(IR)를 연다.",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "translation": "The Ministry of SMEs and Startups announced that it will hold the 'Challenge IR First Meetup' at Tip Town S1 in Gangnam-gu, Seoul on the 1st and officially launch the 'Challenge IR Project.'",
+      "elapsedMs": 5713
+    },
+    {
+      "id": "IR03",
+      "source": "도전의 IR 프로젝트는 기술과 아이디어를 갖고 있지만 투자 네트워크나 관련 정보가 부족해 투자자를 만날 기회가 적었던 창업자와 투자사를 연결하는 프로그램이다.",
+      "context": "정부가 생애 첫 투자 유치에 도전하는 기술창업자와 투자사를 연결하기 위해 연내 300회 이상의 투자설명회(IR)를 연다. 중소벤처기업부는 1일 서울 강남구 팁스타운 S1에서 ‘도전의 IR 퍼스트 밋업’을 개최하고 ‘도전의 IR 프로젝트’를 본격적으로 시작한다고 밝혔다.",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "translation": "The Challenge IR Project is a program that connects startups and investors who have technology and ideas but have had few opportunities to meet investors due to a lack of investment networks or related information.",
+      "elapsedMs": 4967
+    },
+    {
+      "id": "IR04",
+      "source": "생애 첫 투자 유치를 목표로 하는 창업기업 대표나 예비창업자가 대상이며, 구체적인 사업계획을 갖고 있어야 한다.",
+      "context": "중소벤처기업부는 1일 서울 강남구 팁스타운 S1에서 ‘도전의 IR 퍼스트 밋업’을 개최하고 ‘도전의 IR 프로젝트’를 본격적으로 시작한다고 밝혔다. 도전의 IR 프로젝트는 기술과 아이디어를 갖고 있지만 투자 네트워크나 관련 정보가 부족해 투자자를 만날 기회가 적었던 창업자와 투자사를 연결하는 프로그램이다.",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "translation": "It is for startup company CEOs or prospective entrepreneurs who aim to secure their first investment, and they must have a specific business plan.",
+      "elapsedMs": 4256
+    },
+    {
+      "id": "IR05",
+      "source": "중기부와 142개 팁스(TIPS) 운영사가 연말까지 300회 이상의 대면 IR 프로그램을 진행한다.",
+      "context": "도전의 IR 프로젝트는 기술과 아이디어를 갖고 있지만 투자 네트워크나 관련 정보가 부족해 투자자를 만날 기회가 적었던 창업자와 투자사를 연결하는 프로그램이다. 생애 첫 투자 유치를 목표로 하는 창업기업 대표나 예비창업자가 대상이며, 구체적인 사업계획을 갖고 있어야 한다.",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "translation": "The Ministry of SMEs and Startups and 142 TIPS operators will conduct over 300 in-person IR programs by the end of the year.",
+      "elapsedMs": 4607
+    },
+    {
+      "id": "IR06",
+      "source": "이날 열린 첫 행사에서는 투자 유치를 희망하는 창업기업의 IR 피칭과 팁스 운영사별 일대일 투자 상담 등이 진행됐다.",
+      "context": "생애 첫 투자 유치를 목표로 하는 창업기업 대표나 예비창업자가 대상이며, 구체적인 사업계획을 갖고 있어야 한다. 중기부와 142개 팁스(TIPS) 운영사가 연말까지 300회 이상의 대면 IR 프로그램을 진행한다.",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "translation": "The first event held on that day included IR pitching from startups seeking investment and one-on-one investment consultations with TIPS operators.",
+      "elapsedMs": 4054
+    },
+    {
+      "id": "IR07",
+      "source": "팁스 운영사의 투자를 받은 뒤 성장한 선배기업의 경험을 공유하고 팁스 기업의 제품을 선보이는 자리도 마련됐다.",
+      "context": "중기부와 142개 팁스(TIPS) 운영사가 연말까지 300회 이상의 대면 IR 프로그램을 진행한다. 이날 열린 첫 행사에서는 투자 유치를 희망하는 창업기업의 IR 피칭과 팁스 운영사별 일대일 투자 상담 등이 진행됐다.",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "translation": "A session was also held to share the experiences of senior companies that grew after receiving investment from TIPS operators and to showcase the products of TIPS companies.",
+      "elapsedMs": 4318
+    },
+    {
+      "id": "IR08",
+      "source": "앞으로 IR은 운영사별 프로그램과 ‘모두의 창업’ 연계 프로그램, 지역·분야별 프로그램 등으로 나눠 진행된다.",
+      "context": "이날 열린 첫 행사에서는 투자 유치를 희망하는 창업기업의 IR 피칭과 팁스 운영사별 일대일 투자 상담 등이 진행됐다. 팁스 운영사의 투자를 받은 뒤 성장한 선배기업의 경험을 공유하고 팁스 기업의 제품을 선보이는 자리도 마련됐다.",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "translation": "From now on, IR will be conducted in divided programs such as by operating company, the 'All Startup' linked program, and regional\/field-specific programs.",
+      "elapsedMs": 4647
+    },
+    {
+      "id": "IR09",
+      "source": "우선 팁스 운영사가 일대일 미팅이나 공개 피칭 등을 자체적으로 기획하는 IR을 10월과 11월 두 차례에 걸쳐 진행한다.",
+      "context": "팁스 운영사의 투자를 받은 뒤 성장한 선배기업의 경험을 공유하고 팁스 기업의 제품을 선보이는 자리도 마련됐다. 앞으로 IR은 운영사별 프로그램과 ‘모두의 창업’ 연계 프로그램, 지역·분야별 프로그램 등으로 나눠 진행된다.",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "translation": "First, TIPS operators will hold IR sessions, including one-on-one meetings or open pitch events planned by them, twice in October and November.",
+      "elapsedMs": 4241
+    },
+    {
+      "id": "IR10",
+      "source": "10월 프로그램에는 지난달 15일부터 투자 제안을 받고 있으며 현재 500명 이상의 창업자가 신청을 마쳤다.",
+      "context": "앞으로 IR은 운영사별 프로그램과 ‘모두의 창업’ 연계 프로그램, 지역·분야별 프로그램 등으로 나눠 진행된다. 우선 팁스 운영사가 일대일 미팅이나 공개 피칭 등을 자체적으로 기획하는 IR을 10월과 11월 두 차례에 걸쳐 진행한다.",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "translation": "For the October program, we have been receiving investment proposals since the 15th of last month, and currently, over 500 entrepreneurs have completed their applications.",
+      "elapsedMs": 5074
+    },
+    {
+      "id": "IR11",
+      "source": "각 운영사는 이 가운데 대면 IR에 참여할 창업자를 선정한다.",
+      "context": "우선 팁스 운영사가 일대일 미팅이나 공개 피칭 등을 자체적으로 기획하는 IR을 10월과 11월 두 차례에 걸쳐 진행한다. 10월 프로그램에는 지난달 15일부터 투자 제안을 받고 있으며 현재 500명 이상의 창업자가 신청을 마쳤다.",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "translation": "Each operator selects the entrepreneurs who will participate in the in-person IR from among these.",
+      "elapsedMs": 3498
+    },
+    {
+      "id": "IR12",
+      "source": "‘모두의 창업’과도 연계한다.",
+      "context": "10월 프로그램에는 지난달 15일부터 투자 제안을 받고 있으며 현재 500명 이상의 창업자가 신청을 마쳤다. 각 운영사는 이 가운데 대면 IR에 참여할 창업자를 선정한다.",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "translation": "It is also linked with 'Startup for All'.",
+      "elapsedMs": 3102
+    },
+    {
+      "id": "IR13",
+      "source": "1차 모두의 창업 일반·기술트랙 2라운드에 진출한 창업인재 가운데 보육기관의 추천을 받은 200여명을 사업 아이디어에 적합한 팁스 운영사와 연결해 투자 유치를 지원할 예정이다.",
+      "context": "각 운영사는 이 가운데 대면 IR에 참여할 창업자를 선정한다. ‘모두의 창업’과도 연계한다.",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "translation": "We plan to support investment attraction by connecting about 200 entrepreneurs recommended by incubation institutions among those who advanced to the second round of the 1st All-for-Startup General and Technology Tracks with TIPS operators whose business ideas are suitable.",
+      "elapsedMs": 6331
+    },
+    {
+      "id": "IR14",
+      "source": "수도권 밖 창업기업과 투자자 간 접점을 늘리기 위한 지역 IR도 열린다.",
+      "context": "‘모두의 창업’과도 연계한다. 1차 모두의 창업 일반·기술트랙 2라운드에 진출한 창업인재 가운데 보육기관의 추천을 받은 200여명을 사업 아이디어에 적합한 팁스 운영사와 연결해 투자 유치를 지원할 예정이다.",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "translation": "Regional IR events will also be held to increase contact points between startups outside the Seoul metropolitan area and investors.",
+      "elapsedMs": 4568
+    },
+    {
+      "id": "IR15",
+      "source": "5극 3특 권역별 ‘웰컴투팁스’를 개최하고 대구·대전·광주·울산에서는 4대 과학기술원과 연계한 ‘창업도시 IR’을 진행한다.",
+      "context": "1차 모두의 창업 일반·기술트랙 2라운드에 진출한 창업인재 가운데 보육기관의 추천을 받은 200여명을 사업 아이디어에 적합한 팁스 운영사와 연결해 투자 유치를 지원할 예정이다. 수도권 밖 창업기업과 투자자 간 접점을 늘리기 위한 지역 IR도 열린다.",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "translation": "We will hold 'Welcome to TIPS' by region for the 5 poles and 3 specialties, and 'Startup City IR' linked with the four science and technology institutes will be held in Daegu, Daejeon, Gwangju, and Ulsan.",
+      "elapsedMs": 6721
+    },
+    {
+      "id": "IR16",
+      "source": "올해부터 웰컴투팁스 개최 지역을 기존 5대 권역에서 전북·강원·제주까지 확대하고, 권역별 우수기업에는 ‘프리팁스’ 지원사업 우선 선정 기회를 준다.",
+      "context": "수도권 밖 창업기업과 투자자 간 접점을 늘리기 위한 지역 IR도 열린다. 5극 3특 권역별 ‘웰컴투팁스’를 개최하고 대구·대전·광주·울산에서는 4대 과학기술원과 연계한 ‘창업도시 IR’을 진행한다.",
+      "targetLanguage": "en",
+      "state": "FAILED",
+      "errorType": "GemmaRealtimeTimeoutException",
+      "elapsedMs": 10007
+    },
+    {
+      "id": "IR17",
+      "source": "분야별 투자 연계도 추진한다.",
+      "context": "5극 3특 권역별 ‘웰컴투팁스’를 개최하고 대구·대전·광주·울산에서는 4대 과학기술원과 연계한 ‘창업도시 IR’을 진행한다. 올해부터 웰컴투팁스 개최 지역을 기존 5대 권역에서 전북·강원·제주까지 확대하고, 권역별 우수기업에는 ‘프리팁스’ 지원사업 우선 선정 기회를 준다.",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "translation": "We will also promote investment linkage by field.",
+      "elapsedMs": 3574
+    },
+    {
+      "id": "IR18",
+      "source": "범부처 창업경진대회 ‘올해의 K-스타트업’에서 선발된 기업을 대상으로 9개 부처 12개 특화리그별 IR을 열고, 방산·미디어·해양·R&D 등 각 부처의 창업기업 지원사업과 연계한 IR도 마련한다.",
+      "context": "올해부터 웰컴투팁스 개최 지역을 기존 5대 권역에서 전북·강원·제주까지 확대하고, 권역별 우수기업에는 ‘프리팁스’ 지원사업 우선 선정 기회를 준다. 분야별 투자 연계도 추진한다.",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "translation": "We will hold IR sessions for companies selected in the 'Startup of the Year' at the inter-ministerial startup competition across 12 specialized leagues from 9 ministries, and we will also arrange IRs linked to the startup support projects of each ministry, such as defense, media, maritime, and R&D.",
+      "elapsedMs": 6659
+    },
+    {
+      "id": "IR19",
+      "source": "이번 프로젝트는 투자자와 창업기업을 단순히 연결하는 데 그치지 않고 실제 투자 이후 팁스 지원으로 이어지는 구조로 설계됐다.",
+      "context": "분야별 투자 연계도 추진한다. 범부처 창업경진대회 ‘올해의 K-스타트업’에서 선발된 기업을 대상으로 9개 부처 12개 특화리그별 IR을 열고, 방산·미디어·해양·R&D 등 각 부처의 창업기업 지원사업과 연계한 IR도 마련한다.",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "translation": "This project is designed not just to connect investors and startups, but to lead to TIPS support after actual investment.",
+      "elapsedMs": 4100
+    },
+    {
+      "id": "IR20",
+      "source": "IR을 통해 투자를 유치한 기업에는 팁스 선정평가 때 가점 등 우대 혜택을 제공한다.",
+      "context": "범부처 창업경진대회 ‘올해의 K-스타트업’에서 선발된 기업을 대상으로 9개 부처 12개 특화리그별 IR을 열고, 방산·미디어·해양·R&D 등 각 부처의 창업기업 지원사업과 연계한 IR도 마련한다. 이번 프로젝트는 투자자와 창업기업을 단순히 연결하는 데 그치지 않고 실제 투자 이후 팁스 지원으로 이어지는 구조로 설계됐다.",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "translation": "Companies that attract investment through the IR will be provided with preferential benefits, such as extra points during the TIPS selection evaluation.",
+      "elapsedMs": 3804
+    },
+    {
+      "id": "IR21",
+      "source": "민간 투자사가 먼저 유망 기술기업을 발굴·투자하면 정부가 연구개발(R&D)과 사업화 자금을 연계 지원하는 팁스 체계로 후속 성장을 연결한다는 구상이다.",
+      "context": "이번 프로젝트는 투자자와 창업기업을 단순히 연결하는 데 그치지 않고 실제 투자 이후 팁스 지원으로 이어지는 구조로 설계됐다. IR을 통해 투자를 유치한 기업에는 팁스 선정평가 때 가점 등 우대 혜택을 제공한다.",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "translation": "The plan is to connect subsequent growth through the TIPS system, where the government links R&D and commercialization funds after private investors first discover and invest in promising technology companies.",
+      "elapsedMs": 5294
+    },
+    {
+      "id": "IR22",
+      "source": "목승환 중기부 창업벤처혁신실장은 “도전의 IR 프로젝트를 통해 혁신 창업가의 첫 도전을 적극 지원하겠다”며 “잠재력 있는 창업자들이 수많은 딥테크 기업을 발굴하고 육성한 팁스 운영사들과 함께 성장의 발판을 만들어가기를 기대한다”고 말했다.",
+      "context": "IR을 통해 투자를 유치한 기업에는 팁스 선정평가 때 가점 등 우대 혜택을 제공한다. 민간 투자사가 먼저 유망 기술기업을 발굴·투자하면 정부가 연구개발(R&D)과 사업화 자금을 연계 지원하는 팁스 체계로 후속 성장을 연결한다는 구상이다.",
+      "targetLanguage": "en",
+      "state": "COMPLETED",
+      "translation": "Mok Seung-hwan, Director of the Startup Venture Innovation Office at the Ministry of SMEs and Startups, said, “We will actively support the first attempts of innovative entrepreneurs through the Challenge IR project,” and “We expect that potential entrepreneurs will build a stepping stone for growth together with TIPS operators who have discovered and nurtured numerous deep tech companies.”",
+      "elapsedMs": 8855
+    },
+    {
+      "id": "IR01",
+      "source": "정부가 생애 첫 투자 유치에 도전하는 기술창업자와 투자사를 연결하기 위해 연내 300회 이상의 투자설명회(IR)를 연다.",
+      "context": "",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "translation": "政府は、初めての投資誘致に挑戦する技術起業家と投資会社を結びつけるため、年内に300回以上の投資説明会（IR）を開催します。",
+      "elapsedMs": 5974
+    },
+    {
+      "id": "IR02",
+      "source": "중소벤처기업부는 1일 서울 강남구 팁스타운 S1에서 ‘도전의 IR 퍼스트 밋업’을 개최하고 ‘도전의 IR 프로젝트’를 본격적으로 시작한다고 밝혔다.",
+      "context": "정부가 생애 첫 투자 유치에 도전하는 기술창업자와 투자사를 연결하기 위해 연내 300회 이상의 투자설명회(IR)를 연다.",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "translation": "中小企業庁は1日、ソウル江南区のティップタウンS1で「挑戦のIRファーストミートアップ」を開催し、「挑戦のIRプロジェクト」を本格的に開始すると発表した。",
+      "elapsedMs": 5265
+    },
+    {
+      "id": "IR03",
+      "source": "도전의 IR 프로젝트는 기술과 아이디어를 갖고 있지만 투자 네트워크나 관련 정보가 부족해 투자자를 만날 기회가 적었던 창업자와 투자사를 연결하는 프로그램이다.",
+      "context": "정부가 생애 첫 투자 유치에 도전하는 기술창업자와 투자사를 연결하기 위해 연내 300회 이상의 투자설명회(IR)를 연다. 중소벤처기업부는 1일 서울 강남구 팁스타운 S1에서 ‘도전의 IR 퍼스트 밋업’을 개최하고 ‘도전의 IR 프로젝트’를 본격적으로 시작한다고 밝혔다.",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "translation": "挑戦のIRプロジェクトは、技術やアイデアを持っているが、投資ネットワークや関連情報が不足していて投資家と会う機会が少なかった起業家と投資会社を結びつけるプログラムです。",
+      "elapsedMs": 4939
+    },
+    {
+      "id": "IR04",
+      "source": "생애 첫 투자 유치를 목표로 하는 창업기업 대표나 예비창업자가 대상이며, 구체적인 사업계획을 갖고 있어야 한다.",
+      "context": "중소벤처기업부는 1일 서울 강남구 팁스타운 S1에서 ‘도전의 IR 퍼스트 밋업’을 개최하고 ‘도전의 IR 프로젝트’를 본격적으로 시작한다고 밝혔다. 도전의 IR 프로젝트는 기술과 아이디어를 갖고 있지만 투자 네트워크나 관련 정보가 부족해 투자자를 만날 기회가 적었던 창업자와 투자사를 연결하는 프로그램이다.",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "translation": "生涯で初めての資金調達を目指す起業企業の代表者や予備起業者が対象であり、具体的な事業計画を持っている必要がある。",
+      "elapsedMs": 4253
+    },
+    {
+      "id": "IR05",
+      "source": "중기부와 142개 팁스(TIPS) 운영사가 연말까지 300회 이상의 대면 IR 프로그램을 진행한다.",
+      "context": "도전의 IR 프로젝트는 기술과 아이디어를 갖고 있지만 투자 네트워크나 관련 정보가 부족해 투자자를 만날 기회가 적었던 창업자와 투자사를 연결하는 프로그램이다. 생애 첫 투자 유치를 목표로 하는 창업기업 대표나 예비창업자가 대상이며, 구체적인 사업계획을 갖고 있어야 한다.",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "translation": "中基部と142のTIPS運営会社が、年末までに300回以上の対面IRプログラムを実施します。",
+      "elapsedMs": 4266
+    },
+    {
+      "id": "IR06",
+      "source": "이날 열린 첫 행사에서는 투자 유치를 희망하는 창업기업의 IR 피칭과 팁스 운영사별 일대일 투자 상담 등이 진행됐다.",
+      "context": "생애 첫 투자 유치를 목표로 하는 창업기업 대표나 예비창업자가 대상이며, 구체적인 사업계획을 갖고 있어야 한다. 중기부와 142개 팁스(TIPS) 운영사가 연말까지 300회 이상의 대면 IR 프로그램을 진행한다.",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "translation": "この日開催された最初のイベントでは、投資を希望する起業企業のIRピッチや、TIPS運営会社ごとの一対一の投資相談などが実施されました。",
+      "elapsedMs": 4777
+    },
+    {
+      "id": "IR07",
+      "source": "팁스 운영사의 투자를 받은 뒤 성장한 선배기업의 경험을 공유하고 팁스 기업의 제품을 선보이는 자리도 마련됐다.",
+      "context": "중기부와 142개 팁스(TIPS) 운영사가 연말까지 300회 이상의 대면 IR 프로그램을 진행한다. 이날 열린 첫 행사에서는 투자 유치를 희망하는 창업기업의 IR 피칭과 팁스 운영사별 일대일 투자 상담 등이 진행됐다.",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "translation": "TIPS運営会社からの投資を受けて成長した先輩企業の経験を共有し、TIPS企業の製品を披露する場も設けられた。",
+      "elapsedMs": 4097
+    },
+    {
+      "id": "IR08",
+      "source": "앞으로 IR은 운영사별 프로그램과 ‘모두의 창업’ 연계 프로그램, 지역·분야별 프로그램 등으로 나눠 진행된다.",
+      "context": "이날 열린 첫 행사에서는 투자 유치를 희망하는 창업기업의 IR 피칭과 팁스 운영사별 일대일 투자 상담 등이 진행됐다. 팁스 운영사의 투자를 받은 뒤 성장한 선배기업의 경험을 공유하고 팁스 기업의 제품을 선보이는 자리도 마련됐다.",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "translation": "今後は、IRは運営会社別のプログラムや「みんなの起業」連携プログラム、地域・分野別のプログラムなどに分けて実施されます。",
+      "elapsedMs": 4248
+    },
+    {
+      "id": "IR09",
+      "source": "우선 팁스 운영사가 일대일 미팅이나 공개 피칭 등을 자체적으로 기획하는 IR을 10월과 11월 두 차례에 걸쳐 진행한다.",
+      "context": "팁스 운영사의 투자를 받은 뒤 성장한 선배기업의 경험을 공유하고 팁스 기업의 제품을 선보이는 자리도 마련됐다. 앞으로 IR은 운영사별 프로그램과 ‘모두의 창업’ 연계 프로그램, 지역·분야별 프로그램 등으로 나눠 진행된다.",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "translation": "まず、TIPS運営会社が1対1のミーティングや公開ピッチングなどを自ら企画するIRを10月と11月の2回にわたって実施します。",
+      "elapsedMs": 4979
+    },
+    {
+      "id": "IR10",
+      "source": "10월 프로그램에는 지난달 15일부터 투자 제안을 받고 있으며 현재 500명 이상의 창업자가 신청을 마쳤다.",
+      "context": "앞으로 IR은 운영사별 프로그램과 ‘모두의 창업’ 연계 프로그램, 지역·분야별 프로그램 등으로 나눠 진행된다. 우선 팁스 운영사가 일대일 미팅이나 공개 피칭 등을 자체적으로 기획하는 IR을 10월과 11월 두 차례에 걸쳐 진행한다.",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "translation": "10月のプログラムでは、先月15日から投資提案を受け付けており、現在500名以上の起業家が申請を完了しています。",
+      "elapsedMs": 4375
+    },
+    {
+      "id": "IR11",
+      "source": "각 운영사는 이 가운데 대면 IR에 참여할 창업자를 선정한다.",
+      "context": "우선 팁스 운영사가 일대일 미팅이나 공개 피칭 등을 자체적으로 기획하는 IR을 10월과 11월 두 차례에 걸쳐 진행한다. 10월 프로그램에는 지난달 15일부터 투자 제안을 받고 있으며 현재 500명 이상의 창업자가 신청을 마쳤다.",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "translation": "各運営会社は、その中で対面IRに参加する起業家を選定する。",
+      "elapsedMs": 4058
+    },
+    {
+      "id": "IR12",
+      "source": "‘모두의 창업’과도 연계한다.",
+      "context": "10월 프로그램에는 지난달 15일부터 투자 제안을 받고 있으며 현재 500명 이상의 창업자가 신청을 마쳤다. 각 운영사는 이 가운데 대면 IR에 참여할 창업자를 선정한다.",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "translation": "「みんなの起業」とも連携する。",
+      "elapsedMs": 3250
+    },
+    {
+      "id": "IR13",
+      "source": "1차 모두의 창업 일반·기술트랙 2라운드에 진출한 창업인재 가운데 보육기관의 추천을 받은 200여명을 사업 아이디어에 적합한 팁스 운영사와 연결해 투자 유치를 지원할 예정이다.",
+      "context": "각 운영사는 이 가운데 대면 IR에 참여할 창업자를 선정한다. ‘모두의 창업’과도 연계한다.",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "translation": "第1回「みんなの起業」一般・技術トラック第2ラウンドに進出した起業人材の中から、育成機関の推薦を受けた200名ほどを、事業アイデアに適したティップス運営会社と結びつけ、投資誘致を支援する予定です。",
+      "elapsedMs": 7163
+    },
+    {
+      "id": "IR14",
+      "source": "수도권 밖 창업기업과 투자자 간 접점을 늘리기 위한 지역 IR도 열린다.",
+      "context": "‘모두의 창업’과도 연계한다. 1차 모두의 창업 일반·기술트랙 2라운드에 진출한 창업인재 가운데 보육기관의 추천을 받은 200여명을 사업 아이디어에 적합한 팁스 운영사와 연결해 투자 유치를 지원할 예정이다.",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "translation": "首都圏外の起業家と投資家の接点を増やすための地域IRも開催されます。",
+      "elapsedMs": 4092
+    },
+    {
+      "id": "IR15",
+      "source": "5극 3특 권역별 ‘웰컴투팁스’를 개최하고 대구·대전·광주·울산에서는 4대 과학기술원과 연계한 ‘창업도시 IR’을 진행한다.",
+      "context": "1차 모두의 창업 일반·기술트랙 2라운드에 진출한 창업인재 가운데 보육기관의 추천을 받은 200여명을 사업 아이디어에 적합한 팁스 운영사와 연결해 투자 유치를 지원할 예정이다. 수도권 밖 창업기업과 투자자 간 접점을 늘리기 위한 지역 IR도 열린다.",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "translation": "5極3特の権域別「ウェルカムトゥティプス」を開催し、大邱・大田・光州・蔚山では4大科学技術院と連携した「起業都市IR」を実施する。",
+      "elapsedMs": 5689
+    },
+    {
+      "id": "IR16",
+      "source": "올해부터 웰컴투팁스 개최 지역을 기존 5대 권역에서 전북·강원·제주까지 확대하고, 권역별 우수기업에는 ‘프리팁스’ 지원사업 우선 선정 기회를 준다.",
+      "context": "수도권 밖 창업기업과 투자자 간 접점을 늘리기 위한 지역 IR도 열린다. 5극 3특 권역별 ‘웰컴투팁스’를 개최하고 대구·대전·광주·울산에서는 4대 과학기술원과 연계한 ‘창업도시 IR’을 진행한다.",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "translation": "今年からウェルカムトゥティップスの開催地域を従来の5大圏域から全北・江原・済州まで拡大し、圏域別の優良企業には「プリティップス」支援事業の優先選定機会を付与する。",
+      "elapsedMs": 6442
+    },
+    {
+      "id": "IR17",
+      "source": "분야별 투자 연계도 추진한다.",
+      "context": "5극 3특 권역별 ‘웰컴투팁스’를 개최하고 대구·대전·광주·울산에서는 4대 과학기술원과 연계한 ‘창업도시 IR’을 진행한다. 올해부터 웰컴투팁스 개최 지역을 기존 5대 권역에서 전북·강원·제주까지 확대하고, 권역별 우수기업에는 ‘프리팁스’ 지원사업 우선 선정 기회를 준다.",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "translation": "分野別の投資連携も推進する。",
+      "elapsedMs": 3017
+    },
+    {
+      "id": "IR18",
+      "source": "범부처 창업경진대회 ‘올해의 K-스타트업’에서 선발된 기업을 대상으로 9개 부처 12개 특화리그별 IR을 열고, 방산·미디어·해양·R&D 등 각 부처의 창업기업 지원사업과 연계한 IR도 마련한다.",
+      "context": "올해부터 웰컴투팁스 개최 지역을 기존 5대 권역에서 전북·강원·제주까지 확대하고, 권역별 우수기업에는 ‘프리팁스’ 지원사업 우선 선정 기회를 준다. 분야별 투자 연계도 추진한다.",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "translation": "省庁横断的な起業コンテスト「今年のKスタートアップ」で選出された企業を対象に、9省庁の12の特化リーグごとにIRを開催し、防衛・メディア・海洋・R&Dなど各省庁の起業家支援事業と連携したIRも用意する。",
+      "elapsedMs": 7806
+    },
+    {
+      "id": "IR19",
+      "source": "이번 프로젝트는 투자자와 창업기업을 단순히 연결하는 데 그치지 않고 실제 투자 이후 팁스 지원으로 이어지는 구조로 설계됐다.",
+      "context": "분야별 투자 연계도 추진한다. 범부처 창업경진대회 ‘올해의 K-스타트업’에서 선발된 기업을 대상으로 9개 부처 12개 특화리그별 IR을 열고, 방산·미디어·해양·R&D 등 각 부처의 창업기업 지원사업과 연계한 IR도 마련한다.",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "translation": "このプロジェクトは、投資家と起業家を単に繋げるだけでなく、実際の投資後にティップス支援に繋がる構造で設計されています。",
+      "elapsedMs": 5157
+    },
+    {
+      "id": "IR20",
+      "source": "IR을 통해 투자를 유치한 기업에는 팁스 선정평가 때 가점 등 우대 혜택을 제공한다.",
+      "context": "범부처 창업경진대회 ‘올해의 K-스타트업’에서 선발된 기업을 대상으로 9개 부처 12개 특화리그별 IR을 열고, 방산·미디어·해양·R&D 등 각 부처의 창업기업 지원사업과 연계한 IR도 마련한다. 이번 프로젝트는 투자자와 창업기업을 단순히 연결하는 데 그치지 않고 실제 투자 이후 팁스 지원으로 이어지는 구조로 설계됐다.",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "translation": "IRを通じて投資を誘致した企業には、TIPS選定評価時に加点などの優遇措置を提供する。",
+      "elapsedMs": 4968
+    },
+    {
+      "id": "IR21",
+      "source": "민간 투자사가 먼저 유망 기술기업을 발굴·투자하면 정부가 연구개발(R&D)과 사업화 자금을 연계 지원하는 팁스 체계로 후속 성장을 연결한다는 구상이다.",
+      "context": "이번 프로젝트는 투자자와 창업기업을 단순히 연결하는 데 그치지 않고 실제 투자 이후 팁스 지원으로 이어지는 구조로 설계됐다. IR을 통해 투자를 유치한 기업에는 팁스 선정평가 때 가점 등 우대 혜택을 제공한다.",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "translation": "民間投資家がまず有望な技術企業を発掘・投資すれば、政府が研究開発（R&D）と事業化資金を連動して支援するTIPS制度で、その後の成長につなげるという構想です。",
+      "elapsedMs": 6524
+    },
+    {
+      "id": "IR22",
+      "source": "목승환 중기부 창업벤처혁신실장은 “도전의 IR 프로젝트를 통해 혁신 창업가의 첫 도전을 적극 지원하겠다”며 “잠재력 있는 창업자들이 수많은 딥테크 기업을 발굴하고 육성한 팁스 운영사들과 함께 성장의 발판을 만들어가기를 기대한다”고 말했다.",
+      "context": "IR을 통해 투자를 유치한 기업에는 팁스 선정평가 때 가점 등 우대 혜택을 제공한다. 민간 투자사가 먼저 유망 기술기업을 발굴·투자하면 정부가 연구개발(R&D)과 사업화 자금을 연계 지원하는 팁스 체계로 후속 성장을 연결한다는 구상이다.",
+      "targetLanguage": "ja",
+      "state": "COMPLETED",
+      "translation": "木承煥中小企業部創業ベンチャー革新室長は、「挑戦のIRプロジェクトを通じて、革新的な起業家の第一歩の挑戦を積極的に支援する」と述べ、「潜在能力のある起業家たちが、数多くのディープテック企業を発掘・育成したTIPS運営者たちと共に、成長の足がかりを築いていくことを期待している」と語った。",
+      "elapsedMs": 9509
+    },
+    {
+      "id": "IR01",
+      "source": "정부가 생애 첫 투자 유치에 도전하는 기술창업자와 투자사를 연결하기 위해 연내 300회 이상의 투자설명회(IR)를 연다.",
+      "context": "",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "translation": "政府将在今年内举办超过300场投资说明会（IR），以连接首次吸引投资的技术创业者和投资公司。",
+      "elapsedMs": 4627
+    },
+    {
+      "id": "IR02",
+      "source": "중소벤처기업부는 1일 서울 강남구 팁스타운 S1에서 ‘도전의 IR 퍼스트 밋업’을 개최하고 ‘도전의 IR 프로젝트’를 본격적으로 시작한다고 밝혔다.",
+      "context": "정부가 생애 첫 투자 유치에 도전하는 기술창업자와 투자사를 연결하기 위해 연내 300회 이상의 투자설명회(IR)를 연다.",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "translation": "中小企业发展部宣布，将于1日在首尔江南区Tip Town S1举办“挑战IR首次见面会”，并正式启动“挑战IR项目”。",
+      "elapsedMs": 4587
+    },
+    {
+      "id": "IR03",
+      "source": "도전의 IR 프로젝트는 기술과 아이디어를 갖고 있지만 투자 네트워크나 관련 정보가 부족해 투자자를 만날 기회가 적었던 창업자와 투자사를 연결하는 프로그램이다.",
+      "context": "정부가 생애 첫 투자 유치에 도전하는 기술창업자와 투자사를 연결하기 위해 연내 300회 이상의 투자설명회(IR)를 연다. 중소벤처기업부는 1일 서울 강남구 팁스타운 S1에서 ‘도전의 IR 퍼스트 밋업’을 개최하고 ‘도전의 IR 프로젝트’를 본격적으로 시작한다고 밝혔다.",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "translation": "挑战IR项目是一个连接拥有技术和想法但缺乏投资网络或相关信息、因此很少有机会接触投资者的创业者和投资方的项目。",
+      "elapsedMs": 4404
+    },
+    {
+      "id": "IR04",
+      "source": "생애 첫 투자 유치를 목표로 하는 창업기업 대표나 예비창업자가 대상이며, 구체적인 사업계획을 갖고 있어야 한다.",
+      "context": "중소벤처기업부는 1일 서울 강남구 팁스타운 S1에서 ‘도전의 IR 퍼스트 밋업’을 개최하고 ‘도전의 IR 프로젝트’를 본격적으로 시작한다고 밝혔다. 도전의 IR 프로젝트는 기술과 아이디어를 갖고 있지만 투자 네트워크나 관련 정보가 부족해 투자자를 만날 기회가 적었던 창업자와 투자사를 연결하는 프로그램이다.",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "translation": "面向以获得首次投资为目标的企业创始人或预备创业者，且必须具备具体的商业计划。",
+      "elapsedMs": 3829
+    },
+    {
+      "id": "IR05",
+      "source": "중기부와 142개 팁스(TIPS) 운영사가 연말까지 300회 이상의 대면 IR 프로그램을 진행한다.",
+      "context": "도전의 IR 프로젝트는 기술과 아이디어를 갖고 있지만 투자 네트워크나 관련 정보가 부족해 투자자를 만날 기회가 적었던 창업자와 투자사를 연결하는 프로그램이다. 생애 첫 투자 유치를 목표로 하는 창업기업 대표나 예비창업자가 대상이며, 구체적인 사업계획을 갖고 있어야 한다.",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "translation": "中小企业发展部和142家TIPS运营机构将在年底前举办300次以上的面对面IR项目。",
+      "elapsedMs": 4142
+    },
+    {
+      "id": "IR06",
+      "source": "이날 열린 첫 행사에서는 투자 유치를 희망하는 창업기업의 IR 피칭과 팁스 운영사별 일대일 투자 상담 등이 진행됐다.",
+      "context": "생애 첫 투자 유치를 목표로 하는 창업기업 대표나 예비창업자가 대상이며, 구체적인 사업계획을 갖고 있어야 한다. 중기부와 142개 팁스(TIPS) 운영사가 연말까지 300회 이상의 대면 IR 프로그램을 진행한다.",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "translation": "在当天举行的首场活动中，进行了希望获得投资的创业公司的路演和各TIPS运营机构的一对一投资咨询等活动。",
+      "elapsedMs": 4489
+    },
+    {
+      "id": "IR07",
+      "source": "팁스 운영사의 투자를 받은 뒤 성장한 선배기업의 경험을 공유하고 팁스 기업의 제품을 선보이는 자리도 마련됐다.",
+      "context": "중기부와 142개 팁스(TIPS) 운영사가 연말까지 300회 이상의 대면 IR 프로그램을 진행한다. 이날 열린 첫 행사에서는 투자 유치를 희망하는 창업기업의 IR 피칭과 팁스 운영사별 일대일 투자 상담 등이 진행됐다.",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "translation": "还安排了分享获得TIPS运营方投资后成长经验的先辈企业的经验，并展示TIPS企业的产品的场合。",
+      "elapsedMs": 4138
+    },
+    {
+      "id": "IR08",
+      "source": "앞으로 IR은 운영사별 프로그램과 ‘모두의 창업’ 연계 프로그램, 지역·분야별 프로그램 등으로 나눠 진행된다.",
+      "context": "이날 열린 첫 행사에서는 투자 유치를 희망하는 창업기업의 IR 피칭과 팁스 운영사별 일대일 투자 상담 등이 진행됐다. 팁스 운영사의 투자를 받은 뒤 성장한 선배기업의 경험을 공유하고 팁스 기업의 제품을 선보이는 자리도 마련됐다.",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "translation": "今后，IR将分为各运营机构的计划、与“全民创业”联动的计划、以及按地区和领域划分的计划等进行开展。",
+      "elapsedMs": 4558
+    },
+    {
+      "id": "IR09",
+      "source": "우선 팁스 운영사가 일대일 미팅이나 공개 피칭 등을 자체적으로 기획하는 IR을 10월과 11월 두 차례에 걸쳐 진행한다.",
+      "context": "팁스 운영사의 투자를 받은 뒤 성장한 선배기업의 경험을 공유하고 팁스 기업의 제품을 선보이는 자리도 마련됐다. 앞으로 IR은 운영사별 프로그램과 ‘모두의 창업’ 연계 프로그램, 지역·분야별 프로그램 등으로 나눠 진행된다.",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "translation": "首先，TIPS运营公司将自行策划并进行两次IR，分别在10月和11月，包括一对一会面和公开路演等。",
+      "elapsedMs": 4694
+    },
+    {
+      "id": "IR10",
+      "source": "10월 프로그램에는 지난달 15일부터 투자 제안을 받고 있으며 현재 500명 이상의 창업자가 신청을 마쳤다.",
+      "context": "앞으로 IR은 운영사별 프로그램과 ‘모두의 창업’ 연계 프로그램, 지역·분야별 프로그램 등으로 나눠 진행된다. 우선 팁스 운영사가 일대일 미팅이나 공개 피칭 등을 자체적으로 기획하는 IR을 10월과 11월 두 차례에 걸쳐 진행한다.",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "translation": "10月份的计划，自上个月15日起就一直在接收投资提案，目前已完成500名以上创业者的申请。",
+      "elapsedMs": 4323
+    },
+    {
+      "id": "IR11",
+      "source": "각 운영사는 이 가운데 대면 IR에 참여할 창업자를 선정한다.",
+      "context": "우선 팁스 운영사가 일대일 미팅이나 공개 피칭 등을 자체적으로 기획하는 IR을 10월과 11월 두 차례에 걸쳐 진행한다. 10월 프로그램에는 지난달 15일부터 투자 제안을 받고 있으며 현재 500명 이상의 창업자가 신청을 마쳤다.",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "translation": "每个运营方都会从中选出参与面对面路演的创业者。",
+      "elapsedMs": 3417
+    },
+    {
+      "id": "IR12",
+      "source": "‘모두의 창업’과도 연계한다.",
+      "context": "10월 프로그램에는 지난달 15일부터 투자 제안을 받고 있으며 현재 500명 이상의 창업자가 신청을 마쳤다. 각 운영사는 이 가운데 대면 IR에 참여할 창업자를 선정한다.",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "translation": "也与‘全民创业’挂钩。",
+      "elapsedMs": 2980
+    },
+    {
+      "id": "IR13",
+      "source": "1차 모두의 창업 일반·기술트랙 2라운드에 진출한 창업인재 가운데 보육기관의 추천을 받은 200여명을 사업 아이디어에 적합한 팁스 운영사와 연결해 투자 유치를 지원할 예정이다.",
+      "context": "각 운영사는 이 가운데 대면 IR에 참여할 창업자를 선정한다. ‘모두의 창업’과도 연계한다.",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "translation": "计划将来自第一轮“全民创业”通用\/技术赛道第二轮的创业人才中，获得孵化机构推荐的200多名创业者，与适合其商业想法的 TIPS 运营公司对接，以支持其吸引投资。",
+      "elapsedMs": 6004
+    },
+    {
+      "id": "IR14",
+      "source": "수도권 밖 창업기업과 투자자 간 접점을 늘리기 위한 지역 IR도 열린다.",
+      "context": "‘모두의 창업’과도 연계한다. 1차 모두의 창업 일반·기술트랙 2라운드에 진출한 창업인재 가운데 보육기관의 추천을 받은 200여명을 사업 아이디어에 적합한 팁스 운영사와 연결해 투자 유치를 지원할 예정이다.",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "translation": "还将举办区域路演，以增加首都圈以外的创业企业与投资者之间的接触点。",
+      "elapsedMs": 3659
+    },
+    {
+      "id": "IR15",
+      "source": "5극 3특 권역별 ‘웰컴투팁스’를 개최하고 대구·대전·광주·울산에서는 4대 과학기술원과 연계한 ‘창업도시 IR’을 진행한다.",
+      "context": "1차 모두의 창업 일반·기술트랙 2라운드에 진출한 창업인재 가운데 보육기관의 추천을 받은 200여명을 사업 아이디어에 적합한 팁스 운영사와 연결해 투자 유치를 지원할 예정이다. 수도권 밖 창업기업과 투자자 간 접점을 늘리기 위한 지역 IR도 열린다.",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "translation": "将举办5极3特区域的“欢迎来到TIPS”活动，并在大邱、大田、光州、蔚山举办与4所科学技术院合作的“创业城市IR”。",
+      "elapsedMs": 5102
+    },
+    {
+      "id": "IR16",
+      "source": "올해부터 웰컴투팁스 개최 지역을 기존 5대 권역에서 전북·강원·제주까지 확대하고, 권역별 우수기업에는 ‘프리팁스’ 지원사업 우선 선정 기회를 준다.",
+      "context": "수도권 밖 창업기업과 투자자 간 접점을 늘리기 위한 지역 IR도 열린다. 5극 3특 권역별 ‘웰컴투팁스’를 개최하고 대구·대전·광주·울산에서는 4대 과학기술원과 연계한 ‘창업도시 IR’을 진행한다.",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "translation": "从今年开始，‘Welcome to TIPS’举办地区将从原有的5大区域扩大到全罗北道、江原道和济州岛，并为各区域的优秀企业提供‘Pre-TIPS’支持项目的优先遴选机会。",
+      "elapsedMs": 5943
+    },
+    {
+      "id": "IR17",
+      "source": "분야별 투자 연계도 추진한다.",
+      "context": "5극 3특 권역별 ‘웰컴투팁스’를 개최하고 대구·대전·광주·울산에서는 4대 과학기술원과 연계한 ‘창업도시 IR’을 진행한다. 올해부터 웰컴투팁스 개최 지역을 기존 5대 권역에서 전북·강원·제주까지 확대하고, 권역별 우수기업에는 ‘프리팁스’ 지원사업 우선 선정 기회를 준다.",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "translation": "还将推进按领域进行的投资对接。",
+      "elapsedMs": 2909
+    },
+    {
+      "id": "IR18",
+      "source": "범부처 창업경진대회 ‘올해의 K-스타트업’에서 선발된 기업을 대상으로 9개 부처 12개 특화리그별 IR을 열고, 방산·미디어·해양·R&D 등 각 부처의 창업기업 지원사업과 연계한 IR도 마련한다.",
+      "context": "올해부터 웰컴투팁스 개최 지역을 기존 5대 권역에서 전북·강원·제주까지 확대하고, 권역별 우수기업에는 ‘프리팁스’ 지원사업 우선 선정 기회를 준다. 분야별 투자 연계도 추진한다.",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "translation": "针对在部委创业大赛“年度K-Startup”中入选的企业，将举办9个部委12个特色联赛的IR，并准备了与国防、媒体、海洋、研发等各部委创业企业支持项目挂钩的IR。",
+      "elapsedMs": 5963
+    },
+    {
+      "id": "IR19",
+      "source": "이번 프로젝트는 투자자와 창업기업을 단순히 연결하는 데 그치지 않고 실제 투자 이후 팁스 지원으로 이어지는 구조로 설계됐다.",
+      "context": "분야별 투자 연계도 추진한다. 범부처 창업경진대회 ‘올해의 K-스타트업’에서 선발된 기업을 대상으로 9개 부처 12개 특화리그별 IR을 열고, 방산·미디어·해양·R&D 등 각 부처의 창업기업 지원사업과 연계한 IR도 마련한다.",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "translation": "这个项目不仅是简单地连接投资者和初创企业，而是设计成在实际投资后能衔接到 TIPS 支持的结构。",
+      "elapsedMs": 4204
+    },
+    {
+      "id": "IR20",
+      "source": "IR을 통해 투자를 유치한 기업에는 팁스 선정평가 때 가점 등 우대 혜택을 제공한다.",
+      "context": "범부처 창업경진대회 ‘올해의 K-스타트업’에서 선발된 기업을 대상으로 9개 부처 12개 특화리그별 IR을 열고, 방산·미디어·해양·R&D 등 각 부처의 창업기업 지원사업과 연계한 IR도 마련한다. 이번 프로젝트는 투자자와 창업기업을 단순히 연결하는 데 그치지 않고 실제 투자 이후 팁스 지원으로 이어지는 구조로 설계됐다.",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "translation": "通过IR融资的企业，在TIPS遴选评估时将提供加分等优惠待遇。",
+      "elapsedMs": 3696
+    },
+    {
+      "id": "IR21",
+      "source": "민간 투자사가 먼저 유망 기술기업을 발굴·투자하면 정부가 연구개발(R&D)과 사업화 자금을 연계 지원하는 팁스 체계로 후속 성장을 연결한다는 구상이다.",
+      "context": "이번 프로젝트는 투자자와 창업기업을 단순히 연결하는 데 그치지 않고 실제 투자 이후 팁스 지원으로 이어지는 구조로 설계됐다. IR을 통해 투자를 유치한 기업에는 팁스 선정평가 때 가점 등 우대 혜택을 제공한다.",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "translation": "该构想是，如果民间投资机构首先发掘并投资有前景的技术企业，政府将通过 TIPS 体系，将研发（R&D）和商业化资金与后续增长挂钩进行关联支持。",
+      "elapsedMs": 5380
+    },
+    {
+      "id": "IR22",
+      "source": "목승환 중기부 창업벤처혁신실장은 “도전의 IR 프로젝트를 통해 혁신 창업가의 첫 도전을 적극 지원하겠다”며 “잠재력 있는 창업자들이 수많은 딥테크 기업을 발굴하고 육성한 팁스 운영사들과 함께 성장의 발판을 만들어가기를 기대한다”고 말했다.",
+      "context": "IR을 통해 투자를 유치한 기업에는 팁스 선정평가 때 가점 등 우대 혜택을 제공한다. 민간 투자사가 먼저 유망 기술기업을 발굴·투자하면 정부가 연구개발(R&D)과 사업화 자금을 연계 지원하는 팁스 체계로 후속 성장을 연결한다는 구상이다.",
+      "targetLanguage": "zh",
+      "state": "COMPLETED",
+      "translation": "中基部创业风险投资创新室室长木承焕说：“我们将通过挑战IR项目积极支持创新创业者的首次尝试”，“我们期待有潜力的创业者能与发掘和培养众多深科技企业的TIPS运营机构一起，为成长奠定基础。”",
+      "elapsedMs": 6811
+    }
+  ],
+  "completedCases": 65,
+  "endedAtUtc": "2026-09-30T23:10:47.628384Z"
+}

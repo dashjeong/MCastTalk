@@ -1,0 +1,671 @@
+{
+  "metadata": {
+    "description": "Gemini 3.8 Flash High independent reference translations for 22 evaluation sentences across 3 languages (en, ja, zh). Designated as model comparison reference, not ground-truth warranty.",
+    "actualModelLabel": "Gemini 3.8 Flash High",
+    "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+    "totalItems": 66,
+    "createdAt": "2026-10-01T07:56:01.224281+09:00"
+  },
+  "references": [
+    {
+      "id": "IR01",
+      "targetLanguage": "en",
+      "source": "정부가 생애 첫 투자 유치에 도전하는 기술창업자와 투자사를 연결하기 위해 연내 300회 이상의 투자설명회(IR)를 연다.",
+      "translation": "The government will hold more than 300 investor relations (IR) sessions within this year to connect tech startup founders seeking their first-ever investment with investment firms.",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR01",
+      "targetLanguage": "ja",
+      "source": "정부가 생애 첫 투자 유치에 도전하는 기술창업자와 투자사를 연결하기 위해 연내 300회 이상의 투자설명회(IR)를 연다.",
+      "translation": "政府は、生涯初の資金調達に挑む技術創業者と投資会社をつなぐため、年内に300回以上の投資説明会（IR）を開催する。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR01",
+      "targetLanguage": "zh",
+      "source": "정부가 생애 첫 투자 유치에 도전하는 기술창업자와 투자사를 연결하기 위해 연내 300회 이상의 투자설명회(IR)를 연다.",
+      "translation": "韩国政府将在年内举办300余场投资者关系活动（IR），以对接首次挑战招商引资的科技初创企业与投资机构。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR02",
+      "targetLanguage": "en",
+      "source": "중소벤처기업부는 1일 서울 강남구 팁스타운 S1에서 ‘도전의 IR 퍼스트 밋업’을 개최하고 ‘도전의 IR 프로젝트’를 본격적으로 시작한다고 밝혔다.",
+      "translation": "The Ministry of SMEs and Startups announced on the 1st that it held the 'Challenge IR First Meetup' at TIPS Town S1 in Gangnam-gu, Seoul, and is officially launching the 'Challenge IR Project'.",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR02",
+      "targetLanguage": "ja",
+      "source": "중소벤처기업부는 1일 서울 강남구 팁스타운 S1에서 ‘도전의 IR 퍼스트 밋업’을 개최하고 ‘도전의 IR 프로젝트’를 본격적으로 시작한다고 밝혔다.",
+      "translation": "中小ベンチャー企業部は1日、ソウル市江南区のTIPSタウンS1で「挑戦のIRファーストミートアップ」を開催し、「挑戦のIRプロジェクト」を本格的に始動すると発表した。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR02",
+      "targetLanguage": "zh",
+      "source": "중소벤처기업부는 1일 서울 강남구 팁스타운 S1에서 ‘도전의 IR 퍼스트 밋업’을 개최하고 ‘도전의 IR 프로젝트’를 본격적으로 시작한다고 밝혔다.",
+      "translation": "中小风险企业部于1日在首尔江南区TIPS Town S1举办“挑战IR首次交流会（First Meetup）”，宣布正式启动“挑战IR项目”。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR03",
+      "targetLanguage": "en",
+      "source": "도전의 IR 프로젝트는 기술과 아이디어를 갖고 있지만 투자 네트워크나 관련 정보가 부족해 투자자를 만날 기회가 적었던 창업자와 투자사를 연결하는 프로그램이다.",
+      "translation": "The Challenge IR Project is a program that connects startup founders—who possess technology and ideas but have had few opportunities to meet investors due to a lack of investment networks or relevant information—with investment firms.",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR03",
+      "targetLanguage": "ja",
+      "source": "도전의 IR 프로젝트는 기술과 아이디어를 갖고 있지만 투자 네트워크나 관련 정보가 부족해 투자자를 만날 기회가 적었던 창업자와 투자사를 연결하는 프로그램이다.",
+      "translation": "「挑戦のIRプロジェクト」は、技術やアイデアを持ちながらも、投資ネットワークや関連情報の不足から投資家に出会う機会が少なかった創業者と投資会社を結ぶプログラムだ。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR03",
+      "targetLanguage": "zh",
+      "source": "도전의 IR 프로젝트는 기술과 아이디어를 갖고 있지만 투자 네트워크나 관련 정보가 부족해 투자자를 만날 기회가 적었던 창업자와 투자사를 연결하는 프로그램이다.",
+      "translation": "“挑战IR项目”旨在将拥有技术和创意、但因缺乏投资渠道或相关信息而少有机会接触投资者的创业者与投资机构对接起来。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR04",
+      "targetLanguage": "en",
+      "source": "생애 첫 투자 유치를 목표로 하는 창업기업 대표나 예비창업자가 대상이며, 구체적인 사업계획을 갖고 있어야 한다.",
+      "translation": "The target participants are prospective entrepreneurs or representatives of startup companies aiming to secure their first-ever investment, and they must have concrete business plans.",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR04",
+      "targetLanguage": "ja",
+      "source": "생애 첫 투자 유치를 목표로 하는 창업기업 대표나 예비창업자가 대상이며, 구체적인 사업계획을 갖고 있어야 한다.",
+      "translation": "生涯初の資金調達を目指すスタートアップの代表者や創業準備中のプレ起業家が対象で、具体的な事業計画を持っている必要がある。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR04",
+      "targetLanguage": "zh",
+      "source": "생애 첫 투자 유치를 목표로 하는 창업기업 대표나 예비창업자가 대상이며, 구체적인 사업계획을 갖고 있어야 한다.",
+      "translation": "该项目面向以实现首次招商引资为目标的初创企业代表或准创业者，且申请者须持有具体的商业计划书。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR05",
+      "targetLanguage": "en",
+      "source": "중기부와 142개 팁스(TIPS) 운영사가 연말까지 300회 이상의 대면 IR 프로그램을 진행한다.",
+      "translation": "The Ministry of SMEs and Startups and 142 TIPS operators will conduct more than 300 in-person IR programs by the end of the year.",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR05",
+      "targetLanguage": "ja",
+      "source": "중기부와 142개 팁스(TIPS) 운영사가 연말까지 300회 이상의 대면 IR 프로그램을 진행한다.",
+      "translation": "中小ベンチャー企業部と142社のTIPS運営事業者が、年末までに300回以上の対面IRプログラムを実施する。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR05",
+      "targetLanguage": "zh",
+      "source": "중기부와 142개 팁스(TIPS) 운영사가 연말까지 300회 이상의 대면 IR 프로그램을 진행한다.",
+      "translation": "中小风险企业部将携手142家TIPS运营机构，在年底前开展300场以上的线下IR活动。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR06",
+      "targetLanguage": "en",
+      "source": "이날 열린 첫 행사에서는 투자 유치를 희망하는 창업기업의 IR 피칭과 팁스 운영사별 일대일 투자 상담 등이 진행됐다.",
+      "translation": "At the first event held on this day, IR pitching by startups seeking investment and one-on-one investment consultations by individual TIPS operators were conducted.",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR06",
+      "targetLanguage": "ja",
+      "source": "이날 열린 첫 행사에서는 투자 유치를 희망하는 창업기업의 IR 피칭과 팁스 운영사별 일대일 투자 상담 등이 진행됐다.",
+      "translation": "この日開催された第1回イベントでは、資金調達を希望するスタートアップのIRピッチングや、TIPS運営事業者別の1対1の投資相談などが行われた。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR06",
+      "targetLanguage": "zh",
+      "source": "이날 열린 첫 행사에서는 투자 유치를 희망하는 창업기업의 IR 피칭과 팁스 운영사별 일대일 투자 상담 등이 진행됐다.",
+      "translation": "在当天举办的首场活动中，进行了有意融资的初创企业的IR路演以及各TIPS运营机构的一对一投资咨询等环节。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR07",
+      "targetLanguage": "en",
+      "source": "팁스 운영사의 투자를 받은 뒤 성장한 선배기업의 경험을 공유하고 팁스 기업의 제품을 선보이는 자리도 마련됐다.",
+      "translation": "The event also featured sessions where senior enterprises that grew after receiving investments from TIPS operators shared their experiences, and products of TIPS companies were showcased.",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR07",
+      "targetLanguage": "ja",
+      "source": "팁스 운영사의 투자를 받은 뒤 성장한 선배기업의 경험을 공유하고 팁스 기업의 제품을 선보이는 자리도 마련됐다.",
+      "translation": "TIPS運営事業者から出資を受けて成長した先輩企業の経験を共有し、TIPS採択企業の製品を披露する場も設けられた。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR07",
+      "targetLanguage": "zh",
+      "source": "팁스 운영사의 투자를 받은 뒤 성장한 선배기업의 경험을 공유하고 팁스 기업의 제품을 선보이는 자리도 마련됐다.",
+      "translation": "活动还设置了分享环节，由获得TIPS运营机构投资后实现成长的先辈企业传授经验，并展示了TIPS企业的产品。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR08",
+      "targetLanguage": "en",
+      "source": "앞으로 IR은 운영사별 프로그램과 ‘모두의 창업’ 연계 프로그램, 지역·분야별 프로그램 등으로 나눠 진행된다.",
+      "translation": "Going forward, IR sessions will be divided into operator-specific programs, programs linked to 'Everyone's Startup,' and regional and sector-specific programs.",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR08",
+      "targetLanguage": "ja",
+      "source": "앞으로 IR은 운영사별 프로그램과 ‘모두의 창업’ 연계 프로그램, 지역·분야별 프로그램 등으로 나눠 진행된다.",
+      "translation": "今後のIRは、運営事業者別プログラム、「みんなの創業」連携プログラム、地域・分野別プログラムなどに分かれて進行する。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR08",
+      "targetLanguage": "zh",
+      "source": "앞으로 IR은 운영사별 프로그램과 ‘모두의 창업’ 연계 프로그램, 지역·분야별 프로그램 등으로 나눠 진행된다.",
+      "translation": "今后的IR活动将划分为运营机构自主项目、“全民创业”联动项目、区域及行业专属项目等分别推进。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR09",
+      "targetLanguage": "en",
+      "source": "우선 팁스 운영사가 일대일 미팅이나 공개 피칭 등을 자체적으로 기획하는 IR을 10월과 11월 두 차례에 걸쳐 진행한다.",
+      "translation": "First, IR events independently planned by TIPS operators, such as one-on-one meetings and open pitches, will be held twice, in October and November.",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR09",
+      "targetLanguage": "ja",
+      "source": "우선 팁스 운영사가 일대일 미팅이나 공개 피칭 등을 자체적으로 기획하는 IR을 10월과 11월 두 차례에 걸쳐 진행한다.",
+      "translation": "まず、TIPS運営事業者が1対1の面談や公開ピッチなどを独自に企画するIRを、10月と11月の2回にわたり実施する。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR09",
+      "targetLanguage": "zh",
+      "source": "우선 팁스 운영사가 일대일 미팅이나 공개 피칭 등을 자체적으로 기획하는 IR을 10월과 11월 두 차례에 걸쳐 진행한다.",
+      "translation": "首先，由TIPS运营机构自主策划的一对一面谈或公开路演等IR活动，将在10月和11月分两轮举行。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR10",
+      "targetLanguage": "en",
+      "source": "10월 프로그램에는 지난달 15일부터 투자 제안을 받고 있으며 현재 500명 이상의 창업자가 신청을 마쳤다.",
+      "translation": "Investment proposals for the October program have been accepted since the 15th of last month, and more than 500 entrepreneurs have already submitted applications.",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR10",
+      "targetLanguage": "ja",
+      "source": "10월 프로그램에는 지난달 15일부터 투자 제안을 받고 있으며 현재 500명 이상의 창업자가 신청을 마쳤다.",
+      "translation": "10月のプログラムには先月15日から投資提案を受け付けており、現在500人以上の創業者が申し込みを完了している。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR10",
+      "targetLanguage": "zh",
+      "source": "10월 프로그램에는 지난달 15일부터 투자 제안을 받고 있으며 현재 500명 이상의 창업자가 신청을 마쳤다.",
+      "translation": "10月活动已自上月15日起受理投资意向书，目前已有500多名创业者完成了申请。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR11",
+      "targetLanguage": "en",
+      "source": "각 운영사는 이 가운데 대면 IR에 참여할 창업자를 선정한다.",
+      "translation": "Each operator will select the entrepreneurs from among the applicants who will participate in the in-person IR sessions.",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR11",
+      "targetLanguage": "ja",
+      "source": "각 운영사는 이 가운데 대면 IR에 참여할 창업자를 선정한다.",
+      "translation": "各運営事業者は、この中から対面IRに参加する創業者を選考する。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR11",
+      "targetLanguage": "zh",
+      "source": "각 운영사는 이 가운데 대면 IR에 참여할 창업자를 선정한다.",
+      "translation": "各运营机构将从中选拔参与线下IR活动的创业者。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR12",
+      "targetLanguage": "en",
+      "source": "‘모두의 창업’과도 연계한다.",
+      "translation": "The initiative will also link with 'Everyone's Startup'.",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR12",
+      "targetLanguage": "ja",
+      "source": "‘모두의 창업’과도 연계한다.",
+      "translation": "「みんなの創業」とも連携する。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR12",
+      "targetLanguage": "zh",
+      "source": "‘모두의 창업’과도 연계한다.",
+      "translation": "项目还将与“全民创业”开展联动。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR13",
+      "targetLanguage": "en",
+      "source": "1차 모두의 창업 일반·기술트랙 2라운드에 진출한 창업인재 가운데 보육기관의 추천을 받은 200여명을 사업 아이디어에 적합한 팁스 운영사와 연결해 투자 유치를 지원할 예정이다.",
+      "translation": "Among the entrepreneurial talents who advanced to Round 2 of the 1st Everyone's Startup general and tech tracks, around 200 candidates recommended by incubators will be matched with TIPS operators suited to their business ideas to support investment acquisition.",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR13",
+      "targetLanguage": "ja",
+      "source": "1차 모두의 창업 일반·기술트랙 2라운드에 진출한 창업인재 가운데 보육기관의 추천을 받은 200여명을 사업 아이디어에 적합한 팁스 운영사와 연결해 투자 유치를 지원할 예정이다.",
+      "translation": "第1次「みんなの創業」一般・技術トラックの第2ラウンドに進出した創業人材のうち、インキュベーション機関の推薦を受けた約200人を事業アイデアに適したTIPS運営事業者と結びつけ、資金調達を支援する予定だ。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR13",
+      "targetLanguage": "zh",
+      "source": "1차 모두의 창업 일반·기술트랙 2라운드에 진출한 창업인재 가운데 보육기관의 추천을 받은 200여명을 사업 아이디어에 적합한 팁스 운영사와 연결해 투자 유치를 지원할 예정이다.",
+      "translation": "入围第一届“全民创业”常规及技术赛道第二轮并获得孵化机构推荐的约200名创业英才，将被对接至与其商业创意相匹配的TIPS运营机构，为其招商引资提供支持。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR14",
+      "targetLanguage": "en",
+      "source": "수도권 밖 창업기업과 투자자 간 접점을 늘리기 위한 지역 IR도 열린다.",
+      "translation": "Regional IR sessions will also be held to expand touchpoints between startups outside the capital region and investors.",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR14",
+      "targetLanguage": "ja",
+      "source": "수도권 밖 창업기업과 투자자 간 접점을 늘리기 위한 지역 IR도 열린다.",
+      "translation": "首都圏外のスタートアップと投資家との接点を増やすための地域IRも開催される。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR14",
+      "targetLanguage": "zh",
+      "source": "수도권 밖 창업기업과 투자자 간 접점을 늘리기 위한 지역 IR도 열린다.",
+      "translation": "为拓宽首都圈以外初创企业与投资者之间的沟通接触面，还将举办区域IR活动。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR15",
+      "targetLanguage": "en",
+      "source": "5극 3특 권역별 ‘웰컴투팁스’를 개최하고 대구·대전·광주·울산에서는 4대 과학기술원과 연계한 ‘창업도시 IR’을 진행한다.",
+      "translation": "A regional 'Welcome to TIPS' will be held across the '5 Megaregions and 3 Special Zones', while a 'Startup City IR' linked with the four major Science and Technology Institutes will take place in Daegu, Daejeon, Gwangju, and Ulsan.",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR15",
+      "targetLanguage": "ja",
+      "source": "5극 3특 권역별 ‘웰컴투팁스’를 개최하고 대구·대전·광주·울산에서는 4대 과학기술원과 연계한 ‘창업도시 IR’을 진행한다.",
+      "translation": "「5極3特」の広域圏別に「ウェルカム・トゥ・TIPS」を開催し、大邱・大田・光州・蔚山では4大科学技術院と連携した「創業都市IR」を実施する。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR15",
+      "targetLanguage": "zh",
+      "source": "5극 3특 권역별 ‘웰컴투팁스’를 개최하고 대구·대전·광주·울산에서는 4대 과학기술원과 연계한 ‘창업도시 IR’을 진행한다.",
+      "translation": "活动将在“五大极点三大特区”各区域举办“Welcome to TIPS”，并在大邱、大田、光州、蔚山联动四大科学技术院推进“创业城市IR”。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR16",
+      "targetLanguage": "en",
+      "source": "올해부터 웰컴투팁스 개최 지역을 기존 5대 권역에서 전북·강원·제주까지 확대하고, 권역별 우수기업에는 ‘프리팁스’ 지원사업 우선 선정 기회를 준다.",
+      "translation": "Starting this year, the host regions for Welcome to TIPS will expand from the existing five major regions to include Jeonbuk, Gangwon, and Jeju, and outstanding regional companies will be given priority selection opportunities for the 'Pre-TIPS' support program.",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR16",
+      "targetLanguage": "ja",
+      "source": "올해부터 웰컴투팁스 개최 지역을 기존 5대 권역에서 전북·강원·제주까지 확대하고, 권역별 우수기업에는 ‘프리팁스’ 지원사업 우선 선정 기회를 준다.",
+      "translation": "今年から「ウェルカム・トゥ・TIPS」の開催地域を従来の5大広域圏から全北・江原・済州まで拡大し、地域別の優秀企業には「プレTIPS」支援事業の優先選定機会を提供する。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR16",
+      "targetLanguage": "zh",
+      "source": "올해부터 웰컴투팁스 개최 지역을 기존 5대 권역에서 전북·강원·제주까지 확대하고, 권역별 우수기업에는 ‘프리팁스’ 지원사업 우선 선정 기회를 준다.",
+      "translation": "从今年起，“Welcome to TIPS”的举办范围将由原有的五大区域扩大至全北、江原和济州，并向各区域优秀企业提供“Pre-TIPS”扶持项目的优先入选机会。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR17",
+      "targetLanguage": "en",
+      "source": "분야별 투자 연계도 추진한다.",
+      "translation": "Sector-specific investment linkages will also be promoted.",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR17",
+      "targetLanguage": "ja",
+      "source": "분야별 투자 연계도 추진한다.",
+      "translation": "分野別の投資連携も推進する。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR17",
+      "targetLanguage": "zh",
+      "source": "분야별 투자 연계도 추진한다.",
+      "translation": "还将推进各领域的投资联动。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR18",
+      "targetLanguage": "en",
+      "source": "범부처 창업경진대회 ‘올해의 K-스타트업’에서 선발된 기업을 대상으로 9개 부처 12개 특화리그별 IR을 열고, 방산·미디어·해양·R&D 등 각 부처의 창업기업 지원사업과 연계한 IR도 마련한다.",
+      "translation": "For companies selected in the pan-governmental startup competition 'K-Startup of the Year,' IR sessions will be held across 12 specialized leagues spanning 9 ministries, alongside IR programs linked with each ministry's startup support initiatives in defense, media, maritime, and R&D.",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR18",
+      "targetLanguage": "ja",
+      "source": "범부처 창업경진대회 ‘올해의 K-스타트업’에서 선발된 기업을 대상으로 9개 부처 12개 특화리그별 IR을 열고, 방산·미디어·해양·R&D 등 각 부처의 창업기업 지원사업과 연계한 IR도 마련한다.",
+      "translation": "汎政府型スタートアップコンテスト「今年のK-スタートアップ」で選抜された企業を対象に、9省庁・12の特化リーグ別IRを開催し、防衛・メディア・海洋・R&Dなど各省庁のスタートアップ支援事業と連携したIRも用意する。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR18",
+      "targetLanguage": "zh",
+      "source": "범부처 창업경진대회 ‘올해의 K-스타트업’에서 선발된 기업을 대상으로 9개 부처 12개 특화리그별 IR을 열고, 방산·미디어·해양·R&D 등 각 부처의 창업기업 지원사업과 연계한 IR도 마련한다.",
+      "translation": "针对泛政府创业大赛“年度K-Startup”入选企业，将按9个部门的12个特色赛道举办IR专场，并开设与国防、媒体、海洋、R&D等各部门初创企业扶持项目相联动的IR活动。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR19",
+      "targetLanguage": "en",
+      "source": "이번 프로젝트는 투자자와 창업기업을 단순히 연결하는 데 그치지 않고 실제 투자 이후 팁스 지원으로 이어지는 구조로 설계됐다.",
+      "translation": "This project has been designed with a structure that does not stop at merely connecting investors with startups, but rather leads to TIPS support following actual investment.",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR19",
+      "targetLanguage": "ja",
+      "source": "이번 프로젝트는 투자자와 창업기업을 단순히 연결하는 데 그치지 않고 실제 투자 이후 팁스 지원으로 이어지는 구조로 설계됐다.",
+      "translation": "今回のプロジェクトは、投資家とスタートアップを単に結びつけるにとどまらず、実際の投資後にTIPS支援へとつながる構造として設計された。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR19",
+      "targetLanguage": "zh",
+      "source": "이번 프로젝트는 투자자와 창업기업을 단순히 연결하는 데 그치지 않고 실제 투자 이후 팁스 지원으로 이어지는 구조로 설계됐다.",
+      "translation": "该项目的设计初衷不仅在于单纯撮合投资者与初创企业，更在于构建后续能将实际投资与TIPS扶持政策相衔接的体系结构。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR20",
+      "targetLanguage": "en",
+      "source": "IR을 통해 투자를 유치한 기업에는 팁스 선정평가 때 가점 등 우대 혜택을 제공한다.",
+      "translation": "Companies that secure investment through the IR will be granted preferential benefits, such as bonus points during the TIPS selection evaluation.",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR20",
+      "targetLanguage": "ja",
+      "source": "IR을 통해 투자를 유치한 기업에는 팁스 선정평가 때 가점 등 우대 혜택을 제공한다.",
+      "translation": "IRを通じて投資を誘致した企業には、TIPS選定評価時に加点などの優遇措置が提供される。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR20",
+      "targetLanguage": "zh",
+      "source": "IR을 통해 투자를 유치한 기업에는 팁스 선정평가 때 가점 등 우대 혜택을 제공한다.",
+      "translation": "通过IR活动成功招商引资的企业，将在TIPS选拔评审时享有加分等优惠待遇。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR21",
+      "targetLanguage": "en",
+      "source": "민간 투자사가 먼저 유망 기술기업을 발굴·투자하면 정부가 연구개발(R&D)과 사업화 자금을 연계 지원하는 팁스 체계로 후속 성장을 연결한다는 구상이다.",
+      "translation": "The initiative envisions channeling subsequent growth through the TIPS framework, where private investment firms first identify and invest in promising tech companies, and the government subsequently provides matched funding for research and development (R&D) and commercialization.",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR21",
+      "targetLanguage": "ja",
+      "source": "민간 투자사가 먼저 유망 기술기업을 발굴·투자하면 정부가 연구개발(R&D)과 사업화 자금을 연계 지원하는 팁스 체계로 후속 성장을 연결한다는 구상이다.",
+      "translation": "民間投資会社がまず有望な技術企業を発掘・投資し、政府が研究開発（R&D）と事業化資金を連携支援するTIPSの枠組みによって、その後の成長へとつなげる構想だ。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR21",
+      "targetLanguage": "zh",
+      "source": "민간 투자사가 먼저 유망 기술기업을 발굴·투자하면 정부가 연구개발(R&D)과 사업화 자금을 연계 지원하는 팁스 체계로 후속 성장을 연결한다는 구상이다.",
+      "translation": "该构想旨在依托TIPS机制衔接后续成长，即由民间投资机构率先发掘并投资潜力科技企业，政府随后联动提供研发（R&D）与商业化配套资金扶持。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR22",
+      "targetLanguage": "en",
+      "source": "목승환 중기부 창업벤처혁신실장은 “도전의 IR 프로젝트를 통해 혁신 창업가의 첫 도전을 적극 지원하겠다”며 “잠재력 있는 창업자들이 수많은 딥테크 기업을 발굴하고 육성한 팁스 운영사들과 함께 성장의 발판을 만들어가기를 기대한다”고 말했다.",
+      "translation": "Mok Seung-hwan, head of the Startup and Venture Innovation Office at the Ministry of SMEs and Startups, said, \"Through the Challenge IR Project, we will actively support the initial endeavors of innovative entrepreneurs,\" adding, \"We expect promising founders to build a stepping stone for growth together with TIPS operators who have discovered and nurtured numerous deep-tech companies.\"",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR22",
+      "targetLanguage": "ja",
+      "source": "목승환 중기부 창업벤처혁신실장은 “도전의 IR 프로젝트를 통해 혁신 창업가의 첫 도전을 적극 지원하겠다”며 “잠재력 있는 창업자들이 수많은 딥테크 기업을 발굴하고 육성한 팁스 운영사들과 함께 성장의 발판을 만들어가기를 기대한다”고 말했다.",
+      "translation": "中小ベンチャー企業部のモク・スンファン創業ベンチャー革新室長は「挑戦のIRプロジェクトを通じて、革新的な創業者の最初の挑戦を積極的に支援する」とした上で、「潜在力のある創業者たちが、数多くのディープテック企業を発掘・育成してきたTIPS運営事業者とともに成長の足がかりを築いていくことを期待する」と述べた。",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    },
+    {
+      "id": "IR22",
+      "targetLanguage": "zh",
+      "source": "목승환 중기부 창업벤처혁신실장은 “도전의 IR 프로젝트를 통해 혁신 창업가의 첫 도전을 적극 지원하겠다”며 “잠재력 있는 창업자들이 수많은 딥테크 기업을 발굴하고 육성한 팁스 운영사들과 함께 성장의 발판을 만들어가기를 기대한다”고 말했다.",
+      "translation": "中小风险企业部创业风险创新室长睦承焕表示：“我们将通过‘挑战IR项目’积极支持创新创业者的首次出征，期待潜力创业者能与发掘并培育了众多深科技企业的TIPS运营机构携手，共同奠定成长的基石。”",
+      "sourceSha256": "8d0b83d09252a7fbc06fab769e6c41c6ef2f7c65aa76259b1cf59f0572e0300d",
+      "actualModelLabel": "Gemini 3.8 Flash High",
+      "createdAt": "2026-10-01T07:56:01.224281+09:00",
+      "role": "model_comparison_reference"
+    }
+  ]
+}

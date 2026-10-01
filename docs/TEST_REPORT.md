@@ -1,3 +1,99 @@
+# 0.2.46-beta-c translation, session memory and voice preparation
+
+Date: 2026-10-01 KST. Code 56. This scoped beta keeps E2B/E4B selection,
+the existing ASR sentence-boundary policy and PCM pacing. It adds bounded local
+E4B broadcast context, adjusts translation instructions, and makes Android
+offline voice preparation failures actionable. See [translation review](E4B_TRANSLATION_REVIEW.md)
+and [voice preparation](TTS_VOICE_PREPARATION_FIX.md).
+
+## Build and exact artifact
+
+- Final full local gate: **SUCCESS, 4m 18s**, 610 tasks (46 executed,
+  564 up-to-date). Command: `./gradlew --no-daemon --max-workers=1
+  testDebugUnitTest :core:stream:test :core:translation:test :app:lintAlpha
+  :app:assembleAlpha :app:assembleAlphaAndroidTest
+  :app:verifyPackagedThirdPartyLicenseAssets`.
+- 205 Debug/core XML reports: **1,448 tests, 0 failures/errors/skips**.
+  Up-to-date/cached test results are included, not presented as all freshly run.
+  Alpha lint: **0 errors, 84 warnings, 6 hints**. Packaged third-party assets PASS.
+- `MCastTalk-0.2.46-beta-c.apk`: **96,473,152 bytes**, SHA-256
+  `b73844cad224e733ccea843cbcb1d47b9d56494b82c118e4d16a6c7d9a4bd330`.
+- Test APK: **4,940,009 bytes**, SHA-256
+  `df5ddc62317dd431c2706b9070a61f0bc4cb0091ca215538d3d0eaf51ed79b64`.
+- Both passed existing-release-signer v3 verification and 16 KiB alignment;
+  installed hashes on API 35 ARM64 matched these exact files. Signer certificate
+  SHA-256: `afd9d964c7161f0052d16b0065e6dec14861900cfb876b18df639734ccf29ff3`.
+  Temporary emulator storage-threshold changes were restored; model caches and
+  app data were preserved. No dependency or model weight was added or changed.
+
+## Exact-artifact native validation
+
+- `SystemVoiceSetupDeviceTest`: **3/3 PASS, 43.338s**. Real settings flow with
+  Chinese/Google preference and no installed engine, actionable error/recheck,
+  independent idle input/broadcast, installer routing, cancelled installer return
+  and 2x-font component controls. External installer activity was intercepted in
+  the cancellation test; vendor download success is not claimed.
+- `E4BQualityCorrectionDeviceTest`: **2/2 PASS, 63.081s**, with new assertions
+  for sign compliance, cargo loading and traffic-signal compliance. All 23 native
+  outputs exactly match beta-b: its AI-assisted assessment of **20 PASS, 2 WARN,
+  1 FAIL (C2 causative)** is retained, not promoted to 23 semantic passes.
+- `RepeatedSemanticSpeechDeviceTest`: **4/4 PASS, 127.761s**. Real native STT and
+  E2B/E4B/delayed-PCM E4B translation repeat the public recorded FLEURS utterance;
+  the safety-sign meaning assertion passes. Audio provenance: [fixture notice](../app/src/androidTest/assets/fixtures/FLEURS_NOTICE.txt),
+  Google FLEURS `ko_kr/test`, row 7, sample 1959, revision
+  `70bb2e84b976b7e960aa89f1c648e09c59f894dd`, CC-BY-4.0, 7.02 seconds.
+  These short repeated inputs are not 30 two-minute recordings or a long soak.
+- Article comparison: **1/1 PASS, 273.076s**, 22 Korean sentences into English,
+  Japanese and Simplified Chinese, **66/66 completed**. AI-assisted source/Gemini
+  review: baseline **46 PASS, 13 MINOR, 6 MAJOR, 1 NO_OUTPUT**; final **52 PASS,
+  11 MINOR, 3 MAJOR**. Completion is not semantic approval. All source/reference/
+  actual outputs and remaining issues are in the [comparison report](validation/0.2.46-beta-c/COMPARISON_REPORT.md).
+- Separate authored syntax/session-memory controls: **1/1 PASS, 100.617s**,
+  **30/30 completed**. Codex/Antigravity review found the targeted core meanings
+  preserved; 27 nonempty memory hints stayed within the combined context budget.
+  There is no memory-OFF control, so this does not prove a causal quality gain.
+- Operator E4B broadcast integration: **1/1 PASS, 119.147s**. Actual controls,
+  playback capture, native STT, E4B, TTS and non-silent English WebSocket PCM.
+  Stopping the broadcast preserved independent input control.
+- First PCM after semantic final: **5,205ms**; synthesis observer completion:
+  **8,397ms**. Beta-b measured 5,117ms in one emulator run: **no first-audio
+  speedup is demonstrated**. These single samples are not physical S23 p95.
+- Total final instrumentation: **12/12 PASS** across six runs. After all runs,
+  both installed APK hashes still matched the exact artifacts above. The crash
+  buffer restricted to the final test window contained no entries.
+- Product-source CI for `bf25bf1d36b6a249fd19984b237234b6ee9ec4df`:
+  [completed successfully](https://github.com/dashjeong/MCastTalk/actions/runs/36810221777).
+  Final report-only changes do not change the tested APK. Public-snapshot unit
+  tests **9 PASS**; listener scheduling, resampling, localization and speaker-mic
+  script checks **PASS**. Public-file contamination scan **PASS (758 tracked
+  files)** and branding/version/license-parity check **PASS** on the final staged
+  snapshot; `git diff --cached --check` is clean.
+
+## Evidence and limitations
+
+Baseline and rejected candidates are retained under the local
+`build/evidence/tts-language-preparation/` directory; final runs are in
+`fidelity-restored/`. Earlier test-harness failures are not counted as passing:
+the installer monitor initially intercepted the test activity itself; a fake
+speech interface and coroutine-context assertions in new tests needed correction.
+The repaired tests were rerun. Candidate 1's wrong-target translations and
+candidate 3's comparator leakage caused those APKs to be rejected. The faster
+`e0468192...` candidate also failed actual repeated speech **2/4 in 95.082s**,
+even though 66 article requests completed. It was not published. Restoring the
+established instruction configuration recovered all 23 prior outputs with the
+same non-thinking setting, and the strengthened regression tests passed.
+
+These are emulator and automated checks, with AI-assisted translation review.
+Physical Galaxy/One UI, actual Google/Samsung language-pack download, human voice
+naturalness, Android/iPhone acoustic playback and 2/8-hour stability were not
+tested. The physical S23 prepared-model first-PCM p95 <=2,000ms release gate
+remains **unproven**. This beta is not a claim of commercial qualification,
+zero latency, zero mistranslation, model-weight training, or complete validation
+of every historical feature request. Minimum SDK remains 30; API 29 installation
+is not claimed.
+
+---
+
 # 0.2.46-beta-b E4B quality correction validation
 
 Date: 2026-10-01 KST. Code 55. The listening fix below is retained. E4B-only

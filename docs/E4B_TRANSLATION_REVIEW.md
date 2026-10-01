@@ -80,8 +80,8 @@ following signs became ordering signs, loading cargo became washing it, and
 obeying traffic signals became signaling traffic. Actual repeated-speech tests
 failed 2/4, so that APK was also rejected. The established beta-b base prompt and
 style instructions were restored while keeping the same non-thinking setting;
-the next native 23-case run passed the strengthened semantic assertions. All 16
-benchmark outputs matched beta-b exactly. This isolates the regression to the
+the next native 23-case run passed the strengthened semantic assertions. All 23
+benchmark/control outputs matched beta-b exactly. This isolates the regression to the
 changed instruction configuration for those cases; it is not proof of a general
 speed/quality relationship or of all possible model behavior.
 
@@ -115,3 +115,26 @@ not the Galaxy S23 prepared-model first-PCM p95 gate of 2,000 ms. Physical-devic
 latency, vendor voice downloads, long-duration stability and voice naturalness
 remain separate validation requirements. See [test evidence](TEST_REPORT.md)
 for the actual tested artifacts and results.
+
+## Final measured result
+
+The final signed APK is `b73844cad224e733ccea843cbcb1d47b9d56494b82c118e4d16a6c7d9a4bd330`.
+All 12 native checks passed. The 66 article requests completed; AI-assisted
+adequacy grades changed from 46 PASS / 13 MINOR / 6 MAJOR / 1 NO_OUTPUT to
+52 PASS / 11 MINOR / 3 MAJOR. This sample still contains event-tense and
+modifier-scope errors. Existing speech controls remain 20 PASS / 2 WARN / 1 FAIL
+under the prior semantic assessment, even though the regression assertions pass.
+
+| Target | Baseline translation median | Final translation median | Final sample p95 |
+| --- | ---: | ---: | ---: |
+| English | 4,607 ms (21 completed) | 3,827.5 ms (22) | 5,806 ms |
+| Japanese | 4,953.5 ms (22) | 4,107.5 ms (22) | 6,052 ms |
+| Simplified Chinese | 4,446.5 ms (22) | 3,747.5 ms (22) | 5,371 ms |
+
+These are text-translation durations, not acoustic end-to-end latency. The separate
+operator run measured first PCM at **5,205 ms**, versus beta-b's **5,117 ms**;
+it does not demonstrate faster first audio. Thirty authored memory-enabled controls
+preserved the checked core meanings, but there was no memory-OFF comparison.
+See the [full comparison and limitations](validation/0.2.46-beta-c/COMPARISON_REPORT.md),
+including all source, Gemini and actual E4B records. No zero-delay or commercial
+quality qualification is claimed.

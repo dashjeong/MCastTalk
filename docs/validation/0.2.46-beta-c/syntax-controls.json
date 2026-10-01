@@ -1,0 +1,56 @@
+{
+  "sourceProvenance": "Authored regression controls, not user article or Gemini references; evaluated after source rules were designed",
+  "sourceSha256": "58b8e77f3fc995a3c92f003777b5fa249e92da0c2b3c341ee3b26dad2ed05284",
+  "cases": [
+    {
+      "id": "F01",
+      "source": "행사에는 20명 이상이 아니라 10명 이하만 참석할 수 있습니다.",
+      "context": ""
+    },
+    {
+      "id": "F02",
+      "source": "온도가 -3.5 이상이면 작동하고, 2 미만이면 중단합니다.",
+      "context": ""
+    },
+    {
+      "id": "F03",
+      "source": "회사는 어제 설명회를 열고, 다음 달에 제품을 출시할 예정이라고 발표했습니다.",
+      "context": ""
+    },
+    {
+      "id": "F04",
+      "source": "회사는 내일 설명회를 열고 신제품을 공개한다고 오늘 발표했습니다.",
+      "context": ""
+    },
+    {
+      "id": "F05",
+      "source": "도서관은 책을 구하기 어려운 학생들과 출판사를 연결합니다.",
+      "context": ""
+    },
+    {
+      "id": "F06",
+      "source": "학생의 연구 주제에 적합한 지도 교수를 찾고 있습니다.",
+      "context": ""
+    },
+    {
+      "id": "F07",
+      "source": "이 프로그램의 이름은 별빛입니다.",
+      "context": ""
+    },
+    {
+      "id": "F08",
+      "source": "별빛은 무료이지만, 신청이 곧 승인을 뜻하지는 않습니다.",
+      "context": "이 프로그램의 이름은 별빛입니다."
+    },
+    {
+      "id": "F09",
+      "source": "일본 중소기업청이 발표한 자료를 한국 중소벤처기업부가 검토했습니다.",
+      "context": ""
+    },
+    {
+      "id": "F10",
+      "source": "투자를 유치하려는 기업이 직접 다른 기업에 투자하는 것은 아닙니다.",
+      "context": ""
+    }
+  ]
+}

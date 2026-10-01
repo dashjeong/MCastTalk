@@ -1,0 +1,58 @@
+[
+  {
+    "id": "H1",
+    "kind": "legitimate-order",
+    "source": "표지판 12개를 주문하고, 설치 전까지 창고에 보관하세요.",
+    "context": "",
+    "translation": "Order 12 signs and store them in the warehouse until installation.",
+    "elapsedMs": 2312
+  },
+  {
+    "id": "H2",
+    "kind": "causative-negation",
+    "source": "안내원이 저에게 문을 닫으라고 시켰지만, 저는 아직 닫지 않았습니다.",
+    "context": "",
+    "translation": "The attendant told me to close the door, but I haven't closed it yet.",
+    "elapsedMs": 2533
+  },
+  {
+    "id": "H3",
+    "kind": "genuine-washing-loading",
+    "source": "운전자는 화물을 씻고 말린 뒤 차량에 실었습니다.",
+    "context": "",
+    "translation": "The driver loaded the cargo onto the vehicle after washing and drying it.",
+    "elapsedMs": 2483
+  },
+  {
+    "id": "H4",
+    "kind": "quantity-duration-distinction",
+    "source": "다섯 명이 5분 동안 기다렸고, 두 명은 먼저 떠났습니다.",
+    "context": "",
+    "translation": "Five people waited for five minutes, and two people left first.",
+    "elapsedMs": 2269
+  },
+  {
+    "id": "H5",
+    "kind": "time-contrast-negation",
+    "source": "서울역에서 3시 15분이 아니라 3시 50분에 만나요.",
+    "context": "",
+    "translation": "Let's meet at 3:50 at Seoul Station, not 3:15.",
+    "elapsedMs": 2663
+  },
+  {
+    "id": "H6",
+    "kind": "quoted-erroneous-expression",
+    "source": "그는 ‘약속을 시키다’라고 잘못 적었고, 나는 그 표현을 그대로 인용했습니다.",
+    "context": "",
+    "translation": "He wrote 'to order a promise' incorrectly, and I quoted that expression exactly as it was.",
+    "elapsedMs": 2626
+  },
+  {
+    "id": "H7",
+    "kind": "authored-phonetic-corruption",
+    "source": "교통 신호를 시키고 횡단보도로 건너세요.",
+    "context": "",
+    "translation": "Wait for the traffic signal and cross at the crosswalk.",
+    "elapsedMs": 2153
+  }
+]
