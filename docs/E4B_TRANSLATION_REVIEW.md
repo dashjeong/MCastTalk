@@ -35,8 +35,10 @@ or a general population error rate.
   country's agency. Source references: [MSS English](https://www.mss.go.kr/site/eng/ex/bbs/View.do?bcIdx=1061813&cbIdx=244),
   [Korea.net Japanese](https://japanese.korea.net/NewsFocus/Business/view?articleId=289065),
   [Korea.net Chinese](https://chinese.korea.net/NewsFocus/Business/view?articleId=289066).
-- Target-language instructions are repeated after the quoted input. A narrow
-  guard rejects a full Latin-script sentence returned for a Japanese/Chinese
+- The established beta-b base and register instructions are retained. A compact
+  replacement reduced article timing but regressed real recognized speech and
+  was rejected. Optional source/memory references precede the established task.
+  A narrow guard rejects a full Latin-script sentence returned for a Japanese/Chinese
   Korean-sentence request. This guard is not general language identification.
   Existing provider failure isolation/fallback remains responsible for recovery.
 - E4B explicitly requests a direct answer without a thinking channel using the
@@ -50,6 +52,12 @@ or a general population error rate.
   preserve modifier scope and ownership in matching clauses. They do not force
   all reported events into the past or replace the current source. Their actual
   effectiveness and remaining failures must be read in the comparison results.
+- The regional policy term `5극 3특` has a source-triggered terminology hint,
+  after the Chinese candidate omitted it. It preserves both regional counts
+  without inventing region names. Official usage:
+  [English](https://www.korea.net/NewsFocus/policies/view?articleId=283690),
+  [Japanese](https://japanese.korea.net/NewsFocus/Policies/view?articleId=283691),
+  [Chinese](https://chinese.korea.net/NewsFocus/Policies/view?articleId=283692).
 
 ## Candidate history
 
@@ -65,6 +73,17 @@ still copied a comparator into IR01-Chinese and was not handed off. It corrected
 the English beneficiary error introduced by candidate 2 in IR21, while IR02's
 event tense and IR03's modifier scope remained weak. Failed and rejected runs
 are retained; successful execution is not a translation-quality verdict.
+
+The next faster candidate removed comparator leakage and completed the 66 article
+and 30 authored requests, but it regressed previously approved safety speech:
+following signs became ordering signs, loading cargo became washing it, and
+obeying traffic signals became signaling traffic. Actual repeated-speech tests
+failed 2/4, so that APK was also rejected. The established beta-b base prompt and
+style instructions were restored while keeping the same non-thinking setting;
+the next native 23-case run passed the strengthened semantic assertions. All 16
+benchmark outputs matched beta-b exactly. This isolates the regression to the
+changed instruction configuration for those cases; it is not proof of a general
+speed/quality relationship or of all possible model behavior.
 
 ## Per-broadcast memory
 
