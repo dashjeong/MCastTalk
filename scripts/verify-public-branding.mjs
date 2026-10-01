@@ -11,8 +11,8 @@ assert.equal(subtitle, '실시간 다국어 통역방송(feat. DMZ peace walk)')
 const build = read('app/build.gradle.kts');
 const version = build.match(/versionName\s*=\s*"([^"]+)"/)?.[1];
 assert.equal(version, '0.2.46');
-assert.match(build, /versionCode\s*=\s*55\b/);
-assert.match(build, /versionNameSuffix\s*=\s*"-beta-b"/);
+assert.match(build, /versionCode\s*=\s*56\b/);
+assert.match(build, /versionNameSuffix\s*=\s*"-beta-c"/);
 assert.match(read('app/src/main/AndroidManifest.xml'), /android:label="@string\/app_name"/);
 const screen = read('app/src/main/java/app/guidecast/transmitter/MainActivity.kt');
 assert.match(screen, /stringResource\(R\.string\.app_name\)/);

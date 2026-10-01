@@ -125,7 +125,9 @@ class TranslationBroadcastPipeline(
         targets: List<TranslationTarget>,
         sourceLanguageTag: String? = null,
         streamSession: StreamSession? = null,
+        sessionMemory: BroadcastSessionBilingualMemory? = null,
     ): RunningTranslationPipeline {
+        val activeSessionMemory = sessionMemory ?: BroadcastSessionBilingualMemory()
         require(
             targets.isNotEmpty() && targets.size <= MAX_SIMULTANEOUS_TRANSLATED_CHANNELS,
         ) { "Choose one to $MAX_SIMULTANEOUS_TRANSLATED_CHANNELS target languages" }
@@ -272,8 +274,10 @@ class TranslationBroadcastPipeline(
                             // Take one snapshot: edits affect the next utterance, never a subtitle
                             // that has already committed its exact TTS input.
                             val terms = glossaryTerms(utterance.text, utterance.sourceLanguageTag, target.languageTag)
+                            val sessionMemoryContext = activeSessionMemory.buildContext(utterance.sourceLanguageTag, target.languageTag)
                             val translationContext = TranslationGlossaryContext(GlossaryTerms.hints(terms)) +
-                                (utterance.translationStyle?.let(::TranslationStyleContext) ?: kotlin.coroutines.EmptyCoroutineContext)
+                                (utterance.translationStyle?.let(::TranslationStyleContext) ?: kotlin.coroutines.EmptyCoroutineContext) +
+                                sessionMemoryContext
                             val rawTranslation = withContext(translationContext) {
                               withTimeout(targetTimeoutMillis) {
                                 if (translator is ContextualTextTranslationEngine) {
@@ -299,6 +303,14 @@ class TranslationBroadcastPipeline(
                                 // healthy translator/TTS. Keep its complete translation and warn.
                                 onGlossaryWarning("${target.languageTag}: ${error.message} 해당 문장은 교정 전 번역으로 계속합니다.")
                                 rawTranslation
+                            }
+                            if (utterance.isFinal && !utterance.isRetracted && activeStreamSession.isActive()) {
+                                activeSessionMemory.record(
+                                    sourceLanguageTag = utterance.sourceLanguageTag,
+                                    targetLanguageTag = target.languageTag,
+                                    sourceText = utterance.text,
+                                    translatedText = translated,
+                                )
                             }
                             val translationElapsedMillis =
                                 translationMark.elapsedNow().inWholeMilliseconds
@@ -589,6 +601,7 @@ class TranslationBroadcastPipeline(
         val queues = sourceDispatchQueues.values + translationQueues.values + speechQueues.values
         isolationJob.invokeOnCompletion {
             acceptingSource.set(false)
+            activeSessionMemory.clear()
             queues.forEach { it.cancel() }
         }
         return RunningTranslationPipeline(
@@ -600,6 +613,7 @@ class TranslationBroadcastPipeline(
             workers = sourceDispatchWorkers + translationWorkers + speechWorkers,
             queues = queues,
             stopAcceptingSource = { acceptingSource.set(false) },
+            sessionMemory = activeSessionMemory,
         )
     }
 
@@ -997,6 +1011,7 @@ class RunningTranslationPipeline internal constructor(
     private val workers: List<Job>,
     private val queues: Collection<Channel<*>>,
     private val stopAcceptingSource: () -> Unit,
+    val sessionMemory: BroadcastSessionBilingualMemory? = null,
 ) : Closeable {
     private val closed = AtomicBoolean(false)
 
@@ -1005,6 +1020,7 @@ class RunningTranslationPipeline internal constructor(
         // Explicit stop discards pending work; normal source completion still drains it.
         // Mark intentional shutdown before cancel invokes onUndeliveredElement callbacks.
         stopAcceptingSource()
+        sessionMemory?.clear()
         if (ownsStreamSession) streamSession.close()
         sourceJob.cancel()
         queues.forEach { it.cancel() }

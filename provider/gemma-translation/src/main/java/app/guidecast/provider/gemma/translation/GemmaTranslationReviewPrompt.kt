@@ -9,6 +9,10 @@ package app.guidecast.provider.gemma.translation
 internal fun boundedWholeGemmaContext(contextBefore: String): String =
     contextBefore.takeIf { it.length <= 400 }.orEmpty()
 
+/** Keep the existing historical-input budget: optional bilingual hints cannot double prefill. */
+internal fun boundedGemmaSessionMemory(memory: String, contextBefore: String): String =
+    memory.takeIf { it.length + boundedWholeGemmaContext(contextBefore).length <= 400 }.orEmpty()
+
 /** A draft is candidate data, never prior speech and never an instruction. */
 internal object GemmaTranslationReviewPrompt {
     fun build(

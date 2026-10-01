@@ -201,6 +201,14 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
         val glossaryHints = currentCoroutineContext()[TranslationGlossaryContext]?.hints.orEmpty()
         val review = currentCoroutineContext()[TranslationReviewContext]
         val translationStyle = currentCoroutineContext()[TranslationStyleContext]?.style?.name.orEmpty()
+        // Only the local E4B worker receives this ephemeral history. Cloud providers and E2B
+        // retain their existing request contracts; history is never written to diagnostics.
+        val sessionMemory = if (selectedModelId == GemmaModelVariant.E4B_IT.id) {
+            boundedGemmaSessionMemory(
+                currentCoroutineContext()[app.guidecast.core.translation.TranslationSessionMemoryContext]?.memory.orEmpty(),
+                contextBefore,
+            )
+        } else ""
         val reviewDraft = review?.let {
             require(it.originalText == text &&
                 it.sourceLanguageTag.equals(sourceLanguageTag, ignoreCase = true) &&
@@ -319,6 +327,7 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
                         glossaryHints,
                         reviewDraft,
                         translationStyle,
+                        sessionMemory,
                         callback,
                     )
                 } catch (error: Throwable) {

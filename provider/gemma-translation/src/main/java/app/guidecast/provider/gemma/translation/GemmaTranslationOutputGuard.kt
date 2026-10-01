@@ -70,3 +70,14 @@ private fun withinEditDistance(left: String, right: String, maximum: Int): Boole
 
 private val KOREAN_SENTENCE_END = Regex("[다요][.!?。！？…\\s]*$")
 private val WORD_BOUNDARY = Regex("\\s+")
+
+/** A full Latin-script sentence is observably wrong for a Japanese/Chinese sentence request.
+ * Short labels, acronyms and proper names are deliberately outside this narrow guard. */
+internal fun requireGemmaTargetScript(source: String, translated: String, targetLanguageTag: String) {
+    val target = targetLanguageTag.substringBefore('-').lowercase(Locale.ROOT)
+    if (target !in setOf("ja", "zh")) return
+    if (source.count(::isHangul) < 12 || source.trim().split(WORD_BOUNDARY).size < 4) return
+    if (translated.any { isTargetScript(it, target) }) return
+    val latinWords = Regex("[A-Za-z]{2,}").findAll(translated).count()
+    check(latinWords < 8) { "GEMMA_TARGET_SCRIPT_MISMATCH" }
+}

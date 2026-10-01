@@ -164,6 +164,28 @@ class RetiringLanguageEngineRegistryTest {
         }
     }
 
+    @Test
+    fun retireLanguagesDrainsActiveUtteranceAndSubsequentGetOrCreateReturnsNewInstance() {
+        val registry = registry()
+        val english = registry.getOrCreate("en")
+        val activeSynthesis = english.acquire()
+
+        registry.retireLanguages(setOf("en"))
+
+        // Active synthesis is still running, dispose not called yet
+        assertEquals(0, english.disposeCalls.get())
+        assertThrows(IllegalStateException::class.java) { english.acquire() }
+
+        // New access gets a brand new engine instance
+        val replacementEnglish = registry.getOrCreate("en")
+        assertNotSame(english, replacementEnglish)
+
+        // Once in-flight finishes, old engine disposes cleanly
+        activeSynthesis.close()
+        assertEquals(1, english.disposeCalls.get())
+        assertEquals(0, replacementEnglish.disposeCalls.get())
+    }
+
     private fun registry(): RetiringLanguageEngineRegistry<FakeEngine> =
         RetiringLanguageEngineRegistry(
             create = { _, onDisposed -> FakeEngine(onDisposed) },

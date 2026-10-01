@@ -148,6 +148,7 @@ class AndroidOfflineSpeechSynthesisEngineTest {
         val synthesizeImpl: (text: CharSequence, file: File, utteranceId: String, listener: UtteranceProgressListener?) -> Int =
             { _, _, _, _ -> TextToSpeech.SUCCESS },
         val voiceQueryDelayMillis: Long = 0L,
+        val languageAvailability: (Locale) -> Int = { TextToSpeech.LANG_AVAILABLE },
     ) : AndroidTtsClient {
         @Volatile var isShutdown = false
         @Volatile var stopCount = 0
@@ -162,6 +163,8 @@ class AndroidOfflineSpeechSynthesisEngineTest {
             }
             return availableVoices
         }
+
+        override fun isLanguageAvailable(locale: Locale): Int = languageAvailability(locale)
 
         override fun setVoice(voice: android.speech.tts.Voice): Int {
             selectedVoice = voice
@@ -1034,5 +1037,223 @@ class AndroidOfflineSpeechSynthesisEngineTest {
 
         assertEquals("External caller cancelled during first candidate", thrown.message)
         assertFalse("Second candidate must never be attempted on external cancellation", candidate2Attempted.get())
+    }
+
+    @Test
+    fun `KEY_FEATURE_NOT_INSTALLED throws specific missing voice data diagnostic`(): Unit = runBlocking {
+        val uninstalledVoice = TestVoice(
+            voiceName = "ko-uninstalled",
+            voiceLocale = Locale.KOREA,
+            voiceFeatures = setOf(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED),
+        )
+        val client = FakeTtsClient("com.google.android.tts", setOf(uninstalledVoice))
+        val engine = AndroidOfflineSpeechSynthesisEngine(
+            context = FakeContext(tempFolder.newFolder()),
+            languageTag = "ko",
+            outputSampleRateHz = 16_000,
+            onDisposed = {},
+            candidateEngineResolver = { _, _ -> listOf("com.google.android.tts") },
+            ttsClientFactory = { _, _, onInit -> onInit(TextToSpeech.SUCCESS); client },
+        )
+        try {
+            val error = assertThrows(IllegalStateException::class.java) {
+                runBlocking { engine.prepare() }
+            }
+            assertTrue(
+                "Must guide user to voice pack install screen: ${error.message}",
+                error.message?.contains("Google 음성 데이터가 설치되지 않았습니다") == true &&
+                    error.message?.contains("음성팩 설치·설정 화면에서 내려받으세요") == true,
+            )
+        } finally {
+            engine.close()
+        }
+    }
+
+    @Test
+    fun `LANG_MISSING_DATA from isLanguageAvailable throws missing data diagnostic`(): Unit = runBlocking {
+        val client = FakeTtsClient(
+            defaultEngine = "com.google.android.tts",
+            availableVoices = emptySet(),
+            languageAvailability = { TextToSpeech.LANG_MISSING_DATA },
+        )
+        val engine = AndroidOfflineSpeechSynthesisEngine(
+            context = FakeContext(tempFolder.newFolder()),
+            languageTag = "ko",
+            outputSampleRateHz = 16_000,
+            onDisposed = {},
+            candidateEngineResolver = { _, _ -> listOf("com.google.android.tts") },
+            ttsClientFactory = { _, _, onInit -> onInit(TextToSpeech.SUCCESS); client },
+        )
+        try {
+            val error = assertThrows(IllegalStateException::class.java) {
+                runBlocking { engine.prepare() }
+            }
+            assertTrue(
+                "Must guide user to voice pack install screen on LANG_MISSING_DATA: ${error.message}",
+                error.message?.contains("Google 음성 데이터가 설치되지 않았습니다") == true,
+            )
+        } finally {
+            engine.close()
+        }
+    }
+
+    @Test
+    fun `LANG_NOT_SUPPORTED from isLanguageAvailable throws unsupported language diagnostic`(): Unit = runBlocking {
+        val client = FakeTtsClient(
+            defaultEngine = "com.google.android.tts",
+            availableVoices = emptySet(),
+            languageAvailability = { TextToSpeech.LANG_NOT_SUPPORTED },
+        )
+        val engine = AndroidOfflineSpeechSynthesisEngine(
+            context = FakeContext(tempFolder.newFolder()),
+            languageTag = "ko",
+            outputSampleRateHz = 16_000,
+            onDisposed = {},
+            candidateEngineResolver = { _, _ -> listOf("com.google.android.tts") },
+            ttsClientFactory = { _, _, onInit -> onInit(TextToSpeech.SUCCESS); client },
+        )
+        try {
+            val error = assertThrows(IllegalStateException::class.java) {
+                runBlocking { engine.prepare() }
+            }
+            assertTrue(
+                "Must report language not supported: ${error.message}",
+                error.message?.contains("Google 엔진에서 한국어 언어를 지원하지 않습니다") == true,
+            )
+        } finally {
+            engine.close()
+        }
+    }
+
+    @Test
+    fun `isLanguageAvailable failure preserves exception and guides retry instead of claiming unsupported`(): Unit = runBlocking {
+        val client = FakeTtsClient(
+            defaultEngine = "com.google.android.tts",
+            availableVoices = emptySet(),
+            languageAvailability = { throw android.os.RemoteException("IPC binder died") },
+        )
+        val engine = AndroidOfflineSpeechSynthesisEngine(
+            context = FakeContext(tempFolder.newFolder()),
+            languageTag = "ko",
+            outputSampleRateHz = 16_000,
+            onDisposed = {},
+            candidateEngineResolver = { _, _ -> listOf("com.google.android.tts") },
+            ttsClientFactory = { _, _, onInit -> onInit(TextToSpeech.SUCCESS); client },
+        )
+        try {
+            val error = assertThrows(IllegalStateException::class.java) {
+                runBlocking { engine.prepare() }
+            }
+            assertTrue(
+                "Must report query failure with retry advice: ${error.message}",
+                error.message?.contains("Google 음성 가용성 확인에 실패했습니다. 잠시 후 다시 시도해 주세요") == true,
+            )
+            assertNotNull(error.cause)
+            assertTrue(error.cause is android.os.RemoteException)
+        } finally {
+            engine.close()
+        }
+    }
+
+    @Test
+    fun `Chinese Simplified does not falsely flag uninstalled Traditional voice as missing Simplified data`(): Unit = runBlocking {
+        val traditionalUninstalledVoice = TestVoice(
+            voiceName = "zh-tw-voice",
+            voiceLocale = Locale.TAIWAN,
+            voiceFeatures = setOf(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED),
+        )
+        val client = FakeTtsClient(
+            defaultEngine = "com.google.android.tts",
+            availableVoices = setOf(traditionalUninstalledVoice),
+            languageAvailability = { TextToSpeech.LANG_NOT_SUPPORTED },
+        )
+        val engine = AndroidOfflineSpeechSynthesisEngine(
+            context = FakeContext(tempFolder.newFolder()),
+            languageTag = "zh",
+            outputSampleRateHz = 16_000,
+            onDisposed = {},
+            candidateEngineResolver = { _, _ -> listOf("com.google.android.tts") },
+            ttsClientFactory = { _, _, onInit -> onInit(TextToSpeech.SUCCESS); client },
+        )
+        try {
+            val error = assertThrows(IllegalStateException::class.java) {
+                runBlocking { engine.prepare() }
+            }
+            assertTrue(
+                "Must not claim Simplified voice data is uninstalled when only Traditional is uninstalled: ${error.message}",
+                error.message?.contains("Google 엔진에서") == true &&
+                    error.message?.contains("중국어") == true &&
+                    error.message?.contains("지원하지 않습니다") == true,
+            )
+        } finally {
+            engine.close()
+        }
+    }
+
+    @Test
+    fun `Chinese Simplified detects installed Traditional-only and guides installing Simplified`(): Unit = runBlocking {
+        val traditionalInstalledVoice = TestVoice(
+            voiceName = "zh-tw-voice",
+            voiceLocale = Locale.TAIWAN,
+            voiceFeatures = emptySet(),
+        )
+        val client = FakeTtsClient(
+            defaultEngine = "com.google.android.tts",
+            availableVoices = setOf(traditionalInstalledVoice),
+            languageAvailability = { TextToSpeech.LANG_AVAILABLE },
+        )
+        val engine = AndroidOfflineSpeechSynthesisEngine(
+            context = FakeContext(tempFolder.newFolder()),
+            languageTag = "zh",
+            outputSampleRateHz = 16_000,
+            onDisposed = {},
+            candidateEngineResolver = { _, _ -> listOf("com.google.android.tts") },
+            ttsClientFactory = { _, _, onInit -> onInit(TextToSpeech.SUCCESS); client },
+        )
+        try {
+            val error = assertThrows(IllegalStateException::class.java) {
+                runBlocking { engine.prepare() }
+            }
+            assertTrue(
+                "Must guide user that requested Simplified voice was not found: ${error.message}",
+                error.message?.contains("Google 엔진에서 요청한 간체 오프라인 음성을 찾지 못했습니다") == true,
+            )
+        } finally {
+            engine.close()
+        }
+    }
+
+    @Test
+    fun `getVoices failure preserves exception and provides retry guidance instead of treating as missing voice data`(): Unit = runBlocking {
+        val client = FakeTtsClient(
+            defaultEngine = "com.google.android.tts",
+            synthesizeImpl = { _, _, _, _ -> TextToSpeech.SUCCESS },
+        )
+        val hangingClientWrapper = object : AndroidTtsClient by client {
+            override fun getVoices(): Set<android.speech.tts.Voice> {
+                throw android.os.DeadObjectException("TTS service process died during getVoices")
+            }
+        }
+        val engine = AndroidOfflineSpeechSynthesisEngine(
+            context = FakeContext(tempFolder.newFolder()),
+            languageTag = "ko",
+            outputSampleRateHz = 16_000,
+            onDisposed = {},
+            candidateEngineResolver = { _, _ -> listOf("com.google.android.tts") },
+            ttsClientFactory = { _, _, onInit -> onInit(TextToSpeech.SUCCESS); hangingClientWrapper },
+        )
+        try {
+            val error = assertThrows(IllegalStateException::class.java) {
+                runBlocking { engine.prepare() }
+            }
+            assertTrue(
+                "Must report voice query failure and preserve cause: ${error.message}",
+                error.message?.contains("Google 음성 목록 조회에 실패했습니다. 잠시 후 다시 시도해 주세요") == true,
+            )
+            assertNotNull(error.cause)
+            assertTrue(error.cause is android.os.DeadObjectException)
+        } finally {
+            engine.close()
+        }
     }
 }

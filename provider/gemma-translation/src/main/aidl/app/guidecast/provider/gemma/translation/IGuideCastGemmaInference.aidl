@@ -13,6 +13,7 @@ interface IGuideCastGemmaInference {
         String glossaryHints,
         String reviewDraft,
         String translationStyle,
+        String sessionMemory,
         IGuideCastGemmaInferenceCallback callback
     );
     oneway void cancel(long requestId);

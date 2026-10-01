@@ -860,6 +860,33 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    /** Recheck only voice resources after returning from a vendor's installer. */
+    fun recheckInstalledSpeechVoices() {
+        val selected = selectedLanguageTags.value.toSet()
+        if (selected.isEmpty()) return
+        if (modelBusy.value || guideCastApplication.dataTransferUnavailable() || gemmaBusy.value) {
+            modelMessage.value = "진행 중인 준비·방송·시험 작업이 끝난 뒤 ‘설치한 음성 다시 확인’을 누르세요."
+            return
+        }
+        runModelOperation(label = "설치한 음성 확인 중") {
+            val owner = guideCastApplication.beginSettingsPreparation(selectedSourceLanguageTag.value, selected)
+            try {
+                guideCastApplication.withTranslationBackendUse(retainSettingsStandbyFor = owner) {
+                    if (!guideCastApplication.isPreparationCurrent(owner)) return@withTranslationBackendUse
+                    guideCastApplication.speechSynthesisProvider.refreshInstalledVoices(selected)
+                    val report = prepareSpeechSynthesisWithProcessAdmission(selected, owner)
+                    modelMessage.value = if (report.unavailableLanguageReasons.isEmpty()) {
+                        "선택한 언어의 음성 준비 상태를 확인했습니다. 시험 메뉴에서 실제 음성을 들어보세요."
+                    } else {
+                        "일부 언어의 음성을 준비하지 못했습니다. 해당 언어의 설치·설정과 문제 상세를 확인하세요."
+                    }
+                }
+            } finally {
+                guideCastApplication.endPreparation(owner)
+            }
+        }
+    }
+
     fun removeTranslationModel(languageTag: String) {
         translationBroadcastEnabled.value = false
         runModelOperation(successMessage = "선택한 번역 모델을 삭제했습니다.") {
