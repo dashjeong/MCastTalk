@@ -4,6 +4,13 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class E4bSourceEvidenceTest {
+    @Test fun regionalPolicyTermPreservesBothCountsOnlyWhenPresent() {
+        assertTrue(E4bSourceEvidence.extract("Korean", "English", "5극3특의 발전을 지원합니다.").contains("five regional hubs and three special self-governing provinces"))
+        assertTrue(E4bSourceEvidence.extract("Korean", "Simplified Chinese", "5극 3특 권역에 적용합니다.").contains("五极三特"))
+        assertTrue(E4bSourceEvidence.extract("Korean", "Japanese", "5극 3특 권역입니다.").contains("5極3特"))
+        assertEquals("", E4bSourceEvidence.extract("Korean", "English", "5개 권역과 4개 지역입니다."))
+        assertEquals("", E4bSourceEvidence.extract("Korean", "English", "15극3특이라는 문자열입니다."))
+    }
     @Test fun negativeAndDecimalThresholdsKeepTheirSigns() {
         val hints = E4bSourceEvidence.extract("Korean", "English", "-3.5 이상이며 −2 이하입니다.")
         assertTrue(hints.contains("-3.5 이상:"))
@@ -30,6 +37,6 @@ class E4bSourceEvidenceTest {
         val evidence = E4bSourceEvidence.extract("Korean", "English", source)
         assertEquals(4, Regex("boundary").findAll(evidence).count())
         val prompt = GemmaTranslationPrompt.build("Korean", "English", "", source, variant = GemmaModelVariant.E4B_IT)
-        assertTrue(prompt.contains("CURRENT: \"$source\"\n"))
+        assertTrue(prompt.endsWith("CURRENT: \"$source\""))
     }
 }

@@ -27,6 +27,16 @@ internal object E4bSourceEvidence {
             }
             if (name.isNotEmpty()) hints += "중소벤처기업부 / 중기부 = $name (Korean ministry)."
         }
+        if (Regex("(?<![0-9])5\\s*극\\s*3\\s*특").containsMatchIn(source)) {
+            // A public policy term, not an article-specific translation or invented region list.
+            val term = when {
+                targetLanguage.startsWith("English") -> "five regional hubs and three special self-governing provinces"
+                targetLanguage.startsWith("Japanese") -> "5極3特"
+                targetLanguage.startsWith("Simplified Chinese") -> "五极三特"
+                else -> ""
+            }
+            if (term.isNotEmpty()) hints += "5극 3특 = $term; retain both regional counts."
+        }
         if (Regex("투자\\s*유치").containsMatchIn(source)) {
             hints += "투자 유치 means securing funding from investors, not making an investment."
         }

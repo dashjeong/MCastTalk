@@ -20,7 +20,7 @@ class GemmaTranslationPromptTest {
         assertTrue(e4b.contains("CURRENT is authoritative"))
         assertTrue(e4b.contains("never repeat earlier sentences or carry forward their errors"))
         assertTrue(e4b.contains("SESSION_MEMORY: \"[{\\\"source\\\""))
-        assertTrue(e4b.contains("CURRENT: \"$source\"\n"))
+        assertTrue(e4b.endsWith("CURRENT: \"$source\""))
         assertEquals(GemmaTranslationPrompt.build("Korean", "English", "", source),
             GemmaTranslationPrompt.build("Korean", "English", "", source, sessionMemory = memory))
     }

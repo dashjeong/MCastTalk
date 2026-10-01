@@ -124,6 +124,21 @@ class E4BQualityCorrectionDeviceTest {
 
             Log.i(TAG, "=== E4B $suiteName EVALUATION COMPLETE: ${resultsArray.length()} cases written to ${incrementalOutputFile.name} ===")
             assertEquals("Functional test must complete all ${cases.size} cases", cases.size, resultsArray.length())
+            // Keep the previously approved speech corrections as actual model-output gates.
+            // Collect every raw result first, so a semantic failure does not hide other samples.
+            for (index in 0 until resultsArray.length()) {
+                val row = resultsArray.getJSONObject(index)
+                val output = row.getString("translation").lowercase()
+                when (row.getString("id")) {
+                    "A1" -> assertTrue("Safety signs must be followed, not ordered: $output",
+                        output.contains("sign") && Regex("\\b(follow|obey|observe|heed|comply)\\w*\\b").containsMatchIn(output) &&
+                            !Regex("\\border\\w*\\b").containsMatchIn(output))
+                    "B4" -> assertTrue("Authored loading-slip fixture must keep loading meaning: $output",
+                        Regex("\\bload\\w*\\b").containsMatchIn(output) && !Regex("\\bwash\\w*\\b").containsMatchIn(output))
+                    "H7" -> assertTrue("Traffic signal compliance must not become signaling traffic: $output",
+                        output.contains("signal") && Regex("\\b(follow|obey|observe|heed|wait)\\w*\\b").containsMatchIn(output))
+                }
+            }
         } finally {
             try {
                 if (manager.selectedVariant != initialVariant) {
