@@ -983,3 +983,40 @@ claimed during the lock. Unsupported latency estimates in its design draft were
 not accepted as measured evidence. Earlier MTP-only phone measurements must not
 be attributed to this newer APK. Actor/negation quality, the earlier long-reference
 timeout, web-first-PCM p95, human listening and long-duration gates remain unproven.
+
+### 2026-10-03 — development-fixture domain metadata correction
+
+Independent source review found that non-official `fidelity-dev` and `recovery-dev`
+used meeting training pairs but imported them with diplomacy names/descriptions.
+The benchmark now derives both the file prefix and profile metadata from the same
+official/non-official classification, checks the actual imported profile name before
+inference, and records `trainingCorpus`. This changes instrumentation, not real-time
+translation policy. Earlier generated outputs and judgments remain historical
+observations under the mislabeled domain condition, not proof of a correctly
+configured meeting-domain comparison. It cannot explain the OFF/hints=0 timeout.
+
+Android-test APK assembly passed in 1m 59s; Alpha distributable/license gates passed
+in 38s. The rebuilt signed product is 96,636,992 bytes, SHA-256
+`21d45d29ef470f896b1e312a051160dbcca0dcfb2c5215e64aaeaa59b6a3b977`;
+the matching test APK is 5,046,505 bytes, SHA-256
+`aecd9ede78c9fdb8f68a31e0aa0adf0982023ad86001a943f0eaf71c17bb6305`.
+Both pass the same v3 certificate and 16 KiB alignment checks and were exact-file
+update-installed on the emulator. Its temporary global storage reserve again
+restored `null` in `finally`; no data or physical security controls were changed.
+
+The six meeting profile imports passed the new metadata assertion, and the saved
+result identifies `trainingCorpus=meeting`. Actual inference still **failed** on
+RC01 English OFF at 10,076ms: one attempted, zero completed, 47 unattempted planned
+outputs, cleanup completed. JUnit: 1 failure, 30.408s. Result JSON SHA-256:
+`9cd3ea92b3e1a407295efa55baf2d59d44b1f574830aeaaf016d00dd04b0e5c9`.
+Evidence: `emulator-recovery-metadata-dev-inference.log` and
+`emulator-recovery-metadata-dev-e4b_it-1790959911902.json`.
+The exact latest APK pair subsequently passed all **12** bounded repository and
+original-audio/WebSocket/operator regressions in **13.599s**, recorded in
+`emulator-recovery-metadata-basic-twelve.log`. These are not completed native E4B
+meaning comparisons or a live fallback-speech result.
+
+The preceding source commit `7bf885293640291c15805ae255b4b08b327d2697` passed
+GitHub Android CI run `37035015461`. That run excludes this instrumentation
+follow-up and must not be presented as CI coverage of a later commit. Release
+status remains draft; new S23+ quality/latency and web/human/soak gates are unproven.

@@ -55,6 +55,7 @@ class DomainCorpusBenchmarkDeviceTest {
         val requestedVariant = if (arguments.getString("domainModel") == "e2b")
             GemmaModelVariant.STANDARD else GemmaModelVariant.E4B_IT
         val official = suite.startsWith("nkinfo")
+        val trainingPrefix = if (official) "nkinfo" else "meeting"
         val targets = if (!official) listOf("en", "ja", "zh") else listOf("en", "zh")
         val styles = if (!official) listOf(TranslationStyle.FORMAL, TranslationStyle.CONVERSATIONAL)
             else listOf(TranslationStyle.FORMAL)
@@ -70,6 +71,7 @@ class DomainCorpusBenchmarkDeviceTest {
         val profileIds = mutableMapOf<Pair<String, TranslationStyle>, Long>()
         val backendLease = requireNotNull(app.acquireTranslationBackendUseIf({ true }))
         val result = JSONObject().put("model", requestedVariant.id).put("suite", suite)
+            .put("trainingCorpus", trainingPrefix)
             .put("fixtureKind", if (!official) "authored-text-not-microphone" else "official-paired-text-local-research-not-microphone")
             .put("semanticGrade", "REQUIRES_INDEPENDENT_REVIEW")
         val rows = JSONArray()
@@ -82,16 +84,17 @@ class DomainCorpusBenchmarkDeviceTest {
             originals.forEach { repository.deactivate(it.id) }
             for (target in targets) for (style in styles) {
                 val before = repository.profiles().map { it.id }.toSet()
-                val trainingPrefix = if (!official) "meeting" else "nkinfo"
                 val input = File(fixtureDir, "$trainingPrefix-ko-$target-${style.name.lowercase()}.txt")
                 input.inputStream().use {
-                    repository.importTxt(it, if (suite == "meeting") "회의·업무 ($target/${style.name})" else "외교·국제회의 ($target)",
-                        if (suite == "meeting") "회의 보고와 업무 대화의 문맥·용어를 참고합니다." else "공식 주변국 발언의 외교·안보 용어를 참고합니다.",
+                    repository.importTxt(it, if (!official) "회의·업무 ($target/${style.name})" else "외교·국제회의 ($target)",
+                        if (!official) "회의 보고와 업무 대화의 문맥·용어를 참고합니다." else "공식 주변국 발언의 외교·안보 용어를 참고합니다.",
                         "ko", target, style)
                 }
                 val created = repository.profiles().filter { it.id !in before }
                 imported.addAll(created.map { it.id })
                 assertEquals("Fixture import must create exactly one profile", 1, created.size)
+                assertTrue("Domain metadata must match the selected training corpus",
+                    created.single().name.startsWith(if (trainingPrefix == "meeting") "회의·업무" else "외교·국제회의"))
                 profileIds[target to style] = created.single().id
                 repository.deactivate(created.single().id)
             }
