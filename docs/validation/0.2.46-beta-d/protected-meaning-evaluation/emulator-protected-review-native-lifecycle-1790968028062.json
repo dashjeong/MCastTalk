@@ -1,0 +1,40 @@
+{
+  "scope": "REAL_E2B_NATIVE_AND_FAILOVER_CLASS_NOT_TTS_OR_LIVE_BROADCAST",
+  "evaluationMode": "OFFLINE_SEMANTIC_EVALUATION",
+  "requestBudgetMs": 60000,
+  "model": "standard",
+  "plannedRows": 2,
+  "rows": [
+    {
+      "id": "RC05",
+      "source": "회의록에 안건 번호가 ‘제4차 과제’가 아닌 ‘제4차 화제’라고 오기되었으니, 원문 표기 그대로 인용하여 정정 요청을 올리세요.",
+      "context": "회의록 오기 정정 절차 안내",
+      "style": "FORMAL",
+      "state": "REVIEW_REQUIRED",
+      "failureClass": "IllegalStateException",
+      "failureCode": "GEMMA_VERBATIM_QUOTE_REVIEW_REQUIRED",
+      "elapsedMs": 2119,
+      "usingFallback": false
+    },
+    {
+      "id": "NEXT_NORMAL_REQUEST",
+      "source": "오늘 일정은 내일 다시 확인하겠습니다.",
+      "context": "다음 일정 확인",
+      "style": "FORMAL",
+      "state": "COMPLETED",
+      "translation": "I will reconfirm today's schedule tomorrow.",
+      "elapsedMs": 1106,
+      "usingFallback": false
+    }
+  ],
+  "fallbackCalls": 0,
+  "failureCallbacks": 0,
+  "reviewObserved": true,
+  "policyCheck": "VERIFIED_FOR_OBSERVED_REQUEST_PAIR",
+  "cleanupCompleted": true,
+  "attemptedRows": 2,
+  "completedRows": 1,
+  "reviewRequiredRows": 1,
+  "failedRows": 0,
+  "notAttemptedRows": 0
+}

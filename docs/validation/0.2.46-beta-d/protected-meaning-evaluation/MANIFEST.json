@@ -1,0 +1,124 @@
+{
+  "baseCommit": "c189e7f66683d8aafc53cb12c2c7dad6d749d32e",
+  "status": "UNCOMMITTED_REVIEW_CANDIDATE_RELEASE_BLOCKED",
+  "moduleTests": {
+    "gemma": 176,
+    "core": 294,
+    "alpha": 592,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "artifacts": [
+    {
+      "file": "MCastTalk-0.2.46-beta-d-protected-meaning-negated-citation-reviewed.apk",
+      "sha256": "1e6573452fce69660aab71d77ea2960e42a19a7a69fcf3822021b33e44e61853",
+      "bytes": 96653376,
+      "signatureV3": true,
+      "zipalign16KiB": true,
+      "certificateSHA256": "afd9d964c7161f0052d16b0065e6dec14861900cfb876b18df639734ccf29ff3"
+    },
+    {
+      "file": "MCastTalk-0.2.46-beta-d-tests-protected-meaning-negated-citation-reviewed.apk",
+      "sha256": "08e16c46d2eaa398697d897b5fb96ae8c010ec99c6f1abcc05a60d5c9fd33ba5",
+      "bytes": 5116137,
+      "signatureV3": true,
+      "zipalign16KiB": true,
+      "certificateSHA256": "afd9d964c7161f0052d16b0065e6dec14861900cfb876b18df639734ccf29ff3"
+    }
+  ],
+  "sourceHashes": {
+    "app/src/androidTest/java/app/guidecast/transmitter/DomainCorpusBenchmarkDeviceTest.kt": "78c0c0205a80b871df1e0fe07996e9aabd12e21b274256951166974225f1d493",
+    "app/src/main/java/app/guidecast/transmitter/BroadcastService.kt": "843f36b26420813dadf5a35aa22db0200208233af60762d00488e0ffc9ea9302",
+    "app/src/main/java/app/guidecast/transmitter/DomainCorpusTranslationEngine.kt": "0c4da3bfc80b5c6b0d649b392e186a8d263a029fe1795347eac1a7fda96d1fdf",
+    "app/src/test/java/app/guidecast/transmitter/DomainCorpusTranslationEngineTest.kt": "3d1710dd925cce05086dbbe3746edbf6f0c1769910e8a25fa04c6265a69ce2b5",
+    "core/translation/src/main/kotlin/app/guidecast/core/translation/FailoverTranslationEngineProvider.kt": "53526614cc3a82788ef2d4bda7cee2d3370cd65f2d5ea709d86a94e7dcdd6318",
+    "core/translation/src/main/kotlin/app/guidecast/core/translation/TranslationBroadcastPipeline.kt": "df4103c8dbf1f3e9025a4c5a96dad536cedbfe5b8907d3c1de9846a03269642f",
+    "core/translation/src/test/kotlin/app/guidecast/core/translation/FailoverTranslationEngineProviderTest.kt": "23e83d90b59be8e87211227aa0ebe18910e570c3710737c0b4849d2e9dfa2e39",
+    "core/translation/src/test/kotlin/app/guidecast/core/translation/TranslationBroadcastPipelineTest.kt": "8b6b702a224f82796444e7f392e82dc26a93d5ec744da51adbd5dce892106b94",
+    "provider/gemma-translation/src/main/java/app/guidecast/provider/gemma/translation/GemmaTranslationOutputGuard.kt": "feaa8c7911c3fc632783e3f04473919c8be4061d7670805cdb2b8116ee560075",
+    "provider/gemma-translation/src/test/java/app/guidecast/provider/gemma/translation/GemmaTranslationOutputGuardTest.kt": "d38bcde5ce76fedd622dc122a5c86a9c1e4d0eb5561d7d1177a12e8de6b2bd3f",
+    "app/src/androidTest/java/app/guidecast/transmitter/ProtectedMeaningRecoveryDeviceTest.kt": "6e526273d26e3a3c5d297eba19c29af0636175a25ebf7d7812e2240df31763db",
+    "core/translation/src/main/kotlin/app/guidecast/core/translation/ProtectedTranslationMeaningGuard.kt": "ce3e05ed25f44453b8352b80dc7a461334112eedee8039d6e8870d2bc5decc08",
+    "core/translation/src/main/kotlin/app/guidecast/core/translation/ProtectedTranslationReviewMessage.kt": "86ccb8ff6459beb2df4b0f1b102b0e4f2737e842fc07abfd72e93c7566cff1c2",
+    "provider/gemma-translation/src/main/java/app/guidecast/provider/gemma/translation/GemmaProtectedMeaningGuard.kt": "82f0b08bd856b9dc6ba70af439976f5d54bef9ea715eb7cd32eefdc42b2b5dc6",
+    "provider/gemma-translation/src/test/java/app/guidecast/provider/gemma/translation/GemmaProtectedMeaningGuardTest.kt": "f1a250148486a5632d669beb53f318189d2350e9a3e0b7144e91d4f3162fb58d"
+  },
+  "evidence": [
+    {
+      "file": "root-semantic-holdout-corpus.json",
+      "sha256": "fd615ba65cc6e283b4d2e285b60cd129b87c9774ff1778d9520632da2ba6f5a8",
+      "bytes": 4388
+    },
+    {
+      "file": "root-semantic-second-holdout-corpus.json",
+      "sha256": "ce38bcb52b77d9ecfc2258541e875a6f8405165c5cdee3ecb0090bd76998ffcc",
+      "bytes": 2969
+    },
+    {
+      "file": "emulator-domain-protected-meaning-holdout-offline-standard-1790966818985.json",
+      "sha256": "c5266279848e2df955a21d5d20f5ecaef2398be0ea67e52f544691dcdfadeca1",
+      "bytes": 12820
+    },
+    {
+      "file": "emulator-domain-protected-meaning-recovery-offline-standard-1790966891837.json",
+      "sha256": "ba154b268e45787b0ffcf9e9f4519535b69d6b110663df992fdafe035ff48318",
+      "bytes": 11903
+    },
+    {
+      "file": "emulator-domain-protected-meaning-meeting-offline-standard-1790966938958.json",
+      "sha256": "4cb5fca301c03d9c6962a699e9336dc6b32bb4ef608c92fd668e61bf8d93e627",
+      "bytes": 5023
+    },
+    {
+      "file": "emulator-domain-protected-meaning-independent-holdout-offline-standard-1790967839707.json",
+      "sha256": "18cc43a34d64ffce2156c8aa3b2211c9bc806b23ec2b122b1cc6880fd8d4c325",
+      "bytes": 11598
+    },
+    {
+      "file": "emulator-domain-protected-meaning-failclosed-recovery-offline-standard-1790967918523.json",
+      "sha256": "7c94ef087a617ad61c9b3adcaba5ba34c4a4d413128f8f2ea796a1391a7be8c4",
+      "bytes": 12973
+    },
+    {
+      "file": "emulator-domain-protected-meaning-failclosed-meeting-offline-standard-1790967965801.json",
+      "sha256": "6592788aca78095ecbcc1e478667c07dbd7ddd60599013706b7dc8e08be90f05",
+      "bytes": 5176
+    },
+    {
+      "file": "emulator-protected-review-native-lifecycle-1790968028062.json",
+      "sha256": "e0ef1ce9102079ad7aa9b067e58042325f89e02df40dc2b006e16dbb72e7c2d8",
+      "bytes": 1330
+    },
+    {
+      "file": "emulator-protected-review-native-lifecycle-1790968815085.json",
+      "sha256": "3fe9113cdf9e19a4f733c246a53cf673799d5f96379940d56a8f81fc3a8390e2",
+      "bytes": 1330
+    },
+    {
+      "file": "emulator-protected-meaning-install-restoration.json",
+      "sha256": "008b8e453c357706759e72e465a13db3a05eb210b818c8f1b2a998298b1e00f7",
+      "bytes": 452
+    },
+    {
+      "file": "emulator-protected-meaning-failclosed-install-restoration.json",
+      "sha256": "9f3e8d2858c1892f59dfb61a09d6ae22fe1e4b1598cb0a97f00258172823a50c",
+      "bytes": 474
+    },
+    {
+      "file": "emulator-protected-meaning-negated-citation-install-restoration.json",
+      "sha256": "f61925eec77a164cb08fcc889fcdf7348be0b676e01359630af65091e84e5916",
+      "bytes": 486
+    },
+    {
+      "file": "emulator-protected-meaning-negated-citation-native-lifecycle-junit.txt",
+      "sha256": "6d2ef823940fd8b3250c8feb75490051a186d4672b3deab8eec894794b73a999",
+      "bytes": 877
+    },
+    {
+      "file": "emulator-protected-meaning-negated-citation-basic12-junit.txt",
+      "sha256": "3b29ce8d77a6a8fd101083c004dd660b844b8ca8582f223aaf0effcacd887c72",
+      "bytes": 8770
+    }
+  ]
+}

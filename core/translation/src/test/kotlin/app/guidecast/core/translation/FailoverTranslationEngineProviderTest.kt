@@ -15,6 +15,30 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class FailoverTranslationEngineProviderTest {
+    @Test fun reviewFailureAffectsOnlyThisRequestWithoutSwitchingOrFailureCallback() = runBlocking {
+        for (code in listOf("GEMMA_SENTENCE_TYPE_REVIEW_REQUIRED", "GEMMA_CURRENCY_ASSET_REVIEW_REQUIRED", "GEMMA_VERBATIM_QUOTE_REVIEW_REQUIRED")) {
+            var primaryCalls = 0
+            var fallbackCalls = 0
+            var callbacks = 0
+            val provider = FailoverTranslationEngineProvider(
+                primary = TranslationEngineProvider { TextTranslationEngine { text, _, _ ->
+                    primaryCalls++
+                    if (text == "review item") throw IllegalStateException(code)
+                    "primary:$text"
+                } },
+                fallback = TranslationEngineProvider { TextTranslationEngine { _, _, _ -> fallbackCalls++; "fallback" } },
+                onPrimaryFailure = { callbacks++ },
+                allowFallbackForPrimaryFailure = { protectedTranslationReviewMessage(it.message) == null },
+            )
+            try { provider.engineFor("zh").translate("review item", "ko", "zh"); org.junit.Assert.fail("Review item cannot automatically become fallback audio") }
+            catch (error: IllegalStateException) { assertEquals(code, error.message) }
+            assertTrue(!provider.isUsingFallback)
+            assertEquals("primary:next item", provider.engineFor("zh").translate("next item", "ko", "zh"))
+            assertEquals(2, primaryCalls)
+            assertEquals(0, fallbackCalls)
+            assertEquals(0, callbacks)
+        }
+    }
     @Test
     fun contextualPrimaryReceivesPriorTextWithoutAddingItToCurrentDelta() = runBlocking {
         var receivedContext: String? = null

@@ -50,14 +50,17 @@ class DomainCorpusTranslationEngine(
 
         // Ephemeral domain hints passed only when present
         val referenceHints = boundedDomainReferenceHints(match.hints, referenceHintBudget())
-        return if (referenceHints.isNotBlank()) {
-            val translated = withContext(DomainTranslationContext(referenceHints)) {
+        val translated = if (referenceHints.isNotBlank()) {
+            withContext(DomainTranslationContext(referenceHints)) {
                 delegateTranslate(text, contextBefore, sourceLanguageTag, targetLanguageTag)
             }
-            TextFidelityGuard.repair(text, translated, sourceLanguageTag, targetLanguageTag)
         } else {
             delegateTranslate(text, contextBefore, sourceLanguageTag, targetLanguageTag)
         }
+        val repaired = if (referenceHints.isNotBlank())
+            TextFidelityGuard.repair(text, translated, sourceLanguageTag, targetLanguageTag) else translated
+        app.guidecast.core.translation.requireProtectedTranslationMeaning(text, repaired, sourceLanguageTag, targetLanguageTag)
+        return repaired
     }
 
     private suspend fun delegateTranslate(

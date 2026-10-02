@@ -71,8 +71,12 @@ class GemmaTranslationOutputGuardTest {
         assertEquals("売上は350億ウォンで、8.5%増えました。", validateAndRepairGemmaTranslation(
             "매출은 350억 원으로 8.5% 증가했습니다.", "売上は350億円で、8.5%増えました。", "ko", "ja"))
         val mixed = "韓国費用は350億円、日本費用は2億円です。"
-        assertEquals(mixed, validateAndRepairGemmaTranslation(
-            "한국 비용은 350억 원이고 일본 비용은 2억 엔입니다.", mixed, "ko", "ja"))
+        try {
+            validateAndRepairGemmaTranslation("한국 비용은 350억 원이고 일본 비용은 2억 엔입니다.", mixed, "ko", "ja")
+            fail("Ambiguous multiple assets must not be guessed or silently accepted")
+        } catch (error: IllegalStateException) {
+            assertEquals("GEMMA_CURRENCY_ASSET_REVIEW_REQUIRED", error.message)
+        }
     }
 
     @Test fun sharedOutputContractPreservesSingleExplicitVerbatimTypoWithoutGuessingMultipleQuotes() {
@@ -80,9 +84,12 @@ class GemmaTranslationOutputGuardTest {
             "보고서에 ‘배포 지연됌’이라고 오기되었지만 원문을 그대로 인용했습니다.",
             "The report quoted ‘deployment delayed’ verbatim.", "ko", "en"))
         val multiple = "The original said ‘topic’ rather than ‘task’."
-        assertEquals(multiple, validateAndRepairGemmaTranslation(
-            "‘과제’가 아닌 ‘화제’라고 오기되어 원문 그대로 인용하여 정정 요청하세요.",
-            multiple, "ko", "en"))
+        try {
+            validateAndRepairGemmaTranslation("‘과제’가 아닌 ‘화제’라고 오기되어 원문 그대로 인용하여 정정 요청하세요.", multiple, "ko", "en")
+            fail("Uniquely attached typo must retain the explicitly cited original")
+        } catch (error: IllegalStateException) {
+            assertEquals("GEMMA_VERBATIM_QUOTE_REVIEW_REQUIRED", error.message)
+        }
     }
 
     @Test fun sharedOutputContractAllowsOrdinarySpokenQuotationAndKeepsCopyRejection() {

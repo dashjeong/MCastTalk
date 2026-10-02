@@ -1,0 +1,44 @@
+[
+  {
+    "id": "SH01", "target": "ja", "style": "FORMAL",
+    "category": "currency_assets_with_particle",
+    "source": "싱가포르 출장 항공료는 600만 원이고, 오사카 숙박비는 85만 엔으로 승인됐습니다.",
+    "context": "두 출장 항목의 승인 예산 보고",
+    "invariants": ["항공료 6000000 KRW", "숙박비 850000 JPY", "승인된 예산이며 환전 요청이 아님"]
+  },
+  {
+    "id": "SH02", "target": "ja", "style": "CONVERSATIONAL",
+    "category": "compound_currency_assets_with_particles",
+    "source": "국내 장비 예산은 2억 4천만 원으로, 해외 부품 구매 한도는 9천만 엔으로 정했어요.",
+    "context": "회의에서 장비 예산과 구매 한도를 설명하는 상황",
+    "invariants": ["국내 장비 240000000 KRW", "해외 부품 한도 90000000 JPY", "두 금액의 용도와 통화를 교환하지 않음"]
+  },
+  {
+    "id": "SH03", "target": "ja", "style": "FORMAL",
+    "category": "deposits_and_asset_roles",
+    "source": "서울 사무실 보증금은 3억 원이고, 삿포로 사무실 보증금은 4천만 엔입니다.",
+    "context": "두 사무실의 임대 보증금을 확인하는 상황",
+    "invariants": ["서울 보증금 300000000 KRW", "삿포로 보증금 40000000 JPY", "보증금을 출자금이나 기부금으로 바꾸지 않음"]
+  },
+  {
+    "id": "SH04", "target": "zh", "style": "CONVERSATIONAL",
+    "category": "instruction_not_self_completion",
+    "source": "책임자가 저에게 자료를 취합하라고 했지, 본인이 취합을 끝냈다고 말한 건 아니에요.",
+    "context": "자료 취합의 담당자와 완료 여부를 구분하는 상황",
+    "invariants": ["책임자가 화자에게 취합을 지시함", "책임자 자신의 완료 발언은 부정됨", "원문 평서문의 의미를 질문이나 긍정으로 바꾸지 않음"]
+  },
+  {
+    "id": "SH05", "target": "zh", "style": "CONVERSATIONAL",
+    "category": "quoted_offer_not_completed_action",
+    "source": "담당자가 “제가 일정표를 공유할까요?”라고 묻기만 했어요. 아직 공유를 마쳤다는 뜻은 아니에요.",
+    "context": "일정표 공유 제안과 실제 완료를 구분하는 상황",
+    "invariants": ["인용문은 공유 제안의 질문이며 번역 가능", "실제 공유 완료를 부정함", "담당자와 화자의 역할을 임의로 교환하지 않음"]
+  },
+  {
+    "id": "SH06", "target": "en", "style": "FORMAL",
+    "category": "explicit_quote_scope_and_contrast",
+    "source": "메모에는 “결제 완료”가 아니라 “결제 대기”라고 되어 있습니다. 두 표현을 모두 원문 그대로 인용해 주세요.",
+    "context": "결제 처리 상태를 문서에 인용하는 상황",
+    "invariants": ["원문 상태는 결제 대기이며 결제 완료가 아님", "두 원문 표기를 모두 그대로 보존", "각 상태의 대조 관계를 반전하지 않음"]
+  }
+]

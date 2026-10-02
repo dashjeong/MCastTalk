@@ -1,0 +1,74 @@
+[
+  {
+    "id": "RH01",
+    "style": "CONVERSATIONAL",
+    "category": "negative_statement_not_question",
+    "target": "zh",
+    "source": "파트장이 저에게 검토를 부탁한 것이지, 본인이 검토하겠다고 약속한 건 아니에요.",
+    "context": "새로운 회의에서 검토 책임을 설명하는 상황",
+    "invariants": ["검토 요청자는 파트장이고 수신자는 화자다", "파트장의 직접 검토 약속을 부정하는 평서문이다", "질문이나 반문으로 바꾸지 않는다"]
+  },
+  {
+    "id": "RH02",
+    "style": "CONVERSATIONAL",
+    "category": "legitimate_negative_question",
+    "target": "zh",
+    "source": "실장님이 직접 검토하시겠다는 뜻 아닌가요?",
+    "context": "상대에게 검토 주체에 대한 해석을 질문하는 상황",
+    "invariants": ["실장의 직접 검토 의사를 묻는 질문이다", "부정형 의문이라는 이유만으로 실패 처리하지 않는다"]
+  },
+  {
+    "id": "RH03",
+    "style": "FORMAL",
+    "category": "quoted_question_inside_negative_statement",
+    "target": "zh",
+    "source": "연구원이 “제가 보내도 될까요?”라고 물었을 뿐, 발송을 약속한 것은 아닙니다.",
+    "context": "보고서 발송 관련 대화를 정리하는 상황",
+    "invariants": ["인용된 질문은 자연스럽게 번역해도 된다", "전체 문장은 연구원의 발송 약속을 부정한다", "인용 안의 물음표를 전체 문장의 질문으로 오인하지 않는다"]
+  },
+  {
+    "id": "RH04",
+    "style": "FORMAL",
+    "category": "reordered_multi_currency_assets",
+    "target": "ja",
+    "source": "견적 A는 4억 원이고 견적 B는 7천만 엔으로 확정했습니다.",
+    "context": "서로 다른 두 견적의 확정 금액을 설명하는 상황",
+    "invariants": ["A에 400000000 KRW, B에 70000000 JPY를 연결한다", "금액 언급 순서가 달라도 허용한다", "통화 또는 금액을 바꾸지 않는다", "multiset만으로 주체별 금액 뒤바뀜을 입증했다고 주장하지 않는다"]
+  },
+  {
+    "id": "RH05",
+    "style": "FORMAL",
+    "category": "compound_multi_currency_scales",
+    "target": "ja",
+    "source": "서비스 개발비는 8억 5천만 원이고 도쿄 사무실 보증금은 1억 2천만 엔입니다.",
+    "context": "개발비와 해외 사무실 보증금을 구분하는 상황",
+    "invariants": ["개발비는 850000000 KRW다", "사무실 보증금은 120000000 JPY다", "복합 수량을 완전히 추출할 수 없으면 부분 추출 결과로 치환하지 않는다"]
+  },
+  {
+    "id": "RH06",
+    "style": "FORMAL",
+    "category": "selective_verbatim_and_natural_quote",
+    "target": "en",
+    "source": "오기된 “월욜”은 원문 그대로 인용하고, 정상 용어 “월요일”은 읽기 자연스럽게 번역해 주세요.",
+    "context": "편집 지시에서 오기 인용과 정상 용어 번역을 구분하는 상황",
+    "invariants": ["오기는 월욜이라는 한국어 표기를 유지한다", "정상 용어 월요일은 Monday로 자연스럽게 번역할 수 있다", "원문 인용 요청을 인용문 전부에 무조건 확대하지 않는다"]
+  },
+  {
+    "id": "RH07",
+    "style": "FORMAL",
+    "category": "explicit_all_quotes_verbatim",
+    "target": "en",
+    "source": "항목 “긴급 배표”와 “일정 변갱”은 둘 다 원문 그대로 인용해 보고서에 넣으세요.",
+    "context": "두 개의 오기 표기를 보존해야 하는 보고서 작성 지시",
+    "invariants": ["긴급 배표와 일정 변갱을 한국어 표기 그대로 유지한다", "두 문구 모두라는 명시 범위를 보존한다", "문구의 순서 변경은 의미가 유지되면 허용한다"]
+  },
+  {
+    "id": "RH08",
+    "style": "FORMAL",
+    "category": "quote_contrast_with_all_verbatim",
+    "target": "en",
+    "source": "“배포 승인”이 아니라 “배포 보류”라고 적혀 있으니, 두 문구를 모두 원문 그대로 인용해 주세요.",
+    "context": "배포 상태 표기와 인용 범위를 확인하는 상황",
+    "invariants": ["실제 표기는 배포 보류다", "배포 승인이라는 해석을 부정한다", "두 인용 표기를 모두 유지한다", "문구가 남아 있다는 사실만으로 대비 관계까지 올바르다고 판정하지 않는다"]
+  }
+]

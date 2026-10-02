@@ -22,6 +22,9 @@ class FailoverTranslationEngineProvider(
     private val currentMonotonicMillis: () -> Long = { System.nanoTime() / 1_000_000L },
     private val onPrimaryFailure: suspend (Throwable) -> Unit = {},
     private val onPrimaryRecovered: suspend () -> Unit = {},
+    // Some completed primary results require operator review rather than automatic recovery.
+    // Default behavior remains compatible; this policy applies to this request only.
+    private val allowFallbackForPrimaryFailure: (Throwable) -> Boolean = { true },
 ) : TranslationEngineProvider {
     private val nextPrimaryAttemptAtMillis = AtomicLong(0L)
     private val switchMutex = Mutex()
@@ -88,6 +91,7 @@ class FailoverTranslationEngineProvider(
                         } catch (fatal: Error) {
                             throw fatal
                         } catch (error: Throwable) {
+                            if (!allowFallbackForPrimaryFailure(error)) throw error
                             nextPrimaryAttemptAtMillis.set(
                                 primaryRetryCooldownMillis?.let { cooldown ->
                                     (currentMonotonicMillis() + cooldown).coerceAtLeast(1L)

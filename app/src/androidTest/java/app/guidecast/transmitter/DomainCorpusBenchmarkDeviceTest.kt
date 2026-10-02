@@ -5,8 +5,10 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import app.guidecast.core.translation.TranslationStyle
 import app.guidecast.core.translation.TranslationStyleContext
+import app.guidecast.core.translation.requireProtectedTranslationMeaning
 import app.guidecast.provider.gemma.translation.GEMMA_OFFLINE_EVALUATION_TIMEOUT_MILLIS
 import app.guidecast.provider.gemma.translation.GemmaModelVariant
+import app.guidecast.provider.mlkit.translation.MlKitTranslationProvider
 import java.io.File
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -68,6 +70,22 @@ class DomainCorpusBenchmarkDeviceTest {
             selectedTargets = setOf("en"), domainModes = listOf(false), jsonResponseFormat = true)
     }
 
+    @Test
+    fun compareProtectedMeaningHoldoutOffline(): Unit = runBlocking {
+        executeSuite("protected-meaning-holdout", offlineEvaluation = true, recoverReviewFailures = true)
+    }
+
+    @Test
+    fun compareProtectedMeaningIndependentHoldoutOffline(): Unit = runBlocking {
+        executeSuite("protected-meaning-independent-holdout", offlineEvaluation = true, recoverReviewFailures = true)
+    }
+
+    @Test
+    fun compareProtectedMeaningRegressionsOffline(): Unit = runBlocking {
+        executeSuite("recovery-dev", offlineEvaluation = true, selectedIds = setOf("RC04", "RC05"), recoverReviewFailures = true)
+        executeSuite("meeting", offlineEvaluation = true, selectedIds = setOf("MC09"), recoverReviewFailures = true)
+    }
+
     private suspend fun executeSuite(
         suite: String,
         offlineEvaluation: Boolean = false,
@@ -75,12 +93,15 @@ class DomainCorpusBenchmarkDeviceTest {
         selectedTargets: Set<String>? = null,
         domainModes: List<Boolean> = listOf(false, true),
         jsonResponseFormat: Boolean = false,
+        recoverReviewFailures: Boolean = false,
     ) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val arguments = InstrumentationRegistry.getArguments()
         val app = context.applicationContext as GuideCastApplication
         val repository = app.domainCorpus
         val provider = app.gemmaTranslationProvider
+        val evaluationFallback = if (recoverReviewFailures) MlKitTranslationProvider(
+            context, sourceLanguageTag = "ko", requireWifiForModels = false) else null
         val originalVariant = provider.modelManager.selectedVariant
         val requestedVariant = if (arguments.getString("domainModel") == "e2b")
             GemmaModelVariant.STANDARD else GemmaModelVariant.E4B_IT
@@ -122,6 +143,7 @@ class DomainCorpusBenchmarkDeviceTest {
             .put("trainingCorpus", trainingPrefix)
             .put("fixtureKind", if (!official) "authored-text-not-microphone" else "official-paired-text-local-research-not-microphone")
             .put("semanticGrade", "REQUIRES_INDEPENDENT_REVIEW")
+            .put("fallbackEvaluationPolicy", if (recoverReviewFailures) "TEXT_ONLY_COMPARISON_NOT_PRODUCTION_PUBLICATION" else "NONE")
         val rows = JSONArray()
         result.put("rows", rows)
         val output = File(context.getExternalFilesDir(null), "benchmark/domain-$suite-${if (offlineEvaluation) "offline" else "realtime"}-${if (jsonResponseFormat) "json-on" else "json-off"}-${requestedVariant.id}-${System.currentTimeMillis()}.json")
@@ -154,6 +176,19 @@ class DomainCorpusBenchmarkDeviceTest {
             save()
 
             for (target in targets) {
+                if (evaluationFallback != null) {
+                    val prepareStarted = SystemClock.elapsedRealtime()
+                    try {
+                        withTimeout(180_000L) { evaluationFallback.modelManager.prepare(setOf(target)) }
+                        result.put("fallbackPreparation_$target", "COMPLETED")
+                    } catch (prepareError: Exception) {
+                        if (prepareError is kotlinx.coroutines.CancellationException &&
+                            prepareError !is kotlinx.coroutines.TimeoutCancellationException) throw prepareError
+                        result.put("fallbackPreparation_$target", prepareError.javaClass.simpleName)
+                    }
+                    result.put("fallbackPreparationMs_$target", SystemClock.elapsedRealtime() - prepareStarted)
+                    save()
+                }
                 val engine = DomainCorpusTranslationEngine(
                     if (offlineEvaluation) provider.offlineEvaluationEngineFor(target, jsonResponseFormat) else provider.engineFor(target),
                     repository,
@@ -199,8 +234,53 @@ class DomainCorpusBenchmarkDeviceTest {
                             row.put("elapsedMs", SystemClock.elapsedRealtime() - before)
                                 .put("state", failureState)
                                 .put("failureClass", error.javaClass.simpleName)
-                            if (error.message in setOf("GEMMA_TARGET_SCRIPT_MISMATCH", "GEMMA_UNTRANSLATED_SOURCE_COPY")) {
+                            val reviewFailure = error.message in setOf(
+                                "GEMMA_SENTENCE_TYPE_REVIEW_REQUIRED", "GEMMA_CURRENCY_ASSET_REVIEW_REQUIRED",
+                                "GEMMA_VERBATIM_QUOTE_REVIEW_REQUIRED")
+                            val observableFailure = reviewFailure || error.message in setOf("GEMMA_TARGET_SCRIPT_MISMATCH", "GEMMA_UNTRANSLATED_SOURCE_COPY")
+                            if (observableFailure) {
                                 row.put("failureCode", error.message)
+                            }
+                            if (reviewFailure) row.put("productionDisposition", "REVIEW_REQUIRED_NO_AUTOMATIC_FALLBACK")
+                            if (recoverReviewFailures && observableFailure) {
+                                // Separate real ML Kit recovery from native Gemma completion.
+                                // No guessed repair, cached reference answer, or timeout expansion.
+                                val fallbackStarted = SystemClock.elapsedRealtime()
+                                row.put("fallbackEngine", "MLKIT_TEXT_ONLY").put("fallbackRequestBudgetMs", 10_000L)
+                                    .put("fallbackState", "RUNNING").put("fallbackStartedElapsedMs", fallbackStarted)
+                                save()
+                                try {
+                                    val recovered = withTimeout(10_000L) {
+                                        requireNotNull(evaluationFallback).engineFor(target).translate(
+                                            source, "ko", target)
+                                    }
+                                    check(recovered.isNotBlank()) { "Empty fallback result" }
+                                    row.put("fallbackRawTranslation", recovered)
+                                    val fallbackRepaired = if (enabled)
+                                        TextFidelityGuard.repair(source, recovered, "ko", target) else recovered
+                                    try {
+                                        requireProtectedTranslationMeaning(source, fallbackRepaired, "ko", target)
+                                        row.put("fallbackValidation", "ACCEPTED_OBSERVABLE_CONTRACTS_NOT_SEMANTIC_PASS")
+                                    } catch (validationError: IllegalStateException) {
+                                        row.put("fallbackValidation", "REJECTED").put("fallbackValidationCode", validationError.message)
+                                        throw validationError
+                                    }
+                                    row.put("fallbackState", "COMPLETED").put("fallbackTranslation", fallbackRepaired)
+                                        .put("fallbackElapsedMs", SystemClock.elapsedRealtime() - fallbackStarted)
+                                } catch (fallbackError: Exception) {
+                                    val fallbackState = when (fallbackError) {
+                                        is kotlinx.coroutines.TimeoutCancellationException -> "TIMED_OUT"
+                                        is kotlinx.coroutines.CancellationException -> "CANCELLED"
+                                        else -> "FAILED"
+                                    }
+                                    row.put("fallbackState", fallbackState).put("fallbackFailureClass", fallbackError.javaClass.simpleName)
+                                        .put("fallbackElapsedMs", SystemClock.elapsedRealtime() - fallbackStarted)
+                                    save()
+                                    if (fallbackError is kotlinx.coroutines.CancellationException &&
+                                        fallbackError !is kotlinx.coroutines.TimeoutCancellationException) throw fallbackError
+                                }
+                                save()
+                                continue
                             }
                             try {
                                 save()
@@ -221,7 +301,8 @@ class DomainCorpusBenchmarkDeviceTest {
             }
             val expectedRows = plannedRows
             assertEquals("Each held-out translation requires both OFF and ON output", expectedRows, rows.length())
-            result.put("functionalCompletion", true)
+            result.put("functionalCompletion", (0 until rows.length()).all {
+                rows.getJSONObject(it).getString("state") == "COMPLETED" })
             save()
         } finally {
             try {
@@ -237,12 +318,15 @@ class DomainCorpusBenchmarkDeviceTest {
                 }
                 result.put("cleanupCompleted", true)
             } finally {
-                backendLease.close()
+                try { evaluationFallback?.close() } finally { backendLease.close() }
                 val states = (0 until rows.length()).map { rows.getJSONObject(it).getString("state") }
                 result.put("attemptedRows", rows.length())
                     .put("completedRows", states.count { it == "COMPLETED" })
                     .put("failedRows", states.count { it in setOf("FAILED", "TIMED_OUT", "CANCELLED") })
                     .put("notAttemptedRows", plannedRows - rows.length())
+                    .put("fallbackAttemptedRows", (0 until rows.length()).count { rows.getJSONObject(it).has("fallbackEngine") })
+                    .put("fallbackCompletedRows", (0 until rows.length()).count { rows.getJSONObject(it).optString("fallbackState") == "COMPLETED" })
+                    .put("fallbackFailedRows", (0 until rows.length()).count { rows.getJSONObject(it).optString("fallbackState") in setOf("FAILED", "TIMED_OUT", "CANCELLED") })
                 save()
             }
         }

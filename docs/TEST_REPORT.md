@@ -1078,3 +1078,40 @@ and [mobile model application plan](GEMMA_MOBILE_APPLICATION_PLAN.md).
 quality/thermal/memory/latency, full fallback speech, web first-PCM p95 and
 human/soak validation have not passed. A draft-PR source commit and its CI are
 separate from APK release approval.
+
+## 2026-10-03 KST: protected meaning and request-specific review failures
+
+Generated results share narrow negative-statement/question, supported multiple
+currency, and explicit verbatim-quote checks. Approved exact domain translations
+retain early-return authority. Existing domain-OFF surface-repair behavior is
+preserved. Currency parsing now shares the same Korean particle boundary;
+explicit negation of quotation actions excludes only quote requirements.
+The broadcast Gemma policy suppresses automatic fallback for three review codes
+without changing cooldown/global engine state. Ordinary timeout/backend fallback
+and operator broadcast/input controls retain their existing behavior.
+
+Final collaborator module gates passed in 1m32s. Codex parsed final Debug Gemma,
+core and Alpha XML totals: **176 / 294 / 592**, zero failures/errors/skips.
+Codex verified all 15 source and 15 controlled evidence hashes, final public
+certificate/v3 signature, 16 KiB alignment and exact APK hashes:
+product `1e6573452fce69660aab71d77ea2960e42a19a7a69fcf3822021b33e44e61853`;
+test `08e16c46d2eaa398697d897b5fb96ae8c010ec99c6f1abcc05a60d5c9fd33ba5`.
+Exact emulator installation and null→20MiB→null reserve restoration are recorded.
+Final JUnit evidence shows 12 basic regressions PASS in **12.986s** and actual
+E2B/Failover-class lifecycle PASS in **27.632s**: one quote-review request
+**2168ms**, next actual native completion **1135ms**, zero fallback/callback calls.
+This is offline text-only evidence, not microphone/TTS/web or physical-phone proof.
+
+Earlier independent suites executed every planned row: **16/16** with 12 native
+completions and 4 failures, then **12/12** with 7 completions and 5 failures.
+Codex matched all frozen source/context/style/category/target fields and modes.
+Completed native mixed-script output and real ML Kit comparison meaning errors
+remain. Rejected native raw output is unavailable; false-positive regrading is
+limited. The final quote-negation fix has unit regressions, not fresh independent
+native quality approval. Preserve per-generation APK attribution and DEV status.
+
+See [protected meaning report](validation/0.2.46-beta-d/PROTECTED_MEANING_REVIEW_REPORT.md)
+and [manifest](validation/0.2.46-beta-d/protected-meaning-evaluation/MANIFEST.json).
+Release stays blocked by outstanding semantic quality and exact-candidate phone,
+translated audio, web p95, recovery and long-run gates. Draft-PR commit/CI status
+is recorded separately; public beta-c is unchanged.

@@ -367,7 +367,7 @@ class TranslationBroadcastPipeline(
                                 )
                             }
                         } catch (error: Throwable) {
-                            val message = error.message ?: error::class.simpleName
+                            val message = protectedTranslationReviewMessage(error.message) ?: error.message ?: error::class.simpleName
                             mutableHealth.updateChannel(target.channelId) {
                                 it.copy(
                                     droppedUtterances = it.droppedUtterances + 1,

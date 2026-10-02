@@ -91,7 +91,9 @@ internal fun validateAndRepairGemmaTranslation(
 ): String {
     requireGemmaTranslationIsNotCopiedSource(source, translated, sourceLanguageTag, targetLanguageTag)
     requireGemmaTargetScript(source, translated, targetLanguageTag)
-    return app.guidecast.core.translation.TextFidelityGuard.repair(
+    val repaired = app.guidecast.core.translation.TextFidelityGuard.repair(
         source, translated, sourceLanguageTag, targetLanguageTag,
     )
+    requireGemmaProtectedMeaning(source, repaired, sourceLanguageTag, targetLanguageTag)
+    return repaired
 }

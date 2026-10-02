@@ -1,5 +1,7 @@
 package app.guidecast.transmitter
 
+import app.guidecast.core.translation.protectedTranslationReviewMessage
+
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -2561,6 +2563,7 @@ class BroadcastService : Service() {
             FailoverTranslationEngineProvider(
                     primary = admittedGemmaTranslationProvider,
                     fallback = admittedFallbackTranslationProvider,
+                    allowFallbackForPrimaryFailure = { protectedTranslationReviewMessage(it.message) == null },
                     primaryAttemptTimeoutMillis = GEMMA_PRIMARY_ATTEMPT_TIMEOUT_MILLIS,
                     primaryRetryCooldownMillis = if (
                         shouldRetryGemmaWithinBroadcast(gemmaCapability.constrainedMemoryMode)
@@ -2600,7 +2603,8 @@ class BroadcastService : Service() {
                                         "이 방송은 경량 번역으로 유지하고 다음 방송에서 Gemma를 " +
                                         "다시 확인합니다 · "
                                 } +
-                                    (error.message ?: error.javaClass.simpleName),
+                                    (protectedTranslationReviewMessage(error.message)
+                                        ?: error.message ?: error.javaClass.simpleName),
                             ).joinToString(" · ")
                             updateProviderFallbackUi(translationLanguages, sessionId)
                             // Engine teardown can include Binder/native cleanup. Keep it out of

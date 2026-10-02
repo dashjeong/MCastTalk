@@ -23,6 +23,57 @@ import kotlin.system.measureNanoTime
 import kotlin.system.measureTimeMillis
 
 class DomainCorpusTranslationEngineTest {
+    @Test fun generatedResultsAreCheckedWithDomainOffAndOnAndNextRequestCanContinue() = runBlocking {
+        for (hints in listOf("", "{\"domain\":\"업무\"}")) {
+            val repo = TestCorpusRepository(DomainCorpusMatch(null, hints))
+            var output = "经理不是说自己会发送吗？"
+            val delegate = app.guidecast.core.translation.TextTranslationEngine { _, _, _ -> output }
+            val engine = DomainCorpusTranslationEngine(delegate, repo)
+            val source = "직원이 보내라고 하셨지 본인이 보내겠다는 뜻은 아니에요."
+            try { engine.translate(source, "ko", "zh"); fail("Wrong generated fallback must be rejected") }
+            catch (error: IllegalStateException) { assertEquals("GEMMA_SENTENCE_TYPE_REVIEW_REQUIRED", error.message) }
+            output = "经理让员工发送，并不是说自己会发送。"
+            assertEquals(output, engine.translate(source, "ko", "zh"))
+        }
+    }
+
+    @Test fun exactApprovedTranslationIsNeverChangedOrRejectedByGeneratedOutputChecks() = runBlocking {
+        val exact = "经理不是说自己会发送吗？"
+        val repo = TestCorpusRepository(DomainCorpusMatch(exact, "reference"))
+        val delegate = RecordingDelegateEngine()
+        assertEquals(exact, DomainCorpusTranslationEngine(delegate, repo).translate(
+            "직원이 보내라고 하셨지 본인이 보내겠다는 뜻은 아니에요.", "ko", "zh"))
+        assertEquals(0, delegate.callCount)
+    }
+
+    @Test fun actualFailoverContractPreservesInputAndValidatesTheFallbackBeforeReturning() = runBlocking {
+        val source = "직원이 보내라고 하셨지 본인이 보내겠다는 뜻은 아니에요."
+        val context = "업무 분장 확인"
+        val received = mutableListOf<Pair<String, String?>>()
+        var fallbackText = "经理不是说自己会发送吗？"
+        val primary = app.guidecast.core.translation.TranslationEngineProvider {
+            app.guidecast.core.translation.TextTranslationEngine { _, _, _ ->
+                throw IllegalStateException("GEMMA_SENTENCE_TYPE_REVIEW_REQUIRED") }
+        }
+        val fallback = app.guidecast.core.translation.TranslationEngineProvider {
+            object : app.guidecast.core.translation.ContextualTextTranslationEngine {
+                override suspend fun translateWithContext(text: String, contextBefore: String?, sourceLanguageTag: String, targetLanguageTag: String): String {
+                    received += text to contextBefore
+                    return fallbackText
+                }
+                override suspend fun translate(text: String, sourceLanguageTag: String, targetLanguageTag: String): String =
+                    translateWithContext(text, null, sourceLanguageTag, targetLanguageTag)
+            }
+        }
+        val failover = app.guidecast.core.translation.FailoverTranslationEngineProvider(primary, fallback)
+        val engine = DomainCorpusTranslationEngine(failover.engineFor("zh"), TestCorpusRepository())
+        try { engine.translateWithContext(source, context, "ko", "zh"); fail("Invalid fallback cannot be a normal output") }
+        catch (error: IllegalStateException) { assertEquals("GEMMA_SENTENCE_TYPE_REVIEW_REQUIRED", error.message) }
+        fallbackText = "经理让员工发送，并不是说自己会发送。"
+        assertEquals(fallbackText, engine.translateWithContext(source, context, "ko", "zh"))
+        assertEquals(listOf(source to context, source to context), received)
+        assertTrue(failover.isUsingFallback)
+    }
 
     private class TestCorpusRepository(
         var matchResult: DomainCorpusMatch = DomainCorpusMatch(null, ""),
