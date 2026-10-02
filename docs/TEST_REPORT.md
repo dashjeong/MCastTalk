@@ -750,7 +750,8 @@ remains beta-c while the candidate fails its latency gate.
   A deliberately stalled export regression verifies lookup and operator changes.
 - Narrow currency/explicit-verbatim-typo guards apply only with domain references
   enabled. Ambiguous currency conversions and ordinary quoted dialogue are left
-  unchanged. Reported instructions preserve the instructor, actor and personal promise.
+  unchanged. The domain prompt requests preservation of instructor, actor and
+  personal promise; the Japanese MC09 result still fails that requirement.
 - Microphone profiles store independent settings for built-in, wired/USB and Bluetooth
   input. Android microphone direction is a best-effort request, not speaker identity.
 - Domain navigation now dismisses its overlay through both system Back and the
@@ -799,6 +800,8 @@ Instrumentation uses `GuideCastTestRunner`, `-e portableRunner true`, and explic
 | S23+ SM-S916N, API 36; domain repository 4 + microphone profiles 1 + microphone focus 1 + domain UI 1 | 7 passed, 16.694s | `physical-navigation-native-seven.log` |
 | S23+; final E4B sentence, no following speech, input kept open | 1 passed, 37.215s; final after 561ms, E4B text after a further 2,781ms | `physical-navigation-idle-final.log` |
 | S23+; prepared E4B + installed Android offline English voice | 20/20 non-silent PCM; functional measurement completed in 108.556s; performance **failed** | `physical-navigation-android20-pcm.log`, `.json` |
+| S23+; identical APK and Android offline voice, resource-observation rerun | 20/20 non-silent PCM; 108.620s; p95 2,049ms, performance **failed** | `physical-navigation-android20-resource-retest.log`, `.json` |
+| S23+; frozen official final TEST, direct E4B OFF/ON | **Failed**, 135.824s; 21 outputs completed, next Chinese ON request exceeded the production 10s limit; cleanup completed | `physical-navigation-official-test28.log`, `physical-navigation-domain-nkinfo-e4b_it-1790954123651.json` |
 | API-35 ARM64 emulator, 320dp viewport; same repository/microphone/UI group | 7 passed, 22.276s | `emulator-navigation-native-seven.log` |
 | Same emulator, font scale 1.8; domain activation, SAF picker, Back/operator menu/new service entry | 1 passed, 32.647s; font restored | `emulator-navigation-large-font.log` |
 | Same emulator; original authenticated HTTP/WebSocket PCM, operator start, standalone, unready translation, seven channels, rapid restart, deferred-stop cancellation | 7 passed, 13.164s | `emulator-navigation-broadcast-seven.log` |
@@ -833,6 +836,17 @@ The Moonshine-prepared variant failed its precondition because its English model
 was not installed. It yielded no 20-sample latency result. Android results are a
 separate, explicitly named installed-offline-voice route, not a hidden Moonshine pass.
 
+A second run used the same APK and conditions, with read-only resource observations.
+Its final-text-to-first-native-PCM p50 = 1,790ms, p95 = **2,049ms**, max = 2,276ms;
+5/20 exceed 2,000ms. Translation p95 = 2,019ms; TTS first PCM p95 = 122ms.
+All 20 complete with non-silent PCM and clipping ratio 0. This is a repeated
+baseline, not improvement after an optimization. Zero clipping does not establish
+absence of buffer overflow, playback distortion or a listener-heard result.
+Thirteen resource samples recorded thermal status 0, battery temperature 34.2–36.2°C
+and Gemma-worker PSS 1,096,543–3,557,759 KiB. CPU-info windows were stale: CPU usage
+during this run is unmeasured. GPU-frequency reads were made after completion and
+do not establish inference backend, utilization or load-time GPU frequency.
+
 Earlier S23 microphone-focus testing recorded valid ordered 16 kHz S16 mono,
 non-silent PCM with focus OFF/ON, but the OEM direction request was unsupported.
 It does not establish one-speaker isolation. S21 Ultra never appeared in ADB and
@@ -855,5 +869,34 @@ ADB transport changed during the run and the host runner received no final JUnit
 token. Therefore this is a recovered complete app-side result, **not a JUnit PASS**.
 On the original MC01/MC05 cases, ON preserves KRW and the explicitly quoted Korean
 typo; Japanese MC09 still omits the instructor's personal-action subject in the
-negated clause. Full independent semantic grading is pending. The official final
-TEST was not started after this interrupted host run and is not reported as passed.
+negated clause. Independent Codex AI review of all 72 outputs rates OFF 26 PASS /
+5 MINOR / 5 MAJOR and ON 31 / 4 / 1. Compared with the initial ON run, five grades
+improved, one minor title-precision grade worsened, and thirty were unchanged.
+The remaining ON major error is Japanese MC09's instructor/personal-promise
+relationship. Antigravity's independent review of the same 72 mapped outputs
+rates OFF 26 / 5 / 5 and ON 32 / 3 / 1. Seven row-level grades differ between
+reviewers; the shared ON major failure is Japanese MC09. Counts are reported
+separately, not averaged into an inflated accuracy figure.
+These are AI judgments on fixed authored text, not human-equivalence percentages.
+
+The frozen official final TEST was subsequently attempted on the exact candidate.
+It failed with `GemmaRealtimeTimeoutException` at the unchanged 10,000ms limit on
+`NK-10719-0-TEST-POLICY-V2`, Chinese, domain ON (118 source characters and 1,134
+hint characters). The recovered JSON has 21 completed rows and one RUNNING row,
+no `functionalCompletion`, and `cleanupCompleted=true`; SHA-256
+`87b9224f83cc7ccb80bac5cda3b6bccb97d5d4ca5035c60efa2dc441c8e592aa`.
+Device fixtures matched the frozen local corpus and training-file hashes before
+execution. The partial outputs do not establish full functional or semantic
+success. Longer hints are a diagnostic hypothesis, not a proven timeout cause.
+No release gate is waived or production watchdog extended by these results.
+
+### 2026-10-03 — benchmark failure-state follow-up (instrumentation only)
+
+The benchmark now saves terminal state (`TIMED_OUT`, `CANCELLED`, or `FAILED`),
+elapsed milliseconds and exception class before rethrowing the original failure.
+It does not save exception messages, change the native watchdog, substitute a
+fallback success, or rewrite old result files. Existing cleanup still runs.
+`:app:compileAlphaAndroidTestKotlin` completed successfully in 15s (133 tasks).
+This establishes compilation only. The changed instrumentation has not yet been
+packaged, installed or exercised on a failure path; the matching test-APK hash
+above refers to the previous installed instrumentation, not this source update.

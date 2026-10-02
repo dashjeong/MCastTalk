@@ -121,10 +121,32 @@ class DomainCorpusBenchmarkDeviceTest {
                         rows.put(row)
                         save()
                         val before = SystemClock.elapsedRealtime()
-                        val translation = withTimeout(60_000L) {
-                            withContext(TranslationStyleContext(style)) {
-                                engine.translateWithContext(source, item.getString("context"), "ko", target)
+                        val translation = try {
+                            withTimeout(60_000L) {
+                                withContext(TranslationStyleContext(style)) {
+                                    engine.translateWithContext(source, item.getString("context"), "ko", target)
+                                }
                             }
+                        } catch (error: Exception) {
+                            // Persist terminal metadata before rethrowing; a failed native request
+                            // must not look like an unfinished benchmark after cleanup succeeds.
+                            val failureState = when {
+                                error is kotlinx.coroutines.TimeoutCancellationException ||
+                                    error.javaClass.simpleName == "GemmaRealtimeTimeoutException" -> "TIMED_OUT"
+                                error is kotlinx.coroutines.CancellationException -> "CANCELLED"
+                                else -> "FAILED"
+                            }
+                            row.put("elapsedMs", SystemClock.elapsedRealtime() - before)
+                                .put("state", failureState)
+                                .put("failureClass", error.javaClass.simpleName)
+                            try {
+                                save()
+                            } catch (saveError: Exception) {
+                                error.addSuppressed(saveError)
+                            }
+                            // Keep cancellation, native failure, and the existing cleanup contract.
+                            // Never persist exception messages, which may contain private text.
+                            throw error
                         }
                         row.put("elapsedMs", SystemClock.elapsedRealtime() - before)
                             .put("translation", translation).put("state", "COMPLETED")
