@@ -12,6 +12,7 @@ import java.util.ArrayDeque
  */
 class RealtimeInterpretationSegmenter(
     private val policy: RealtimeInterpretationPolicy = RealtimeInterpretationPolicy(),
+    private val onIdleFlush: () -> Unit = {},
 ) {
     private data class ObservedToken(
         val text: String,
@@ -36,6 +37,7 @@ class RealtimeInterpretationSegmenter(
     private var lastCommitAtNanos: Long? = null
     private var observedFullTokens = emptyList<ObservedToken>()
     private var recognizerEndpointRequested = false
+    private var idleFlushChosen = false
     private val hypothesisHistory = ArrayDeque<List<String>>()
     private val committedContext = ArrayDeque<String>()
 
@@ -187,6 +189,12 @@ class RealtimeInterpretationSegmenter(
                 nowNanos = nowNanos,
                 capturedAtNanos = requireNotNull(committed.oldestObservationNanos()),
             )
+            if (idleFlushChosen) {
+                idleFlushChosen = false
+                // The signal means an immutable final was actually constructed, not a guess
+                // based on a timer. Diagnostic failure must never lose the source sentence.
+                try { onIdleFlush() } catch (_: Exception) { }
+            }
             committedSourceTokens += committed.map(ObservedToken::text)
             lastCommitAtNanos = nowNanos
 
@@ -212,6 +220,7 @@ class RealtimeInterpretationSegmenter(
     }
 
     private fun chooseCommitCount(residual: List<String>, nowNanos: Long): Int {
+        idleFlushChosen = false
         if (residual.isEmpty()) return 0
         val stable = if (hypothesisHistory.size >= policy.stableHypothesisCount) {
             longestCommonPrefix(hypothesisHistory.toList())
@@ -235,9 +244,25 @@ class RealtimeInterpretationSegmenter(
             else -> 0L
         }
 
+        // Product idle recovery is an utterance boundary, not a grammatical completion. After
+        // this much *measured* contiguous quiet, retain the entire original tail (including an
+        // unfinished negation or quote) once. Do not invent a predicate or close punctuation.
+        // Use capture timestamps only: missing frames and scheduling lag cannot add silence.
+        val idleLimit = policy.maximumIdleFlushMillis
+        if (idleLimit != null &&
+            !speechActive &&
+            measuredContinuousQuietMillis() >= idleLimit &&
+            textSettled &&
+            residual.hasUsefulText()
+        ) {
+            idleFlushChosen = true
+            return residual.size
+        }
+
         // Silence confirms that the acoustic input has paused, not that its meaning is complete.
-        // In product mode a subject, connective or unfinished negation stays visible as a preview
-        // across even a long hesitation. A following provider line can then supply its predicate.
+        // A subject, connective or unfinished negation stays visible through normal hesitation.
+        // A following line can supply its predicate. Product idle recovery above bounds this
+        // holding at eight seconds of measured quiet; strict mode can disable that recovery.
         val tail = residual.last()
         val incompleteTail = isLikelyIncompleteBoundaryToken(tail) ||
             (requiresPositiveKoreanCompletion() && !isPositiveKoreanSentenceEnding(tail))
@@ -376,6 +401,13 @@ class RealtimeInterpretationSegmenter(
             // Freeze at the last observed frame: missing input is not additional silence.
             audioQuietMillis
         }
+    }
+
+    private fun measuredContinuousQuietMillis(): Long {
+        if (speechActive) return 0L
+        val observation = lastAudioObservationAtNanos ?: return 0L
+        val quietStart = continuousQuietStartedAtNanos ?: return 0L
+        return elapsedMillis(quietStart, observation)
     }
 
     private fun requiresPositiveKoreanCompletion(): Boolean =
@@ -729,6 +761,8 @@ data class RealtimeInterpretationPolicy(
     val requireCompleteKoreanMeaningForUnpunctuatedPause: Boolean = false,
     /** A pause/provider endpoint must not turn a known dependent clause into a translation unit. */
     val preserveIncompleteMeaningAcrossPauses: Boolean = false,
+    /** Null keeps strict semantic holding; product mode bounds genuine acoustic idle at 8s. */
+    val maximumIdleFlushMillis: Long? = null,
 ) {
     init {
         require(stableHypothesisCount in 2..4)
@@ -753,13 +787,16 @@ data class RealtimeInterpretationPolicy(
         require(semanticContinuationTailTokens in 2..6)
         require(semanticContinuousSpeechCommitMillis in 2_000..6_000)
         require(semanticRightContextTokens in 2..6)
+        require(maximumIdleFlushMillis == null || maximumIdleFlushMillis in 5_000..15_000)
     }
 }
 
 /**
  * Product interpretation policy for every supported device. Translation receives a complete
  * stable phrase after a measured pause or confirmed right context. Provider line-final callbacks
- * are only stability evidence; elapsed wall time alone never cuts a continuing sentence.
+ * are only stability evidence; elapsed wall time alone never cuts a continuing sentence. Eight
+ * seconds of continuously measured quiet releases the original pending tail without inventing
+ * grammatical completion, so a final utterance cannot wait forever for another spoken sentence.
  */
 fun sentenceCompletionInterpretationPolicy(): RealtimeInterpretationPolicy =
     RealtimeInterpretationPolicy(
@@ -797,6 +834,7 @@ fun sentenceCompletionInterpretationPolicy(): RealtimeInterpretationPolicy =
         semanticRightContextTokens = 2,
         requireCompleteKoreanMeaningForUnpunctuatedPause = true,
         preserveIncompleteMeaningAcrossPauses = true,
+        maximumIdleFlushMillis = 8_000,
     )
 
 private fun elapsedMillis(startNanos: Long?, nowNanos: Long): Long =
@@ -814,7 +852,7 @@ private fun longestCommonPrefix(hypotheses: List<List<String>>): List<String> {
     return hypotheses.first().take(index)
 }
 
-private fun tokenPrefixEditDistances(left: List<String>, right: List<String>): IntArray {
+internal fun tokenPrefixEditDistances(left: List<String>, right: List<String>): IntArray {
     var previous = IntArray(right.size + 1) { it }
     left.forEachIndexed { leftIndex, leftToken ->
         val current = IntArray(right.size + 1)
@@ -894,6 +932,12 @@ private fun isKoreanConversationalEnding(word: String): Boolean =
         }
 
 private val KOREAN_CONVERSATIONAL_FINITE_FORMS = setOf(
+    // Common imperatives are complete predicates too. Do not derive arbitrary -해/-줘
+    // suffixes: an explicit lexical set avoids treating a noun such as "오해" as an ending.
+    "해", "말해", "얘기해", "설명해", "확인해", "검토해", "기억해", "부탁해", "그만해",
+    "시작해", "종료해", "마무리해", "해봐", "미뤄", "켜", "꺼", "마쳐",
+    "줘", "해줘", "보내줘", "알려줘", "보여줘", "도와줘", "기다려", "멈춰",
+    "뭐야", "왜야",
     "그래", "그치", "그렇지", "그렇네", "그러네", "그러지", "아니지", "아니네",
     "맞지", "맞네", "좋지", "좋네", "싫지", "싫네", "쉽지", "쉽네", "어렵지", "어렵네",
     "하네", "하니", "하지요", "되네", "되니", "가네", "가니", "오네", "오니",

@@ -68,7 +68,11 @@ internal fun hasKoreanDependentRightContext(tokens: List<String>, leftWord: Stri
             // a postposed explanation. A negative word in a new clause must not hold every
             // preceding finite sentence forever. Keep auxiliary dependencies on -지/-고.
             ((leftWord.endsWith("지") || leftWord.endsWith("고")) &&
-                KOREAN_AUXILIARY_PREFIXES.any(token::startsWith))
+                KOREAN_AUXILIARY_PREFIXES.any(token::startsWith)) ||
+            // A spoken imperative-looking form can introduce an auxiliary construction:
+            // "설명해 드릴게요", "기다려 주세요", "해 보니". Keep the whole predicate.
+            (leftWord.lastOrNull() in setOf('아', '어', '해', '려', '줘', '봐') &&
+                KOREAN_CONJUGATED_AUXILIARY_PREFIXES.any(token::startsWith))
     } == true
 
 /** Never publish the interior of an open reported-speech quote as an independent claim. */
@@ -139,4 +143,11 @@ private val KOREAN_REPORTED_SPEECH_PREFIXES = setOf(
 private val KOREAN_AUXILIARY_PREFIXES = setOf(
     // “좋지 않은/못한 …” is one dependent meaning, not an affirmative “좋지”.
     "않", "못", "말아", "말고", "싶",
+)
+private val KOREAN_CONJUGATED_AUXILIARY_PREFIXES = setOf(
+    "드리", "드릴", "드렸", "드려", "드려야", "드리는",
+    "주세", "주세요", "주십", "주셔", "주셨", "주실", "주면", "주니", "주고", "주는",
+    "줘", "줬", "줄", "준",
+    "보니", "보면", "보세", "보세요", "보십", "보셨", "보시", "볼", "본", "봐", "봤",
+    "버리", "버렸", "버려", "두었", "뒀", "놓았", "놓는", "놓고",
 )

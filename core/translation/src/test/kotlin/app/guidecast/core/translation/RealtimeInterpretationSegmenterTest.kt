@@ -644,7 +644,9 @@ class RealtimeInterpretationSegmenterTest {
 
     @Test
     fun `verified long hesitation never converts an unfinished subject into a sentence`() {
-        val segmenter = RealtimeInterpretationSegmenter(sentenceCompletionInterpretationPolicy())
+        val segmenter = RealtimeInterpretationSegmenter(
+            sentenceCompletionInterpretationPolicy().copy(maximumIdleFlushMillis = null),
+        )
         segmenter.observeSpeechActivity(true, 0)
         segmenter.accept(partial(92, "다음 장소에서는 우리가", 100))
         segmenter.observeContinuousQuiet(fromMillis = 200, throughMillis = 2_200)

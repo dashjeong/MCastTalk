@@ -6,6 +6,11 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
+/**
+ * Long-hesitation semantic contracts explicitly disable the optional product idle cap. Those
+ * assertions still guard meaning preservation; IdleSentenceCompletionRegressionTest separately
+ * verifies the new eight-second product recovery and the no-audio/no-speech distinction.
+ */
 class ProviderTranscriptSemanticAssemblerTest {
     @Test
     fun `continuous final lines release committed history without freezing the pending tail`() {
@@ -392,7 +397,9 @@ class ProviderTranscriptSemanticAssemblerTest {
             "방송은 오후 세.",
         )
             .forEachIndexed { index, fragment ->
-                val assembler = ProviderTranscriptSemanticAssembler()
+                val assembler = ProviderTranscriptSemanticAssembler(
+                    sentenceCompletionInterpretationPolicy().copy(maximumIdleFlushMillis = null),
+                )
                 assembler.observeSpeechActivity(isSpeech = true, capturedAtNanos = 0)
                 val accepted = assembler.accept(providerFinal(index.toLong(), fragment, 100))
                 assembler.observeSpeechActivity(isSpeech = false, capturedAtNanos = 200L.ms)
@@ -419,7 +426,9 @@ class ProviderTranscriptSemanticAssemblerTest {
         )
         for (pause in listOf(100L, 300L, 500L, 800L, 1_200L, 3_200L, 8_000L)) {
             cases.forEach { (prefix, suffix) ->
-                val assembler = ProviderTranscriptSemanticAssembler()
+                val assembler = ProviderTranscriptSemanticAssembler(
+                    sentenceCompletionInterpretationPolicy().copy(maximumIdleFlushMillis = null),
+                )
                 assembler.observeSpeechActivity(true, 0)
                 val outputs = mutableListOf<RecognizedUtterance>()
                 outputs += assembler.accept(providerFinal(0, prefix, 100))
@@ -449,7 +458,9 @@ class ProviderTranscriptSemanticAssemblerTest {
             Triple("The price is three point.", "five dollars.", "The price is three point five dollars."),
         )
         cases.forEach { (prefix, suffix, expected) ->
-            val assembler = ProviderTranscriptSemanticAssembler()
+            val assembler = ProviderTranscriptSemanticAssembler(
+                sentenceCompletionInterpretationPolicy().copy(maximumIdleFlushMillis = null),
+            )
             assembler.observeSpeechActivity(true, 0)
             assembler.accept(providerFinal(0, prefix, 100).copy(sourceLanguageTag = "en-US"))
             assembler.observeContinuousQuiet(200, 8_200)
@@ -464,7 +475,9 @@ class ProviderTranscriptSemanticAssemblerTest {
 
     @Test
     fun `English complete sentence can be released while the following condition remains pending`() {
-        val assembler = ProviderTranscriptSemanticAssembler()
+        val assembler = ProviderTranscriptSemanticAssembler(
+            sentenceCompletionInterpretationPolicy().copy(maximumIdleFlushMillis = null),
+        )
         assembler.observeSpeechActivity(true, 0)
         val outputs = assembler.accept(providerFinal(0, "We have arrived. If it rains.", 100)
             .copy(sourceLanguageTag = "en-US"))
@@ -515,7 +528,9 @@ class ProviderTranscriptSemanticAssemblerTest {
 
     @Test
     fun `Korean number before a counter is not mistaken for affirmative reply`() {
-        val assembler = ProviderTranscriptSemanticAssembler()
+        val assembler = ProviderTranscriptSemanticAssembler(
+            sentenceCompletionInterpretationPolicy().copy(maximumIdleFlushMillis = null),
+        )
         assembler.observeSpeechActivity(true, 0)
         val first = assembler.accept(providerFinal(0, "팁 한 네.", 100))
         assembler.observeContinuousQuiet(200, 8_200)
@@ -567,7 +582,9 @@ class ProviderTranscriptSemanticAssemblerTest {
     fun `English subject only and missing auxiliary complements remain pending`() {
         listOf("You.", "They.", "It.", "Did you?", "I know that you.", "You must not.")
             .forEach { text ->
-                val assembler = ProviderTranscriptSemanticAssembler()
+                val assembler = ProviderTranscriptSemanticAssembler(
+                    sentenceCompletionInterpretationPolicy().copy(maximumIdleFlushMillis = null),
+                )
                 assembler.observeSpeechActivity(true, 0)
                 val outputs = assembler.accept(providerFinal(0, text, 100)
                     .copy(sourceLanguageTag = "en-US"))
@@ -597,7 +614,9 @@ class ProviderTranscriptSemanticAssemblerTest {
 
     @Test
     fun `one provider callback drains separate confirmed sentences while retaining dependent tail`() {
-        val assembler = ProviderTranscriptSemanticAssembler()
+        val assembler = ProviderTranscriptSemanticAssembler(
+            sentenceCompletionInterpretationPolicy().copy(maximumIdleFlushMillis = null),
+        )
         assembler.observeSpeechActivity(true, 0)
         val sentences = listOf(
             "첫 장소에 도착했습니다",

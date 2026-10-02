@@ -10,9 +10,11 @@ import java.util.TreeMap
  * before a Korean particle/connective. Those provider finals are useful stability evidence, but
  * they are not translation finals. This assembler retains the bounded, ordered provider lines and
  * lets [RealtimeInterpretationSegmenter] decide the semantic boundary. A continuously observed
- * acoustic pause may confirm a linguistically complete unit; it never completes a known dependent
- * phrase merely because more time passed. Otherwise only real input EOF (or an explicit
- * owner finish using [finish]) flushes an incomplete tail. A bounded capacity recovery also
+ * acoustic pause may confirm a linguistically complete unit; it never invents completion of a
+ * dependent phrase. Product mode also flushes the unchanged whole tail after eight seconds of
+ * continuously measured quiet, without closing the microphone. Strict policy can disable this
+ * idle cap. Real input EOF (or an explicit owner finish using [finish]) also flushes the tail.
+ * A bounded capacity recovery also
  * finishes the usable tail at a provider boundary and accepts the triggering next line.
  */
 class ProviderTranscriptSemanticAssembler(
@@ -25,21 +27,26 @@ class ProviderTranscriptSemanticAssembler(
         val sourceLanguageTag: String,
         val capturedAtNanos: Long,
         val isProviderFinal: Boolean,
+        val originalText: String,
     )
 
-    private var segmenter = RealtimeInterpretationSegmenter(policy)
+    private var segmenter = newSegmenter()
     private val providerLines = TreeMap<Long, ProviderLine>()
     private val completedProviderSequences = LinkedHashSet<Long>()
+    private data class RetiredPartial(val prefix: String, val speechEpoch: Long)
+    private val retiredPartials = mutableMapOf<Long, RetiredPartial>()
     private val outputSequences = mutableMapOf<Long, Long>()
     private val committedContext = ArrayDeque<String>()
     private var nextOutputSequence = 0L
     private var logicalSourceSequence = 0L
     private var speechActive = false
+    private var speechEpoch = 0L
     private var lastSpeechAtNanos: Long? = null
     private var lastAudioObservationAtNanos: Long? = null
     private var speechEpochObserved = false
     private var providerResultObservedInSpeechEpoch = false
     private var noResultEndpointRequested = false
+    private var providerRefreshRequired = false
 
     init {
         require(maximumPendingProviderLines in 2..128)
@@ -51,6 +58,7 @@ class ProviderTranscriptSemanticAssembler(
             // A new measured voice epoch releases an older provider partial only after all of its
             // text was already committed by the preceding utterance-end silence boundary.
             resetIfAllProviderLinesConsumed(allowCommittedPartialLines = true)
+            speechEpoch += 1L
             speechEpochObserved = true
             providerResultObservedInSpeechEpoch = false
             noResultEndpointRequested = false
@@ -65,7 +73,19 @@ class ProviderTranscriptSemanticAssembler(
     fun accept(utterance: RecognizedUtterance): List<RecognizedUtterance> {
         require(!utterance.isRetracted) { "Recognition providers cannot retract provider lines" }
         providerResultObservedInSpeechEpoch = true
-        if (utterance.sequence in completedProviderSequences) return emptyList()
+        val retired = retiredPartials[utterance.sequence]
+        if (utterance.sequence in completedProviderSequences) {
+            // A native recognizer may append the next utterance to the same still-open line.
+            // Reopen only on a new partial in a newly measured voice epoch. A late line-final
+            // callback alone cannot reopen an already published interpretation.
+            if (retired != null && !utterance.isFinal && speechActive &&
+                speechEpoch > retired.speechEpoch) {
+                completedProviderSequences.remove(utterance.sequence)
+            } else return emptyList()
+        }
+        val pendingText = retired?.let { utterance.text.withoutCommittedProviderPrefix(it.prefix) }
+            ?: utterance.text
+        if (pendingText.isBlank()) return emptyList()
         if (
             utterance.sequence !in providerLines &&
             providerLines.isNotEmpty() &&
@@ -77,13 +97,14 @@ class ProviderTranscriptSemanticAssembler(
         }
         val proposed = ProviderLine(
             text = if (utterance.isFinal) {
-                utterance.text.withoutSpeculativeIncompletePunctuation(utterance.sourceLanguageTag)
+                pendingText.withoutSpeculativeIncompletePunctuation(utterance.sourceLanguageTag)
             } else {
-                utterance.text
+                pendingText
             },
             sourceLanguageTag = utterance.sourceLanguageTag,
             capturedAtNanos = utterance.capturedAtElapsedRealtimeNanos,
             isProviderFinal = utterance.isFinal,
+            originalText = utterance.text,
         )
         // Validate before mutation: a rejected callback must not poison seal/finish and every retry.
         if (proposed.text.length > MAX_ASSEMBLED_CHARACTERS) {
@@ -115,6 +136,7 @@ class ProviderTranscriptSemanticAssembler(
             lines = visibleLines.map { it.value },
             nowNanos = utterance.recognizedAtElapsedRealtimeNanos,
         )
+        providerRefreshRequired = false
         val output = mutableListOf<RecognizedUtterance>()
         output += remap(segmenter.accept(aggregate))
         if (utterance.isFinal) {
@@ -128,9 +150,28 @@ class ProviderTranscriptSemanticAssembler(
         return output
     }
 
-    fun tick(nowNanos: Long): List<RecognizedUtterance> = remap(segmenter.tick(nowNanos)).also {
-        discardCommittedProviderLines()
+    fun tick(nowNanos: Long): List<RecognizedUtterance> {
+        val output = remap(segmenter.tick(nowNanos)).toMutableList()
+        // A whole partial committed by measured silence is no longer revisable. Retire its
+        // provider id now, rather than allowing a late changed final to publish a second tail.
+        // Prefix matching below protects partial lines whose uncommitted words still remain.
+        val retiredPartial = discardCommittedProviderLines(
+            allowCommittedPartialLines = !speechActive,
+        )
+        if ((retiredPartial || providerRefreshRequired) && providerLines.isNotEmpty()) {
+            // An interleaved later result may have been hidden behind that revisable line.
+            // Publish it in order instead of dropping it when resetting the old partial.
+            val visible = visibleProviderLines()
+            val aggregate = aggregateUtterance(visible.map { it.value }, nowNanos)
+            providerRefreshRequired = false
+            output += remap(segmenter.accept(aggregate))
+            if (visible.all { it.value.isProviderFinal }) {
+                output += remap(segmenter.accept(aggregate))
+            }
+            discardCommittedProviderLines()
+        }
         resetIfAllProviderLinesConsumed()
+        return output
     }
 
     fun shouldRequestRecognizerEndpoint(nowNanos: Long): Boolean {
@@ -196,6 +237,7 @@ class ProviderTranscriptSemanticAssembler(
         output += remap(segmenter.finish(nowNanos))
         providerLines.keys.forEach(::rememberCompletedProviderSequence)
         providerLines.clear()
+        providerRefreshRequired = false
         resetSegmenter()
         return output
     }
@@ -260,22 +302,40 @@ class ProviderTranscriptSemanticAssembler(
         if (providerLines.isEmpty()) return
         if (segmenter.hasPendingText()) return
         if (!allowCommittedPartialLines && providerLines.values.any { !it.isProviderFinal }) return
-        providerLines.keys.forEach(::rememberCompletedProviderSequence)
-        providerLines.clear()
+        val retiredPartial = discardCommittedProviderLines(allowCommittedPartialLines)
+        // Hidden interleaved lines were never presented to the segmenter. They must survive
+        // a new voice epoch and be reevaluated by the independent ticker, not be marked done.
+        if (providerLines.isNotEmpty()) {
+            if (retiredPartial) providerRefreshRequired = true
+            return
+        }
         resetSegmenter()
     }
 
-    private fun discardCommittedProviderLines() {
+    /** Returns whether a committed partial was retired, exposing previously hidden results. */
+    private fun discardCommittedProviderLines(allowCommittedPartialLines: Boolean = false): Boolean {
+        var retiredPartial = false
         while (providerLines.isNotEmpty()) {
             val first = providerLines.firstEntry()
-            if (!first.value.isProviderFinal || !segmenter.discardCommittedProviderPrefix(first.value.text)) break
+            if ((!first.value.isProviderFinal && !allowCommittedPartialLines) ||
+                !segmenter.discardCommittedProviderPrefix(first.value.text)) break
+            retiredPartial = retiredPartial || !first.value.isProviderFinal
+            if (!first.value.isProviderFinal) {
+                retiredPartials[first.key] = RetiredPartial(
+                    // A provider line is bounded to 2,000 characters. Never accumulate a
+                    // session-long prefix when a vendor reuses the same id with fresh text.
+                    prefix = first.value.originalText,
+                    speechEpoch = speechEpoch,
+                )
+            } else retiredPartials.remove(first.key)
             providerLines.remove(first.key)
             rememberCompletedProviderSequence(first.key)
         }
+        return retiredPartial
     }
 
     private fun resetSegmenter() {
-        segmenter = RealtimeInterpretationSegmenter(policy)
+        segmenter = newSegmenter()
         logicalSourceSequence += 1L
         outputSequences.clear()
         val observedAt = lastAudioObservationAtNanos
@@ -292,8 +352,14 @@ class ProviderTranscriptSemanticAssembler(
     private fun rememberCompletedProviderSequence(sequence: Long) {
         completedProviderSequences += sequence
         while (completedProviderSequences.size > MAX_COMPLETED_PROVIDER_SEQUENCES) {
-            completedProviderSequences.remove(completedProviderSequences.first())
+            val oldest = completedProviderSequences.first()
+            completedProviderSequences.remove(oldest)
+            retiredPartials.remove(oldest)
         }
+    }
+
+    private fun newSegmenter() = RealtimeInterpretationSegmenter(policy) {
+        onRecovery(TranscriptAssemblyRecovery.IDLE_SILENCE_LIMIT)
     }
 
     private companion object {
@@ -302,6 +368,43 @@ class ProviderTranscriptSemanticAssembler(
         const val MAX_ASSEMBLED_CHARACTERS = 2_000
         const val MAX_CONTEXT_SEGMENTS = 2
     }
+}
+
+private fun String.withoutCommittedProviderPrefix(prefix: String): String {
+    val words = trim().split(Regex("\\s+"))
+    val committed = prefix.trim().split(Regex("\\s+"))
+    if (words.take(committed.size) == committed) return words.drop(committed.size).joinToString(" ")
+    // Orthographic ASR revisions can join/split Korean spaces without changing any character.
+    // Find a true token boundary with the same complete committed text, not a raw token count.
+    val joinedPrefix = committed.joinToString("")
+    words.indices.firstOrNull { words.take(it + 1).joinToString("") == joinedPrefix }
+        ?.let { return words.drop(it + 1).joinToString(" ") }
+
+    // Reuse the segmenter's bounded edit distances. A 2–4-token suffix anchor must survive,
+    // and the best prefix alignment must have only a small correction cost. A fresh unrelated
+    // utterance using the same vendor id remains intact; never drop words by approximate count.
+    val distances = tokenPrefixEditDistances(committed, words)
+    val maximumCorrectionCost = maxOf(1, committed.size / 3)
+    for (anchorSize in minOf(4, committed.size) downTo 2) {
+        val anchor = committed.takeLast(anchorSize)
+        val candidates = (anchorSize..words.size).filter { boundary ->
+            words.subList(boundary - anchorSize, boundary) == anchor &&
+                distances[boundary] <= maximumCorrectionCost
+        }
+        candidates.minWithOrNull(compareBy<Int> { distances[it] }.thenByDescending { it })
+            ?.let { return words.drop(it).joinToString(" ") }
+    }
+    // A one-word surviving ending also needs a multi-word old prefix and a very small edit
+    // cost. This handles punctuation or a single repaired word, without erasing a new sentence
+    // that happens to begin with the same subject but has a different predicate.
+    if (committed.size >= 3) {
+        val candidates = words.indices.filter { index ->
+            words[index] == committed.last() && distances[index + 1] <= maximumCorrectionCost
+        }
+        candidates.minWithOrNull(compareBy<Int> { distances[it + 1] }.thenByDescending { it })
+            ?.let { return words.drop(it + 1).joinToString(" ") }
+    }
+    return this
 }
 
 private fun String.withoutSpeculativeIncompletePunctuation(languageTag: String): String =
@@ -316,4 +419,4 @@ private fun elapsedMillis(startNanos: Long, nowNanos: Long): Long =
 
 class ProviderTranscriptAssemblyOverflowException(message: String) : IllegalStateException(message)
 
-enum class TranscriptAssemblyRecovery { PROVIDER_LIMIT, CHARACTER_LIMIT }
+enum class TranscriptAssemblyRecovery { PROVIDER_LIMIT, CHARACTER_LIMIT, IDLE_SILENCE_LIMIT }

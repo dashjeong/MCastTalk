@@ -127,6 +127,16 @@ class RepeatedSemanticSpeechDeviceTest {
         )
     }
 
+    @Test
+    fun lastE4bSentenceTranslatesWhileInputRemainsOpenWithoutNextSpeech(): Unit = runBlocking {
+        assertKoreanSpeechToGemmaTranslationPipeline(
+            variant = GemmaModelVariant.E4B_IT,
+            captureDelayNanos = 0L,
+            rounds = 1,
+            idleFinalDeadlineMillis = 10_000L,
+        )
+    }
+
     /**
      * Evaluates regression where PCM capture timestamps lag behind wallclock (e.g. 800ms)
      * while the E4B resident model is active. Note: Whether E4B CPU contention alone produced
@@ -144,6 +154,8 @@ class RepeatedSemanticSpeechDeviceTest {
     private suspend fun assertKoreanSpeechToGemmaTranslationPipeline(
         variant: GemmaModelVariant,
         captureDelayNanos: Long,
+        rounds: Int = ROUNDS,
+        idleFinalDeadlineMillis: Long = 35_000L,
     ) {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val app = instrumentation.targetContext.applicationContext as GuideCastApplication
@@ -181,16 +193,19 @@ class RepeatedSemanticSpeechDeviceTest {
                         }
                         val input = flow {
                             repeat(50) { sendFrame(ByteArray(FRAME_BYTES)) }
-                            repeat(ROUNDS) { round ->
+                            repeat(rounds) { round ->
                                 assertEquals("Prior round must commit before next", round, finals.size)
                                 var offset = 0
                                 while (offset < fixture.size) {
                                     sendFrame(fixture.copyOfRange(offset, offset + FRAME_BYTES))
                                     offset += FRAME_BYTES
                                 }
-                                withTimeout(35_000L) {
+                                val speechEndedAt = SystemClock.elapsedRealtime()
+                                withTimeout(idleFinalDeadlineMillis) {
                                     while (finals.size <= round) sendFrame(ByteArray(FRAME_BYTES))
                                 }
+                                Log.i("GemmaSpeechGate", "idleFinalMs=${SystemClock.elapsedRealtime() - speechEndedAt} " +
+                                    "round=$round inputRemainsOpen=true noNextSpeech=true")
                                 repeat(50) { sendFrame(ByteArray(FRAME_BYTES)) }
                                 assertEquals("Round $round must produce semantic final", round + 1, finals.size)
                             }
@@ -208,16 +223,17 @@ class RepeatedSemanticSpeechDeviceTest {
                                     targetLanguageTag = "en",
                                 )
                                 assertTrue("Translated text must not be blank", translated.isNotBlank())
+                                // Record the bundled public fixture before the semantic assertion so
+                                // a failure still identifies whether STT or translation changed its meaning.
+                                Log.i("GemmaSpeechGate", "model=${variant.id} delayMs=${captureDelayNanos / 1_000_000} " +
+                                    "sequence=${utterance.sequence} elapsedMs=${SystemClock.elapsedRealtime() - started} " +
+                                    "source=${utterance.text} translation=$translated")
                                 assertTrue(
                                     "Public safety fixture must retain compliance with signs: $translated",
                                     Regex(
                                         """\b(?:follow|obey|observe|heed|respect|comply with|adhere to|abide by)\s+(?:(?:all|the|posted|safety)\s+)*sign(?:s|age|posts)\b""",
                                     ).containsMatchIn(translated.lowercase(Locale.ROOT)),
                                 )
-                                // Only the bundled public fixture enters this test-only evidence.
-                                Log.i("GemmaSpeechGate", "model=${variant.id} delayMs=${captureDelayNanos / 1_000_000} " +
-                                    "sequence=${utterance.sequence} elapsedMs=${SystemClock.elapsedRealtime() - started} " +
-                                    "source=${utterance.text} translation=$translated")
                                 translations += translated
                             }
                         }
@@ -237,14 +253,15 @@ class RepeatedSemanticSpeechDeviceTest {
 
                         try {
                             roundsCompleted.await()
-                            assertEquals(ROUNDS, finals.size)
-                            assertEquals(ROUNDS, finals.map { it.sequence }.toSet().size)
+                            assertEquals(rounds, finals.size)
+                            assertEquals(rounds, finals.map { it.sequence }.toSet().size)
                             assertTrue(finals.zipWithNext().all { (a, b) -> a.sequence < b.sequence })
                             // Wait for all queued translations to finish
                             withTimeout(60_000L) {
-                                while (translations.size < ROUNDS) delay(100L)
+                                while (translations.size < rounds) delay(100L)
                             }
-                            assertEquals(ROUNDS, translations.size)
+                            assertEquals(rounds, translations.size)
+                            assertTrue("Input must remain open after the last translation", recognition.isActive)
                         } finally {
                             recognition.cancelAndJoin()
                             translationQueue.close()

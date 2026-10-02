@@ -18,6 +18,7 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import app.guidecast.core.stream.PcmAudioFrame
+import app.guidecast.core.audio.requestNearSpeakerFocus
 import app.guidecast.core.translation.SpeechRecognitionEngine
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
@@ -152,10 +153,23 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
                 VoiceNoteWav(audioFile).use { wav ->
                     candidate.startRecording()
                     check(candidate.recordingState == AudioRecord.RECORDSTATE_RECORDING)
+                    val focus = requestNearSpeakerFocus(
+                        enabled = app.microphoneNoiseSettings.profiles.value.getValue(
+                            MicrophoneInputGroup.forDeviceType(candidate.routedDevice?.type),
+                        ).nearSpeakerFocus,
+                        builtInMicrophone = candidate.routedDevice?.let { it.type == android.media.AudioDeviceInfo.TYPE_BUILTIN_MIC },
+                        requestDirection = {
+                            candidate.setPreferredMicrophoneDirection(android.media.MicrophoneDirection.MIC_DIRECTION_TOWARDS_USER)
+                        },
+                        requestField = { candidate.setPreferredMicrophoneFieldDimension(1.0f) },
+                    )
                     val startedAt = android.os.SystemClock.elapsedRealtimeNanos()
                     val stream = if (engine != null) VoiceNoteDiskAudioStream(audioFile, startedAt).also { diskStream = it } else null
                     mutableState.update { it.copy(recording = true, busy = false,
-                        message = if (engine == null) "녹음만 진행 중 · 종료하면 원음을 저장합니다." else "녹음·받아쓰기 중 · 말하면 문장이 여기에 나타납니다.",
+                        message = listOfNotNull(
+                            if (engine == null) "녹음만 진행 중 · 종료하면 원음을 저장합니다." else "녹음·받아쓰기 중 · 말하면 문장이 여기에 나타납니다.",
+                            focus.summary,
+                        ).joinToString("\n"),
                         recognitionMessage = if (engine == null) null else "듣고 있습니다") }
                     updateOwnership()
                     if (engine != null && stream != null) recognition = launch {

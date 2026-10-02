@@ -199,6 +199,7 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
     ): String {
         val nativeTicket = currentNativeColdLoadTicket()
         val glossaryHints = currentCoroutineContext()[TranslationGlossaryContext]?.hints.orEmpty()
+        val domainHints = currentCoroutineContext()[app.guidecast.core.translation.DomainTranslationContext]?.hints.orEmpty()
         val review = currentCoroutineContext()[TranslationReviewContext]
         val translationStyle = currentCoroutineContext()[TranslationStyleContext]?.style?.name.orEmpty()
         // Only the local E4B worker receives this ephemeral history. Cloud providers and E2B
@@ -328,6 +329,7 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
                         reviewDraft,
                         translationStyle,
                         sessionMemory,
+                        domainHints,
                         callback,
                     )
                 } catch (error: Throwable) {

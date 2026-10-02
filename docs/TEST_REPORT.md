@@ -729,3 +729,131 @@ establish physical loudspeaker sound or human voice-naturalness approval.
 Only public product source, documentation, signed APK and checksum are released. Raw diagnostic
 archives, recordings, detailed private test logs, credentials and signing keys are excluded.
 Earlier 0.2.42 counts and private candidate runs are not included in these results.
+
+## 2026-10-02 — 0.2.46-beta-d candidate (not a published release)
+
+This dated section supersedes neither the historical 0.2.43 evidence above nor its
+device limitations. Tests below concern the new candidate only. The public release
+remains beta-c while the candidate fails its latency gate.
+
+### Changes and observed defects
+
+- Final-sentence recovery uses real continuous PCM silence, stable hypotheses and
+  conservative conversational endings. A usable unfinished tail has an 8-second
+  silence ceiling; active speech and missing PCM do not trigger a forced cut.
+  Late provider finals cannot replay a retired prefix. Input remains open.
+- Local TXT domain profiles provide reviewed exact pairs and bounded reference
+  examples to Gemma. This is retrieval/correction memory, not weight training.
+  Disabled-domain prompts retain the historical byte-for-byte form.
+- A slow document export previously held the live lookup lock. Export now snapshots
+  bounded rows under the lock and performs external stream writes outside it.
+  A deliberately stalled export regression verifies lookup and operator changes.
+- Narrow currency/explicit-verbatim-typo guards apply only with domain references
+  enabled. Ambiguous currency conversions and ordinary quoted dialogue are left
+  unchanged. Reported instructions preserve the instructor, actor and personal promise.
+- Microphone profiles store independent settings for built-in, wired/USB and Bluetooth
+  input. Android microphone direction is a best-effort request, not speaker identity.
+- Domain navigation now dismisses its overlay through both system Back and the
+  operator menu. The idle domain screen avoids an oversized fixed status header;
+  active input/broadcast retains operator status and controls.
+
+### Build and exact artifacts
+
+macOS ARM64, JDK 17, Gradle wrapper, SDK/build-tools 36.0.0. Gates completed:
+
+```sh
+./gradlew --no-daemon --max-workers=1 testDebugUnitTest :app:testAlphaUnitTest \
+  :core:stream:test :core:translation:test \
+  :provider:gemma-translation:testReleaseUnitTest :app:lintAlpha \
+  :app:assembleAlpha :app:assembleAlphaAndroidTest \
+  :app:verifyPackagedThirdPartyLicenseAssets
+node scripts/verify-listener-player.mjs
+node scripts/verify-public-branding.mjs
+```
+
+The full fidelity gates completed in 1m 3s; subsequent navigation gates completed
+in 4m 4s. The Android-voice measurement test APK was then rebuilt successfully
+in 29s; this last change affected instrumentation only. Alpha unit tests: 589,
+core translation: 292, Gemma: 150, each zero failures/errors/skips. Debug/Alpha
+duplicates are not counted as unique tests. Alpha lint: 0 errors, 88 warnings, 6 hints.
+Core audio Release unit tests: 70; core stream: 28, also zero failures/errors/skips.
+
+The final navigation candidate is 96,636,992 bytes, SHA-256
+`1d097af80de6be6a53727885f055e38ae1b39d1017bc9f4458699df56c92a59e`.
+Its matching instrumentation APK is 5,042,409 bytes, SHA-256
+`38cec07a363984043fe5172119c3d3fbd89de1ee9b0f0294c07a95eab798ab76`.
+Both pass v3 signature and 16 KiB ZIP alignment checks with the existing certificate
+`afd9d964c7161f0052d16b0065e6dec14861900cfb876b18df639734ccf29ff3`.
+Both exact files were installed with `adb install -r` on the S23+ and API-35 ARM64 emulator.
+Raw models, corpus research, diagnostics, recordings, credentials and keys are excluded
+from source control and APK assets.
+
+### Exact-candidate device evidence
+
+Instrumentation uses `GuideCastTestRunner`, `-e portableRunner true`, and explicit
+`-e class` selections. Local evidence is retained under ignored
+`build/evidence/domain-learning-20261002/`.
+
+| Environment / named group | Actual result | Evidence file |
+|---|---|---|
+| S23+ SM-S916N, API 36; domain repository 4 + microphone profiles 1 + microphone focus 1 + domain UI 1 | 7 passed, 16.694s | `physical-navigation-native-seven.log` |
+| S23+; final E4B sentence, no following speech, input kept open | 1 passed, 37.215s; final after 561ms, E4B text after a further 2,781ms | `physical-navigation-idle-final.log` |
+| S23+; prepared E4B + installed Android offline English voice | 20/20 non-silent PCM; functional measurement completed in 108.556s; performance **failed** | `physical-navigation-android20-pcm.log`, `.json` |
+| API-35 ARM64 emulator, 320dp viewport; same repository/microphone/UI group | 7 passed, 22.276s | `emulator-navigation-native-seven.log` |
+| Same emulator, font scale 1.8; domain activation, SAF picker, Back/operator menu/new service entry | 1 passed, 32.647s; font restored | `emulator-navigation-large-font.log` |
+| Same emulator; original authenticated HTTP/WebSocket PCM, operator start, standalone, unready translation, seven channels, rapid restart, deferred-stop cancellation | 7 passed, 13.164s | `emulator-navigation-broadcast-seven.log` |
+
+The full emulator broadcast class was deliberately interrupted before the bounded
+seven-case rerun; its interrupted runner output is not counted as a product crash
+or passing full-class run. Earlier large-font assertions assumed offscreen labels
+were visible; corrected tests now scroll to the actual retained viewport and pass.
+Emulator-only storage reservation was temporarily adjusted for APK installation and
+restored; the physical phone's privacy/security settings were not changed.
+
+The final-sentence fixture is public FLEURS `ko_kr` test row 7/sample 1959 (CC BY 4.0),
+7.02s, 16 kHz S16 mono, 224,640 bytes, SHA-256
+`b35aa5acf7ff72a4ec1b68415957ac9e7fe89268312cc8f5e5325a88acea841f`.
+Native STT produced one word error (시키고 versus 지키고); E4B retained the intended
+“follow all signs” meaning. This is real paced PCM-to-native-STT-to-E4B testing,
+not TV/noise isolation or physical speaker listening.
+
+### Measured latency and release decision
+
+Twenty English samples use five public synthetic phrases repeated four times,
+session memory enabled, prepared native E4B and installed Android offline TTS.
+Nearest-rank final-text-to-first-non-silent-native-PCM p50 = 1,788ms,
+p95 = **2,041ms**, max = 2,277ms; 7/20 exceed 2,000ms. All have clipping ratio 0.
+Translation p95 = 2,021ms; TTS first PCM p95 = 126ms. The measurement uses separate
+15s translation / 30s first-audio test bounds; these do not relax the release gate.
+No microphone, WebSocket scheduling or loudspeaker playback is measured by this test.
+The native result already exceeds the target; **the S23 web-first-PCM p95 gate is
+not passed**, and a beta-d public release is not approved by this report.
+
+The Moonshine-prepared variant failed its precondition because its English model
+was not installed. It yielded no 20-sample latency result. Android results are a
+separate, explicitly named installed-offline-voice route, not a hidden Moonshine pass.
+
+Earlier S23 microphone-focus testing recorded valid ordered 16 kHz S16 mono,
+non-silent PCM with focus OFF/ON, but the OEM direction request was unsupported.
+It does not establish one-speaker isolation. S21 Ultra never appeared in ADB and
+has no physical test result. The S23 batch starts at 14:34:58 UTC; suites are bounded
+to respect the user's 25-minute device-work preference. No privacy control is bypassed.
+
+### Translation quality scope
+
+See `DOMAIN_CORPUS_VALIDATION.md` for frozen train/dev/test boundaries and actual
+OFF/ON comparisons. Completion is separate from semantic accuracy. The initial
+72 meeting outputs and 28 official DEV outputs predate the fidelity guard; the new
+36-output DEV test uses the guard. No 99% human-equivalence, final heldout success,
+8-hour stability, outdoor noise, iPhone/Android browser listening, or voice-naturalness
+approval is established by these controlled tests.
+
+The exact navigation candidate's meeting replay produced all 72 outputs and recorded
+`functionalCompletion=true` and `cleanupCompleted=true` in the on-device JSON,
+SHA-256 `cb07c8e4130124c4ee38f8bc7939cf164d8bceeb7b0dc644ee2622467bd0edf5`.
+ADB transport changed during the run and the host runner received no final JUnit
+token. Therefore this is a recovered complete app-side result, **not a JUnit PASS**.
+On the original MC01/MC05 cases, ON preserves KRW and the explicitly quoted Korean
+typo; Japanese MC09 still omits the instructor's personal-action subject in the
+negated clause. Full independent semantic grading is pending. The official final
+TEST was not started after this interrupted host run and is not reported as passed.

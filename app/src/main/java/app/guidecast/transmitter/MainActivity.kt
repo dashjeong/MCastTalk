@@ -364,11 +364,16 @@ private fun GuideCastScreen(
     var showLicenses by rememberSaveable { mutableStateOf(false) }
     var showGlossary by rememberSaveable { mutableStateOf(false) }
     var showSpeechCorrections by rememberSaveable { mutableStateOf(false) }
+    var showDomainCorpus by rememberSaveable { mutableStateOf(false) }
     var settingsCategory by rememberSaveable { mutableStateOf(SettingsCategory.LANGUAGES) }
     var showAssistant by rememberSaveable { mutableStateOf(false) }
     val noiseSettings = (LocalContext.current.applicationContext as GuideCastApplication).microphoneNoiseSettings
     val developerInfo = LocalDeveloperInfo.current
-    val noiseMode by noiseSettings.mode.collectAsStateWithLifecycle()
+    val microphoneProfiles by noiseSettings.profiles.collectAsStateWithLifecycle()
+    val microphoneGroup = MicrophoneInputGroup.forKind(state.selectedDevice?.kind)
+    val microphoneProfile = microphoneProfiles.getValue(microphoneGroup)
+    val noiseMode = microphoneProfile.noiseMode
+    val nearSpeakerFocus = microphoneProfile.nearSpeakerFocus
     val glossaryWarning by (LocalContext.current.applicationContext as GuideCastApplication).glossary.warning.collectAsStateWithLifecycle()
     var sectionTopRequest by remember { mutableStateOf(0) }
     var accessMode by rememberSaveable { mutableStateOf(OperatorAccessMode.OPEN) }
@@ -393,6 +398,7 @@ private fun GuideCastScreen(
     BackHandler(enabled = showLicenses) { showLicenses = false }
     BackHandler(enabled = showGlossary) { showGlossary = false }
     BackHandler(enabled = showSpeechCorrections) { showSpeechCorrections = false }
+    BackHandler(enabled = showDomainCorpus) { showDomainCorpus = false }
     val inputActive = broadcast.inputPhase == InputPhase.STARTING ||
         broadcast.inputPhase == InputPhase.ACTIVE ||
         broadcast.inputPhase == InputPhase.PAUSED
@@ -438,13 +444,13 @@ private fun GuideCastScreen(
         // Opening a workspace is navigation, never a change to the operator's saved audio mode.
         val destination = if (selected == MCastService.VOICE) MCastService.MULTILINGUAL else selected
         section = GuideCastSection.BROADCAST
-        showLicenses = false; showGlossary = false; showSpeechCorrections = false
+        showLicenses = false; showGlossary = false; showSpeechCorrections = false; showDomainCorpus = false
         showAssistant = false; showDataTransfer = false; showSentenceMemory = false
         showDeveloperLab = false; showFileTranslation = false; showLiveHud = false; showLiveTranscript = false
         service = destination
     }
     BackHandler(enabled = (service != null || section != GuideCastSection.BROADCAST) &&
-        !showLicenses && !showGlossary && !showSpeechCorrections && !showAssistant &&
+        !showLicenses && !showGlossary && !showSpeechCorrections && !showDomainCorpus && !showAssistant &&
         !showDataTransfer && !showSentenceMemory && !showDeveloperLab && !showFileTranslation && !showLiveHud && !showLiveTranscript) {
         if (section != GuideCastSection.BROADCAST) section = GuideCastSection.BROADCAST else service = null
     }
@@ -487,26 +493,27 @@ private fun GuideCastScreen(
           Column(Modifier.statusBarsPadding()) {
             if (section != GuideCastSection.BROADCAST || service in setOf(MCastService.VOICE, MCastService.MULTILINGUAL)) {
               TextButton(onClick = {
-                  showLicenses = false; showGlossary = false; showSpeechCorrections = false
+                  showLicenses = false; showGlossary = false; showSpeechCorrections = false; showDomainCorpus = false
                   showAssistant = false; showDataTransfer = false; showSentenceMemory = false; showDeveloperLab = false; showFileTranslation = false
                   section = GuideCastSection.BROADCAST; service = null
               }) {
                 Text("← 운영 메뉴")
               }
             }
-            if (section != GuideCastSection.BROADCAST || service in setOf(MCastService.VOICE, MCastService.MULTILINGUAL) || broadcastActive || inputActive) OperatorHeader(
+            if ((!showDomainCorpus && (section != GuideCastSection.BROADCAST || service in setOf(MCastService.VOICE, MCastService.MULTILINGUAL))) || broadcastActive || inputActive) OperatorHeader(
                 broadcast = broadcast,
                 onOpenBroadcast = {
                     showLicenses = false
                     showGlossary = false
                     showSpeechCorrections = false
+                    showDomainCorpus = false
                     showAssistant = false; showDataTransfer = false; showSentenceMemory = false; showDeveloperLab = false; showFileTranslation = false
                     service = MCastService.MULTILINGUAL
                     section = GuideCastSection.BROADCAST
                     sectionTopRequest += 1
                 },
                 onOpenLicenses = {
-                    showSpeechCorrections = false; showGlossary = false; showAssistant = false; showDataTransfer = false
+                    showSpeechCorrections = false; showGlossary = false; showDomainCorpus = false; showAssistant = false; showDataTransfer = false
                     showSentenceMemory = false; showDeveloperLab = false; showFileTranslation = false; showLicenses = true
                 },
                 onStopTranslationTest = onStopTranslationTest,
@@ -529,7 +536,7 @@ private fun GuideCastScreen(
                 GuideCastSectionTabs(
                     section = section,
                     onSelect = {
-                        showLicenses = false; showGlossary = false; showSpeechCorrections = false
+                        showLicenses = false; showGlossary = false; showSpeechCorrections = false; showDomainCorpus = false
                         showAssistant = false; showDataTransfer = false; showSentenceMemory = false; showDeveloperLab = false; showFileTranslation = false
                         section = it
                         sectionTopRequest += 1
@@ -570,6 +577,14 @@ private fun GuideCastScreen(
                     else -> ServiceHomeScreen(activeService, selectService)
                 }
             }
+            return@Scaffold
+        }
+        if (showDomainCorpus) {
+            DomainCorpusScreen(
+                repository = app.domainCorpus,
+                onBack = { showDomainCorpus = false },
+                modifier = Modifier.padding(scaffoldPadding),
+            )
             return@Scaffold
         }
         if (showSpeechCorrections) {
@@ -718,7 +733,11 @@ private fun GuideCastScreen(
                     item {
                         MicrophoneNoiseOptions(noiseMode, !inputActive &&
                             state.selectedDevice?.kind != AudioInputKind.DEVICE_PLAYBACK &&
-                            state.selectedDevice?.kind != AudioInputKind.WEB_SPEAKER, noiseSettings::select)
+                            state.selectedDevice?.kind != AudioInputKind.WEB_SPEAKER,
+                            { noiseSettings.selectProfile(microphoneGroup, microphoneProfile.copy(noiseMode = it)) },
+                            nearSpeakerFocus,
+                            { noiseSettings.selectProfile(microphoneGroup, microphoneProfile.copy(nearSpeakerFocus = it)) },
+                            microphoneGroup.label)
                     }
                     item { OperatorStatusStrip(broadcast = broadcast, models = translationModels) }
                     item {
@@ -931,6 +950,10 @@ private fun GuideCastScreen(
                             onClick = { showSpeechCorrections = true },
                             modifier = Modifier.fillMaxWidth().sizeIn(minHeight = 56.dp),
                         ) { Text("인식 학습·보정") }
+                        OutlinedButton(
+                            onClick = { showDomainCorpus = true },
+                            modifier = Modifier.fillMaxWidth().sizeIn(minHeight = 56.dp),
+                        ) { Text("도메인 학습·코퍼스") }
                         OutlinedButton(onClick = { showDataTransfer = true },
                             modifier = Modifier.fillMaxWidth().sizeIn(minHeight = 56.dp)) {
                             Text("설정 / 사전 / 스크립트 · 가져오기 / 내보내기")
@@ -3134,12 +3157,15 @@ private fun InputControls(
                 )
             }
             broadcast.inputProcessingSummary?.let { processingSummary ->
-                if (LocalDeveloperInfo.current || "미지원" in processingSummary) {
+                val focusFeedback = processingSummary.takeIf { it.startsWith("가까운 화자 ·") }
+                    ?.split(" · ", limit = 3)?.take(2)?.joinToString(" · ")
+                if (LocalDeveloperInfo.current || focusFeedback != null || "미지원" in processingSummary) {
                 Text(
                     if (LocalDeveloperInfo.current) processingSummary
+                        else if (focusFeedback != null) focusFeedback
                         else "일부 소음 처리를 사용할 수 없습니다. 원음을 확인하세요.",
                     style = MaterialTheme.typography.labelSmall,
-                    color = if ("미지원" in processingSummary) {
+                    color = if ("미지원" in processingSummary || "지원하지" in processingSummary || "일부만" in processingSummary) {
                         GuideCastWarning
                     } else {
                         MaterialTheme.colorScheme.primary

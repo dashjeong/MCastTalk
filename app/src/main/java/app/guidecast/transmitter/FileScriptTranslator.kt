@@ -80,7 +80,8 @@ internal suspend fun translateFileScript(
                 else app.refreshTranslationModels(setOf(target), owner)
             }
             val localEngine = app.translationProvider.engineFor(target)
-            val draftEngine = if (mode == FileTranslationEngine.API) app.translationApiService.engine(localEngine) else localEngine
+            val baseDraftEngine = if (mode == FileTranslationEngine.API) app.translationApiService.engine(localEngine) else localEngine
+            val draftEngine = DomainCorpusTranslationEngine(baseDraftEngine, app.domainCorpus)
             val reviewerReady = mode == FileTranslationEngine.GEMMA &&
                 app.gemmaTranslationProvider.modelManager.status.value.readiness == GemmaModelReadiness.READY &&
                 !app.gemmaTranslationProvider.isAutomaticRetryBlocked() &&
@@ -111,7 +112,14 @@ internal suspend fun translateFileScript(
                     }
                     if (mode == FileTranslationEngine.API && app.translationApiService.states.value[target] != TranslationApiState.READY) allApiCompleted = false
                     check(draft.isNotBlank()) { "번역 결과가 비어 있습니다." }
-                    val localResult = if (!reviewAvailable || !TranslationReviewContext.canRepresent(chunk, draft)) {
+                    val domainMatch = app.domainCorpus.match(chunk, source, target, style.style)
+                    val isExactDomain = domainMatch.exactTranslation != null
+                    val localResult = if (isExactDomain) {
+                        // Exact domain match is authoritative operator text; not Gemma neural review
+                        if (mode == FileTranslationEngine.GEMMA) allReviewsCompleted = false
+                        notes += "도메인 코퍼스 확정 번역을 반영했습니다."
+                        draft
+                    } else if (!reviewAvailable || !TranslationReviewContext.canRepresent(chunk, draft)) {
                         if (mode == FileTranslationEngine.GEMMA) allReviewsCompleted = false
                         draft
                     }
@@ -119,9 +127,13 @@ internal suspend fun translateFileScript(
                         val reviewed = try {
                             withTimeout(30_000) {
                                 app.withProcessNativeColdLoadLease(ProcessNativeColdLoadKeys.GEMMA_MODEL, true) {
+                                    val gemmaEngine = DomainCorpusTranslationEngine(
+                                        app.gemmaTranslationProvider.engineFor(target),
+                                        app.domainCorpus,
+                                    )
                                     withContext(TranslationReviewContext(chunk, draft, source, target,
                                         setOf(SelectiveRefinementReason.LONG_COMPLETE_SENTENCE))) {
-                                        translateFileChunkWithContext(app.gemmaTranslationProvider.engineFor(target),
+                                        translateFileChunkWithContext(gemmaEngine,
                                             chunk, contextBefore, source, target)
                                     }
                                 }

@@ -663,7 +663,8 @@ class BroadcastService : Service() {
                 app.audioCaptureEngine.frames(
                     preferredDeviceId = input.platformId,
                     config = AudioCaptureConfig(sampleRateHz = SAMPLE_RATE_HZ,
-                        noiseMode = app.microphoneNoiseSettings.mode.value),
+                        noiseMode = app.microphoneNoiseSettings.profileFor(input.kind).noiseMode,
+                        nearSpeakerFocus = app.microphoneNoiseSettings.profileFor(input.kind).nearSpeakerFocus),
                 )
             },
             playbackFrames = {
@@ -2795,10 +2796,11 @@ class BroadcastService : Service() {
             val baseEngine = SentenceRefiningTranslationEngine(
                 app.translationApiService.engine(baseTranslationProvider.engineFor(targetLanguageTag)), app.cloudTranslationReviewer,
             )
+            val domainEngine = DomainCorpusTranslationEngine(baseEngine, app.domainCorpus)
             if (targetLanguageTag.equals("zh-TW", ignoreCase = true)) {
-                TraditionalChineseTranslatingEngine(baseEngine)
+                TraditionalChineseTranslatingEngine(domainEngine)
             } else {
-                baseEngine
+                domainEngine
             }
         }
         val input = Channel<PcmAudioFrame>(

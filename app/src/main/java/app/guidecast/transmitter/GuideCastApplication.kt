@@ -128,6 +128,7 @@ class GuideCastApplication : Application() {
     val translationApiSettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { TranslationApiSettings(this) }
     val translationApiService by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { TranslationApiService(translationApiSettings) }
     val sentenceTranslationMemory by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { SentenceTranslationMemory(this) }
+    val domainCorpus by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { DomainCorpusRepository(this) }
     val cloudTranslationReviewer by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         CloudTranslationReviewer(developerLabSettings, uiDisplaySettings, sentenceTranslationMemory)
     }
