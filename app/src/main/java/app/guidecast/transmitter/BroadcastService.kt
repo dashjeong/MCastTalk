@@ -25,6 +25,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import app.guidecast.core.audio.AudioCaptureConfig
+import app.guidecast.provider.gemma.translation.GemmaModelVariant
 import app.guidecast.core.audio.AudioInputDevice
 import app.guidecast.core.audio.AudioInputKind
 import app.guidecast.core.audio.PcmFrame
@@ -2796,7 +2797,11 @@ class BroadcastService : Service() {
             val baseEngine = SentenceRefiningTranslationEngine(
                 app.translationApiService.engine(baseTranslationProvider.engineFor(targetLanguageTag)), app.cloudTranslationReviewer,
             )
-            val domainEngine = DomainCorpusTranslationEngine(baseEngine, app.domainCorpus)
+            val domainEngine = DomainCorpusTranslationEngine(baseEngine, app.domainCorpus) {
+                if (app.gemmaTranslationProvider.modelManager.selectedVariant ==
+                    GemmaModelVariant.E4B_IT) 600
+                else DomainCorpusFormat.MAX_HINTS_LENGTH
+            }
             if (targetLanguageTag.equals("zh-TW", ignoreCase = true)) {
                 TraditionalChineseTranslatingEngine(domainEngine)
             } else {

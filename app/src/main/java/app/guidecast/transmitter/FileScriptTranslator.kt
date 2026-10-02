@@ -1,6 +1,7 @@
 package app.guidecast.transmitter
 
 import app.guidecast.provider.gemma.translation.GemmaModelReadiness
+import app.guidecast.provider.gemma.translation.GemmaModelVariant
 import app.guidecast.provider.gemma.translation.GemmaBroadcastCapability
 import app.guidecast.core.translation.SelectiveRefinementReason
 import app.guidecast.core.translation.ContextualTextTranslationEngine
@@ -81,7 +82,10 @@ internal suspend fun translateFileScript(
             }
             val localEngine = app.translationProvider.engineFor(target)
             val baseDraftEngine = if (mode == FileTranslationEngine.API) app.translationApiService.engine(localEngine) else localEngine
-            val draftEngine = DomainCorpusTranslationEngine(baseDraftEngine, app.domainCorpus)
+            val draftEngine = DomainCorpusTranslationEngine(baseDraftEngine, app.domainCorpus) {
+                if (app.gemmaTranslationProvider.modelManager.selectedVariant == GemmaModelVariant.E4B_IT) 600
+                else DomainCorpusFormat.MAX_HINTS_LENGTH
+            }
             val reviewerReady = mode == FileTranslationEngine.GEMMA &&
                 app.gemmaTranslationProvider.modelManager.status.value.readiness == GemmaModelReadiness.READY &&
                 !app.gemmaTranslationProvider.isAutomaticRetryBlocked() &&
@@ -130,6 +134,10 @@ internal suspend fun translateFileScript(
                                     val gemmaEngine = DomainCorpusTranslationEngine(
                                         app.gemmaTranslationProvider.engineFor(target),
                                         app.domainCorpus,
+                                        referenceHintBudget = {
+                                            if (app.gemmaTranslationProvider.modelManager.selectedVariant == GemmaModelVariant.E4B_IT) 600
+                                            else DomainCorpusFormat.MAX_HINTS_LENGTH
+                                        },
                                     )
                                     withContext(TranslationReviewContext(chunk, draft, source, target,
                                         setOf(SelectiveRefinementReason.LONG_COMPLETE_SENTENCE))) {

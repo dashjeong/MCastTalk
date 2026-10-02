@@ -24,6 +24,32 @@ import org.junit.Test
 class DomainCorpusRepositoryDeviceTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
 
+    @Test fun optionalHintBudgetKeepsWholeLaterPairsAndNeverClipsEscapes() {
+        val shortSource = "인용한 \"원문\"과 부정은 그대로 보존합니다."
+        val shortTarget = "Preserve the quoted source and negation."
+        val examples = org.json.JSONArray()
+            .put(JSONObject().put("source", "가".repeat(500)).put("translation", "a".repeat(500)))
+            .put(JSONObject().put("source", shortSource).put("translation", shortTarget))
+        val original = JSONObject().put("domain", "회의").put("description", "참고 자료")
+            .put("examples", examples).toString()
+        val bounded = boundedDomainReferenceHints(original, 600)
+        assertTrue(bounded.length <= 600)
+        val retained = JSONObject(bounded).getJSONArray("examples")
+        assertEquals(1, retained.length())
+        assertEquals(shortSource, retained.getJSONObject(0).getString("source"))
+        assertEquals(shortTarget, retained.getJSONObject(0).getString("translation"))
+        val crowded = JSONObject().put("domain", "회의").put("description", "가".repeat(540))
+            .put("examples", org.json.JSONArray().put(JSONObject().put("source", shortSource).put("translation", shortTarget))).toString()
+        val prioritized = JSONObject(boundedDomainReferenceHints(crowded, 600))
+        assertEquals(shortSource, prioritized.getJSONArray("examples").getJSONObject(0).getString("source"))
+        assertFalse(prioritized.has("description"))
+        assertEquals(original, boundedDomainReferenceHints(original, 1200))
+        val oversizedMetadata = JSONObject().put("domain", "회의").put("description", "가".repeat(700)).toString()
+        assertEquals("회의", JSONObject(boundedDomainReferenceHints(oversizedMetadata, 600)).getString("domain"))
+        assertFalse(JSONObject(boundedDomainReferenceHints(oversizedMetadata, 600)).has("description"))
+        assertEquals("", boundedDomainReferenceHints("broken".repeat(150), 600))
+    }
+
     private fun withRepository(block: suspend (DomainCorpusRepository, String) -> Unit) = runBlocking {
         val name = "domain-regression-${System.nanoTime()}.db"
         val repository = DomainCorpusRepository(context, name)

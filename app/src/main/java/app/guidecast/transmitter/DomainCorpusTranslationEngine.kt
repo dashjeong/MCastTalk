@@ -17,6 +17,7 @@ import kotlinx.coroutines.withContext
 class DomainCorpusTranslationEngine(
     private val delegate: TextTranslationEngine,
     private val repository: DomainCorpusRepository,
+    private val referenceHintBudget: () -> Int = { DomainCorpusFormat.MAX_HINTS_LENGTH },
 ) : BoundedQueuedTranslationEngine {
 
     override val maximumCallDurationMillis: Long
@@ -48,8 +49,9 @@ class DomainCorpusTranslationEngine(
         }
 
         // Ephemeral domain hints passed only when present
-        return if (match.hints.isNotBlank()) {
-            val translated = withContext(DomainTranslationContext(match.hints)) {
+        val referenceHints = boundedDomainReferenceHints(match.hints, referenceHintBudget())
+        return if (referenceHints.isNotBlank()) {
+            val translated = withContext(DomainTranslationContext(referenceHints)) {
                 delegateTranslate(text, contextBefore, sourceLanguageTag, targetLanguageTag)
             }
             TextFidelityGuard.repair(text, translated, sourceLanguageTag, targetLanguageTag)

@@ -40,6 +40,11 @@ class DomainCorpusBenchmarkDeviceTest {
         executeSuite("fidelity-dev")
     }
 
+    @Test
+    fun compareRecoveryDevCases(): Unit = runBlocking {
+        executeSuite("recovery-dev")
+    }
+
     private suspend fun executeSuite(suite: String) {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val arguments = InstrumentationRegistry.getArguments()
@@ -98,7 +103,9 @@ class DomainCorpusBenchmarkDeviceTest {
             save()
 
             for (target in targets) {
-                val engine = DomainCorpusTranslationEngine(provider.engineFor(target), repository)
+                val engine = DomainCorpusTranslationEngine(provider.engineFor(target), repository) {
+                    if (requestedVariant == GemmaModelVariant.E4B_IT) 600 else DomainCorpusFormat.MAX_HINTS_LENGTH
+                }
                 for (index in 0 until cases.length()) {
                     val item = cases.getJSONObject(index)
                     if (item.has("target") && item.getString("target") != target) continue
@@ -116,6 +123,8 @@ class DomainCorpusBenchmarkDeviceTest {
                             .put("style", style.name).put("category", item.getString("category"))
                             .put("target", target).put("source", source).put("context", item.getString("context"))
                             .put("domainEnabled", enabled).put("hintCharacters", match.hints.length)
+                            .put("submittedHintCharacters", boundedDomainReferenceHints(match.hints,
+                                if (requestedVariant == GemmaModelVariant.E4B_IT) 600 else DomainCorpusFormat.MAX_HINTS_LENGTH).length)
                             .put("lookupMs", lookupMs)
                             .put("state", "RUNNING")
                         rows.put(row)

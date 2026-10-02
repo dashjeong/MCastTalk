@@ -62,6 +62,9 @@ class E4BPreparedAudioLatencyDeviceTest {
                 observer = object : TranslationPipelineObserver {
                     override fun onTranslationCompleted(utterance: RecognizedUtterance, target: TranslationTarget, translatedText: String, elapsedMillis: Long) {
                         row.put("translationMs", elapsedMillis)
+                        // This suite accepts only the five fixed public synthetic phrases below.
+                        // Retain their actual output for independent meaning review, not user audio.
+                        row.put("source", utterance.text).put("translation", translatedText)
                     }
                     override fun onSynthesisAudioStarted(utterance: RecognizedUtterance, target: TranslationTarget, elapsedMillis: Long) {
                         row.put("ttsFirstAudibleMs", elapsedMillis)

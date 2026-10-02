@@ -900,3 +900,86 @@ fallback success, or rewrite old result files. Existing cleanup still runs.
 This establishes compilation only. The changed instrumentation has not yet been
 packaged, installed or exercised on a failure path; the matching test-APK hash
 above refers to the previous installed instrumentation, not this source update.
+
+### 2026-10-03 — E4B execution and fidelity candidate follow-up
+
+This section distinguishes the MTP-option-only APK from the subsequently changed
+fidelity/reference candidate. Neither is a published release or a completed quality gate.
+
+The MTP-option-only product SHA-256 is
+`a5a494962a2a1de3a0542172bd74c2793c24ed5efc2df17908d529647883d924`.
+On S23+ SM-S916N/API 36 its two prepared E4B/installed Android offline English
+TTS runs each completed 20/20 non-silent samples. Native final-text-to-first-PCM
+p95 was **1,698ms** and **1,687ms**, max 1,833ms and 1,834ms respectively.
+The five fixed synthetic phrases were each repeated four times; session memory
+was enabled. These tests do not measure microphone, ASR, WebSocket or speaker
+playback. The earlier 2,041/2,049ms measurements used a different APK and thermal
+conditions. The difference is observational, not a controlled MTP OFF/ON result.
+Runtime metadata confirms the GPU backend and a speculative-decoding request,
+not independent proof of a particular drafter's execution or identical translations.
+The old test did not retain its translation text, so timing success is not meaning
+approval. Evidence: `physical-mtp-android20-pcm.log/.json` and
+`physical-mtp-android20-unobserved-retest.log/.json` in the ignored evidence directory.
+
+During the first MTP-only run 12 read-only resource observations recorded thermal
+status 0 and battery temperature 32.5–33.6°C (one intervening 32.4°C sample).
+Worker PSS ranged from 2,544,593 to 3,671,654 KiB. Live CPU observations used a
+second one-second `top` interval; worker values ranged from 0 to 90%, including
+preparation and idle intervals. Neither CPU percentages nor PSS establish GPU
+utilization, absence of memory pressure, or long-duration stability. The second
+20-sample run had no resource sampling. MTP-only emulator inference failed at
+the unchanged 10,000ms limit; that failure is not a passing CPU/model-switch result.
+
+The newer recovery candidate requests speculative decoding for E4B/GPU only and
+resets the process-wide option to SDK default for E2B or CPU. E2B's historical
+prompt remains fixed by its golden test. Narrow currency/verbatim-typo guards
+now also apply to native E4B when domain references are OFF. They do not infer
+actors, repair ambiguous quotations, perform currency conversion, or modify
+source/history/corpus/exact user translations. The generic E4B prompt separates
+instructions to another person from the speaker's own promise. E4B optional
+domain references are limited to 600 characters, retaining whole bilingual pairs
+before optional description; CURRENT is unchanged. This is a character budget,
+not a KV-token guarantee. The production native 10s deadline remains unchanged.
+
+Final recovery gates completed in **3m 35s**, 420 tasks: Gemma Debug 152,
+core translation 292, Alpha 589 tests, each zero failures/errors/skips;
+Alpha lint, actual Alpha APK/test APK assembly and packaged license validation
+also completed. Public branding, listener scheduling, resampling and eight-language
+listener safety checks passed. Exact signed recovery artifacts:
+
+- Product: 96,636,992 bytes, SHA-256
+  `4ce3c120caa56b4419e4e0cbae4af8c71c162f7399fc5bd325bdfd9959b36a6c`.
+- Instrumentation: 5,046,505 bytes, SHA-256
+  `a08a8b9947bbfbfc9a94c1c1efde9bef2d800844bd6d7c9aebbaeb92a61189ff`.
+
+Both pass v3 signature and 16 KiB alignment with the same certificate recorded
+above. Both exact artifacts were update-installed on the API-35 ARM64 emulator.
+For this install only, emulator global `sys_storage_threshold_max_bytes` was
+changed from `null` to 20 MiB, then restored to `null` in `finally` and reread.
+No app/model data was removed and no physical-device security setting changed.
+
+Actual recovery-candidate emulator results:
+
+| Named test group | Result | Local evidence |
+|---|---|---|
+| Domain repository, including whole-pair budget and escaping | **5 passed**, 0.225s | `emulator-recovery-domain-repository.log` |
+| Original protected HTTP/WebSocket PCM, operator opening, standalone input independence, unready translation, seven channels, rapid restart and deferred-stop cancellation | **7 passed**, 12.914s | `emulator-recovery-broadcast-seven.log` |
+| Frozen recovery DEV E4B native inference | **1 failed**, 31.375s; first English OFF case RC01 exceeded native 10s limit | `emulator-recovery-dev-inference.log` |
+
+The eight-case runner fixture SHA-256 was verified on the emulator before execution:
+`b351d7c1e93eb76d43b15b43e206fbebe0986f54aef688fe166c32a98f2034c2`.
+The recovered failure JSON SHA-256 is
+`4944e58d77c7a74b78abfe2131fffc5c564b8ef4a9d45adbae96ef8dcdf4e3ae`.
+It records model preparation 21,136ms, RC01 elapsed 10,064ms, terminal
+`TIMED_OUT`, zero completed translations and `cleanupCompleted=true`.
+This exercises the terminal-state fix on the exact new instrumentation; it does
+not establish 48 completed outputs or semantic recovery. The seven broadcast
+tests ran after this attempt but do not prove live E4B-to-ML Kit fallback speech.
+
+S23+ was absent from ADB at this follow-up, so the newer fidelity/reference APK
+has no S23+ installation, semantic regression or new 20-sample latency result.
+The Mac GUI was locked; CLI checks continued, but no Antigravity UI approval is
+claimed during the lock. Unsupported latency estimates in its design draft were
+not accepted as measured evidence. Earlier MTP-only phone measurements must not
+be attributed to this newer APK. Actor/negation quality, the earlier long-reference
+timeout, web-first-PCM p95, human listening and long-duration gates remain unproven.
