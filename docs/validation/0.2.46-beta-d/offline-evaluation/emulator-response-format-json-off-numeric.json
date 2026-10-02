@@ -1,0 +1,99 @@
+{
+  "scope": "Owned emulator synthetic recovery test window; strict numeric/backend allowlist only",
+  "windowStartEpoch": 1790963183.508,
+  "windowEndEpoch": 1790963283.508,
+  "state": "READ_OK",
+  "events": [
+    {
+      "epochSeconds": 1790963188.588,
+      "utc": "2026-10-02T17:46:28.588000+00:00",
+      "pid": 6123,
+      "metadata": "Gemma translation started: target=en, chars=5"
+    },
+    {
+      "epochSeconds": 1790963188.603,
+      "utc": "2026-10-02T17:46:28.603000+00:00",
+      "pid": 6123,
+      "metadata": "Gemma execution options: model=e4b_it, backend=CPU, speculativeDecodingRequested=default"
+    },
+    {
+      "epochSeconds": 1790963189.213,
+      "utc": "2026-10-02T17:46:29.213000+00:00",
+      "pid": 6123,
+      "metadata": "Gemma LiteRT-LM CPU initialization finished: elapsedMs=625"
+    },
+    {
+      "epochSeconds": 1790963189.214,
+      "utc": "2026-10-02T17:46:29.214000+00:00",
+      "pid": 6123,
+      "metadata": "Gemma response format: mode=NONE"
+    },
+    {
+      "epochSeconds": 1790963189.214,
+      "utc": "2026-10-02T17:46:29.214000+00:00",
+      "pid": 6123,
+      "metadata": "Gemma generation options: model=e4b_it, backend=CPU, maxOutputToken=64"
+    },
+    {
+      "epochSeconds": 1790963192.921,
+      "utc": "2026-10-02T17:46:32.921000+00:00",
+      "pid": 6123,
+      "metadata": "Gemma first visible: elapsedMs=3706"
+    },
+    {
+      "epochSeconds": 1790963200.837,
+      "utc": "2026-10-02T17:46:40.837000+00:00",
+      "pid": 6123,
+      "metadata": "Gemma decode timing: firstVisibleMs=3706, elapsedMs=11623, auxiliaryChars=0"
+    },
+    {
+      "epochSeconds": 1790963200.851,
+      "utc": "2026-10-02T17:46:40.851000+00:00",
+      "pid": 6123,
+      "metadata": "Gemma translation finished: target=en, elapsedMs=12262"
+    },
+    {
+      "epochSeconds": 1790963200.887,
+      "utc": "2026-10-02T17:46:40.887000+00:00",
+      "pid": 6123,
+      "metadata": "Gemma translation started: target=en, chars=49"
+    },
+    {
+      "epochSeconds": 1790963200.887,
+      "utc": "2026-10-02T17:46:40.887000+00:00",
+      "pid": 6123,
+      "metadata": "Gemma response format: mode=NONE"
+    },
+    {
+      "epochSeconds": 1790963200.887,
+      "utc": "2026-10-02T17:46:40.887000+00:00",
+      "pid": 6123,
+      "metadata": "Gemma generation options: model=e4b_it, backend=CPU, maxOutputToken=130"
+    },
+    {
+      "epochSeconds": 1790963206.423,
+      "utc": "2026-10-02T17:46:46.423000+00:00",
+      "pid": 6123,
+      "metadata": "Gemma first visible: elapsedMs=5532"
+    },
+    {
+      "epochSeconds": 1790963244.187,
+      "utc": "2026-10-02T17:47:24.187000+00:00",
+      "pid": 6123,
+      "metadata": "Gemma decode timing: firstVisibleMs=5532, elapsedMs=43297, auxiliaryChars=0"
+    },
+    {
+      "epochSeconds": 1790963244.212,
+      "utc": "2026-10-02T17:47:24.212000+00:00",
+      "pid": 6123,
+      "metadata": "Gemma translation finished: target=en, elapsedMs=43326"
+    }
+  ],
+  "rawOutputSaved": false,
+  "limits": [
+    "No request IDs in runtime log; event-to-utterance mapping is inference unless independently matched",
+    "Missing events may reflect rotation or absent logging; not proof of no native work",
+    "No token counts or prefill timing available",
+    "Caller timeout and native terminal are distinct boundaries"
+  ]
+}

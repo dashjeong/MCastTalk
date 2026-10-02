@@ -1,0 +1,215 @@
+{
+  "reviewKind": "AI provisional semantic review; not human gold/listening",
+  "sourceResult": "emulator-domain-meeting-offline-standard-1790962461622.json",
+  "sourceSha256": "26117c5f5c44272e4e8e0ea2cb251c4a1ffd0018493665a4975790fe9d993a69",
+  "evaluationMode": "OFFLINE_SEMANTIC_EVALUATION",
+  "budgetMs": 60000,
+  "model": "standard/E2B",
+  "functionalCompleted": 18,
+  "gradeCounts": {
+    "PASS": 14,
+    "MINOR": 3,
+    "MAJOR": 1
+  },
+  "rows": [
+    {
+      "id": "MC01",
+      "target": "en",
+      "domainEnabled": false,
+      "source": "올해 3분기 영업이익은 전년 동기 대비 14.5% 증가한 2,850억 원을 기록했습니다.",
+      "actualTranslation": "The operating profit for the third quarter of this year recorded 285 billion won, which is a 14.5% increase compared to the same period last year.",
+      "grade": "PASS",
+      "reasons": [],
+      "elapsedMs": 1967
+    },
+    {
+      "id": "MC01",
+      "target": "en",
+      "domainEnabled": true,
+      "source": "올해 3분기 영업이익은 전년 동기 대비 14.5% 증가한 2,850억 원을 기록했습니다.",
+      "actualTranslation": "The third-quarter operating profit for this year recorded 285 billion won, an increase of 14.5% compared to the same period last year.",
+      "grade": "PASS",
+      "reasons": [],
+      "elapsedMs": 2067
+    },
+    {
+      "id": "MC05",
+      "target": "en",
+      "domainEnabled": false,
+      "source": "보고서에는 고객사 요청사항이 ‘품질 하략’이라고 오기되었으나, 원문을 그대로 인용하여 기재했습니다.",
+      "actualTranslation": "The report mistakenly wrote '품질 하략' (quality reduction) in the customer's request, but it was recorded by quoting the original text verbatim.",
+      "grade": "PASS",
+      "reasons": [],
+      "elapsedMs": 1831
+    },
+    {
+      "id": "MC05",
+      "target": "en",
+      "domainEnabled": true,
+      "source": "보고서에는 고객사 요청사항이 ‘품질 하략’이라고 오기되었으나, 원문을 그대로 인용하여 기재했습니다.",
+      "actualTranslation": "In the report, the customer's request was mistakenly written as '품질 하략' (quality reduction), but it was stated by quoting the original text.",
+      "grade": "PASS",
+      "reasons": [],
+      "elapsedMs": 1798
+    },
+    {
+      "id": "MC09",
+      "target": "en",
+      "domainEnabled": false,
+      "source": "과장님이 나보고 협력사에 회의록을 보내라고 하셨지, 직접 보내겠다고 하신 건 아니에요.",
+      "actualTranslation": "The manager told me to send the meeting minutes to the partner company, but he didn't say he would send them himself.",
+      "grade": "MINOR",
+      "reasons": [
+        "원문에 없는 남성 he를 선택. 역할/부정 관계는 보존."
+      ],
+      "elapsedMs": 1536
+    },
+    {
+      "id": "MC09",
+      "target": "en",
+      "domainEnabled": true,
+      "source": "과장님이 나보고 협력사에 회의록을 보내라고 하셨지, 직접 보내겠다고 하신 건 아니에요.",
+      "actualTranslation": "The manager told me to send the meeting minutes to the vendor, but he didn't say he would send them himself.",
+      "grade": "MINOR",
+      "reasons": [
+        "원문에 없는 남성 he를 선택. 역할/부정 관계는 보존."
+      ],
+      "elapsedMs": 1587
+    },
+    {
+      "id": "MC01",
+      "target": "ja",
+      "domainEnabled": false,
+      "source": "올해 3분기 영업이익은 전년 동기 대비 14.5% 증가한 2,850억 원을 기록했습니다.",
+      "actualTranslation": "今年の第3四半期の営業利益は、前年同期比で14.5%増加した2,850億ウォンを記録しました。",
+      "grade": "PASS",
+      "reasons": [
+        "기존 좁은 보정으로 유일 통화/단일 명시적 인용 복원 확인."
+      ],
+      "elapsedMs": 1664
+    },
+    {
+      "id": "MC01",
+      "target": "ja",
+      "domainEnabled": true,
+      "source": "올해 3분기 영업이익은 전년 동기 대비 14.5% 증가한 2,850억 원을 기록했습니다.",
+      "actualTranslation": "今年の第3四半期の営業利益は、前年同期比で14.5%増の2,850億ウォンを記録しました。",
+      "grade": "PASS",
+      "reasons": [],
+      "elapsedMs": 1828
+    },
+    {
+      "id": "MC05",
+      "target": "ja",
+      "domainEnabled": false,
+      "source": "보고서에는 고객사 요청사항이 ‘품질 하략’이라고 오기되었으나, 원문을 그대로 인용하여 기재했습니다.",
+      "actualTranslation": "報告書には顧客側の要望事項が「품질 하략」と誤記されていたが、原文をそのまま引用して記載しました。",
+      "grade": "PASS",
+      "reasons": [
+        "기존 좁은 보정으로 유일 통화/단일 명시적 인용 복원 확인."
+      ],
+      "elapsedMs": 1623
+    },
+    {
+      "id": "MC05",
+      "target": "ja",
+      "domainEnabled": true,
+      "source": "보고서에는 고객사 요청사항이 ‘품질 하략’이라고 오기되었으나, 원문을 그대로 인용하여 기재했습니다.",
+      "actualTranslation": "報告書には顧客社からの要望事項が「품질 하략」と誤記されていたが、原文をそのまま引用して記載しました。",
+      "grade": "PASS",
+      "reasons": [],
+      "elapsedMs": 1672
+    },
+    {
+      "id": "MC09",
+      "target": "ja",
+      "domainEnabled": false,
+      "source": "과장님이 나보고 협력사에 회의록을 보내라고 하셨지, 직접 보내겠다고 하신 건 아니에요.",
+      "actualTranslation": "課長が私に協力会社に議事録を送ってって言ったけど、自分で送るとは言ったわけじゃないよ。",
+      "grade": "PASS",
+      "reasons": [],
+      "elapsedMs": 1457
+    },
+    {
+      "id": "MC09",
+      "target": "ja",
+      "domainEnabled": true,
+      "source": "과장님이 나보고 협력사에 회의록을 보내라고 하셨지, 직접 보내겠다고 하신 건 아니에요.",
+      "actualTranslation": "課長が私に協力会社に議事録を送ってほしいって言ったけど、直接送るとは言わなかったよ。",
+      "grade": "MINOR",
+      "reasons": [
+        "두번째 절에 행위자가 생략되어 직접 송부 약속의 주체가 모호함. 확정 역할 반전은 유보."
+      ],
+      "elapsedMs": 1725
+    },
+    {
+      "id": "MC01",
+      "target": "zh",
+      "domainEnabled": false,
+      "source": "올해 3분기 영업이익은 전년 동기 대비 14.5% 증가한 2,850억 원을 기록했습니다.",
+      "actualTranslation": "本年度第三季度营业利润为2,850亿韩元，同比增长14.5%。",
+      "grade": "PASS",
+      "reasons": [],
+      "elapsedMs": 1364
+    },
+    {
+      "id": "MC01",
+      "target": "zh",
+      "domainEnabled": true,
+      "source": "올해 3분기 영업이익은 전년 동기 대비 14.5% 증가한 2,850억 원을 기록했습니다.",
+      "actualTranslation": "本年度第三季度营业利润为2,850亿韩元，同比增长14.5%。",
+      "grade": "PASS",
+      "reasons": [],
+      "elapsedMs": 1543
+    },
+    {
+      "id": "MC05",
+      "target": "zh",
+      "domainEnabled": false,
+      "source": "보고서에는 고객사 요청사항이 ‘품질 하략’이라고 오기되었으나, 원문을 그대로 인용하여 기재했습니다.",
+      "actualTranslation": "报告中，客户方要求被错误地写为‘품질 하략’，但我们引用了原文进行记载。",
+      "grade": "PASS",
+      "reasons": [
+        "기존 좁은 보정으로 유일 통화/단일 명시적 인용 복원 확인."
+      ],
+      "elapsedMs": 1397
+    },
+    {
+      "id": "MC05",
+      "target": "zh",
+      "domainEnabled": true,
+      "source": "보고서에는 고객사 요청사항이 ‘품질 하략’이라고 오기되었으나, 원문을 그대로 인용하여 기재했습니다.",
+      "actualTranslation": "报告中，客户方要求被错误地写为‘품질 하략’，但我们已引用原文予以记载。",
+      "grade": "PASS",
+      "reasons": [],
+      "elapsedMs": 1566
+    },
+    {
+      "id": "MC09",
+      "target": "zh",
+      "domainEnabled": false,
+      "source": "과장님이 나보고 협력사에 회의록을 보내라고 하셨지, 직접 보내겠다고 하신 건 아니에요.",
+      "actualTranslation": "经理让我把会议记录发给合作方，他不是说自己会直接发。",
+      "grade": "PASS",
+      "reasons": [],
+      "elapsedMs": 1159
+    },
+    {
+      "id": "MC09",
+      "target": "zh",
+      "domainEnabled": true,
+      "source": "과장님이 나보고 협력사에 회의록을 보내라고 하셨지, 직접 보내겠다고 하신 건 아니에요.",
+      "actualTranslation": "经理让我把会议记录发给合作方，他不是说自己会直接发吗？",
+      "grade": "MAJOR",
+      "reasons": [
+        "직접 보내겠다고 한 것이 아님을 不是说自己会直接发吗？라는 반문으로 바꿈. 발화 태도/부정 의미 반전."
+      ],
+      "elapsedMs": 1392
+    }
+  ],
+  "limits": [
+    "AI provisional review, no human gold or listening",
+    "MC09 zh ON role/negation error remains",
+    "No user source/history/TRAIN/exact approved translations changed"
+  ]
+}

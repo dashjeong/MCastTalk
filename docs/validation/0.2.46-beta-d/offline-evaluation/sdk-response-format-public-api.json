@@ -1,0 +1,14 @@
+{
+  "sdkVersion": "0.16.1",
+  "classesJarSha256": "64c69d66fc4f5859adc1758b10090c13f17ded187d551078841f7282b786ff7a",
+  "publicApi": [
+    "public final boolean getEnableResponseFormat();",
+    "public static final com.google.ai.edge.litertlm.ResponseFormat json(java.lang.String);",
+    "public static final com.google.ai.edge.litertlm.ResponseFormat json(java.util.Map<java.lang.String, ? extends java.lang.Object>);",
+    "public final boolean getEnableResponseFormat();",
+    "public final void sendMessageAsync(java.lang.String, com.google.ai.edge.litertlm.MessageCallback, java.util.Map<java.lang.String, ? extends java.lang.Object>, com.google.ai.edge.litertlm.RepetitionPenaltyConfig, com.google.ai.edge.litertlm.NoRepeatNgramConfig, com.google.ai.edge.litertlm.SuppressTokensConfig, java.lang.Integer, com.google.ai.edge.litertlm.ThinkingConfig, com.google.ai.edge.litertlm.ResponseFormat);"
+  ],
+  "productionDependencyVersionChanged": false,
+  "enableResponseFormatSdkDefault": false,
+  "defaultEvidence": "javap -c synthetic constructor bit2048 branch uses iconst_0/istore12"
+}

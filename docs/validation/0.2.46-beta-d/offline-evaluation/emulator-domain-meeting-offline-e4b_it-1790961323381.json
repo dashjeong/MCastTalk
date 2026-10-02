@@ -1,0 +1,34 @@
+{
+  "model": "e4b_it",
+  "suite": "meeting",
+  "evaluationMode": "OFFLINE_SEMANTIC_EVALUATION",
+  "requestBudgetMs": 60000,
+  "referenceCharacterBudget": 600,
+  "plannedRows": 18,
+  "trainingCorpus": "meeting",
+  "fixtureKind": "authored-text-not-microphone",
+  "semanticGrade": "REQUIRES_INDEPENDENT_REVIEW",
+  "rows": [
+    {
+      "id": "MC01",
+      "style": "FORMAL",
+      "category": "numbers_and_quantities",
+      "target": "en",
+      "source": "올해 3분기 영업이익은 전년 동기 대비 14.5% 증가한 2,850억 원을 기록했습니다.",
+      "context": "재무 성과 발표 중",
+      "domainEnabled": false,
+      "hintCharacters": 0,
+      "submittedHintCharacters": 0,
+      "lookupMs": 3,
+      "state": "TIMED_OUT",
+      "elapsedMs": 60094,
+      "failureClass": "GemmaRealtimeTimeoutException"
+    }
+  ],
+  "modelPreparationMs": 15507,
+  "cleanupCompleted": true,
+  "attemptedRows": 1,
+  "completedRows": 0,
+  "failedRows": 1,
+  "notAttemptedRows": 17
+}

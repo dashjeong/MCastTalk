@@ -1,0 +1,19 @@
+{
+  "serial": "emulator-5554",
+  "namespace": "global",
+  "key": "sys_storage_threshold_max_bytes",
+  "previous": "null",
+  "temporaryBytes": 20971520,
+  "installs": [
+    {
+      "artifact": "MCastTalk-0.2.46-beta-d-offline-diagnostic-reviewed.apk",
+      "success": true
+    },
+    {
+      "artifact": "MCastTalk-0.2.46-beta-d-tests-offline-diagnostic-reviewed.apk",
+      "success": true
+    }
+  ],
+  "restored": "null",
+  "restorationMatches": true
+}

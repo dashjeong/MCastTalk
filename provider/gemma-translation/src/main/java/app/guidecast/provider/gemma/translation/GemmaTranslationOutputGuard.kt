@@ -81,3 +81,17 @@ internal fun requireGemmaTargetScript(source: String, translated: String, target
     val latinWords = Regex("[A-Za-z]{2,}").findAll(translated).count()
     check(latinWords < 8) { "GEMMA_TARGET_SCRIPT_MISMATCH" }
 }
+
+/** All model variants share these narrow output contracts; prompts and source data stay intact. */
+internal fun validateAndRepairGemmaTranslation(
+    source: String,
+    translated: String,
+    sourceLanguageTag: String,
+    targetLanguageTag: String,
+): String {
+    requireGemmaTranslationIsNotCopiedSource(source, translated, sourceLanguageTag, targetLanguageTag)
+    requireGemmaTargetScript(source, translated, targetLanguageTag)
+    return app.guidecast.core.translation.TextFidelityGuard.repair(
+        source, translated, sourceLanguageTag, targetLanguageTag,
+    )
+}

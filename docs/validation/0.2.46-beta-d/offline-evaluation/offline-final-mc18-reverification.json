@@ -1,0 +1,9 @@
+{
+  "finalResult": "emulator-domain-meeting-offline-json-off-standard-1790963382380.json",
+  "finalResultSha256": "87d2dc0eb4d1af85c2b3dbcc9de171a32527aa6c71403e504aeb94cb8e8870a0",
+  "same18InputContextStyleAndOutputsAsSharedGuardApk": true,
+  "plannedRows": 18,
+  "completedRows": 18,
+  "cleanupCompleted": true,
+  "JUnitSeconds": 47.699
+}

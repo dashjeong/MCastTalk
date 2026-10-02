@@ -1,0 +1,13 @@
+{
+  "status": "OPERATOR_ABORTED_OVERSCOPED_TEST_SELECTION",
+  "plannedTests": 32,
+  "reason": "Selected full BroadcastEmulatorIntegrationTest rather than the frozen seven method subset; stopped only own emulator target and reran exact twelve",
+  "recordedTerminalFailureEvents": 1,
+  "finalInstrumentationCode": [
+    "0"
+  ],
+  "notClaimedAsPass": true,
+  "replacementEvidence": "emulator-offline-diagnostic-basic-twelve.log",
+  "replacementJUnit": "OK (12 tests), 14.159 seconds",
+  "userDeviceDataDeleted": false
+}

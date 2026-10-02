@@ -1,0 +1,158 @@
+{
+  "headBeforeChanges": "0fb9730f2adc2b91a62550af81afa2ff1a430c7e",
+  "sourceStatus": "UNCOMMITTED_OWNER_REVIEW_REQUIRED",
+  "ci": {
+    "run": 37037194807,
+    "conclusion": "success",
+    "coversThisUncommittedDiff": false
+  },
+  "finalArtifact": {
+    "product": "MCastTalk-0.2.46-beta-d-offline-response-format-reviewed.apk",
+    "productSha256": "2e699db1554c456aa13e0fa861b7e3097cddd2898afa7814c56ab4b406bb6e48",
+    "tests": "MCastTalk-0.2.46-beta-d-tests-offline-response-format-reviewed.apk",
+    "testsSha256": "5af68436fab006a8c15e5e7469feed25d151ee4850ca80846ed21694644bb9cc",
+    "v3": true,
+    "alignment16KiB": true,
+    "releaseCertificateSha256": "afd9d964c7161f0052d16b0065e6dec14861900cfb876b18df639734ccf29ff3",
+    "emulatorInstall": true
+  },
+  "gates": {
+    "providerUnitTests": 163,
+    "coreTranslationTests": 292,
+    "appAlphaTests": 589,
+    "failures": 0,
+    "lintAlpha": "PASS",
+    "packagedLicenses": "PASS",
+    "buildSeconds": 231,
+    "basicDeviceTests": 12,
+    "basicDeviceJUnitSeconds": 13.481,
+    "finalE2bMcRows": 18,
+    "finalE2bMcJUnitSeconds": 47.699
+  },
+  "scope": "Controlled authored fixtures and numeric-only diagnostics. No user microphone/audio/history/raw logcat/keys. No new phone benchmark.",
+  "releaseReady": false,
+  "files": [
+    {
+      "file": "emulator-domain-recovery-dev-offline-e4b_it-1790961012893.json",
+      "sha256": "12058f2d0841d0dbaaa3ab810a01cb0e0c9244e5b893fcdbb45d59aecdd54143"
+    },
+    {
+      "file": "emulator-domain-recovery-dev-offline-standard-1790961141494.json",
+      "sha256": "3ce19012b7185878a1728680229c2250c66678aafe2e97614c46cc43db1feebb"
+    },
+    {
+      "file": "emulator-domain-meeting-offline-standard-1790961448757.json",
+      "sha256": "6519231df4153fc035434ce35dddbe6eac1c9199aeec3a241b528e69cac46d97"
+    },
+    {
+      "file": "emulator-domain-recovery-dev-offline-e4b_it-1790961804703.json",
+      "sha256": "3b47b937b3813fd3362451ce904b796603d9b5f569c676f230bd1ccdec66fba5"
+    },
+    {
+      "file": "emulator-domain-meeting-offline-standard-1790962461622.json",
+      "sha256": "26117c5f5c44272e4e8e0ea2cb251c4a1ffd0018493665a4975790fe9d993a69"
+    },
+    {
+      "file": "emulator-domain-recovery-dev-offline-standard-1790962575001.json",
+      "sha256": "471bf9df4564c9e8abb1cb33153fcb1d6f44c6c0ec66fa66928f742e9e12af36"
+    },
+    {
+      "file": "emulator-domain-recovery-dev-offline-json-on-e4b_it-1790963083414.json",
+      "sha256": "af4b2334d11ebf92796a9364d529563d2549da6b518bdb747d8ef2cf82b3869c"
+    },
+    {
+      "file": "emulator-domain-recovery-dev-offline-json-off-e4b_it-1790963188508.json",
+      "sha256": "4a8489f5c544a9080c44acd3b04d0e33fd5c6474d4fe8f254bde4abcf368285e"
+    },
+    {
+      "file": "emulator-domain-meeting-offline-json-off-standard-1790963382380.json",
+      "sha256": "87d2dc0eb4d1af85c2b3dbcc9de171a32527aa6c71403e504aeb94cb8e8870a0"
+    },
+    {
+      "file": "offline-recovery-e2b-provisional-semantic-review.json",
+      "sha256": "49cb8f3d5d0a126bd41b201a2119d2a8f7dac5f094bcbe71a88cef1aee2ec27f"
+    },
+    {
+      "file": "offline-fidelity-e2b-provisional-semantic-review.json",
+      "sha256": "b28821d0890c52344a20b779b127b4296ff23bebbd952dd5596dbe3e1a600d36"
+    },
+    {
+      "file": "offline-shared-guard-fidelity-e2b-provisional-review.json",
+      "sha256": "25981abd8b83272674f1368a23ed7bbc2fc24c5cd69d8606a2615ce5b7512d03"
+    },
+    {
+      "file": "offline-shared-guard-recovery-comparison.json",
+      "sha256": "d4c7f270f9d874f01870790f504275623020cf53ff4686d4f776c0be22875520"
+    },
+    {
+      "file": "offline-final-mc18-reverification.json",
+      "sha256": "0fcf3c39d8cce4e53015bfee915f5fdc00b44f7da9eb10c00d71b43e6427a7c2"
+    },
+    {
+      "file": "sdk-response-format-public-api.json",
+      "sha256": "54fa584c346d8900f2da53c944d6a319180bc4e760a4e3f5f96b08700ddd7944"
+    },
+    {
+      "file": "emulator-offline-diagnostic-overscoped-run-status.json",
+      "sha256": "76502ad362e806e85e03c97f1f0a0bdbb1d4d60644d803ce8640a0bba50090eb"
+    },
+    {
+      "file": "emulator-offline-install-restoration.json",
+      "sha256": "31a8625d87705ada8cf645ff8536956b09b2e461260e2c5844742b7dcdd9fb72"
+    },
+    {
+      "file": "emulator-offline-diagnostic-install-restoration.json",
+      "sha256": "c8154336f23132f100889a2b779b8efe5a1fb5abdce54011132ad1d9a6170fcb"
+    },
+    {
+      "file": "emulator-offline-shared-guard-install-restoration.json",
+      "sha256": "c321c2abbc959c3091364a531eaebf121b2fda3e07323e97cc171ddada342f6b"
+    },
+    {
+      "file": "emulator-offline-response-format-install-restoration.json",
+      "sha256": "94e18315fd6b127f4653d55d106e0015e6f8196e42dd1e6bbc2efa132ed0673a"
+    },
+    {
+      "file": "emulator-domain-meeting-offline-e4b_it-1790961323381.json",
+      "sha256": "9de0e04a3a19189340388ce0654d2cb9de156db9d124232ad974fe125dfc8e2f"
+    },
+    {
+      "file": "emulator-offline-e4b-numeric-diagnostics.json",
+      "sha256": "9baa73f2f9154b5ebe1ffc2f3c042068212fe5851af8b413caba34aa9d44d157"
+    },
+    {
+      "file": "emulator-offline-e4b-terminal-metadata.json",
+      "sha256": "7b0b79f3afe9fda9e38a2f3e0aab90bc157e44a5d1eecc39da78df9dffecc1ec"
+    },
+    {
+      "file": "emulator-offline-diagnostic-numeric-metadata.json",
+      "sha256": "a4a5559fa9f7a17b374b47285069b8bef7077cc4948c0d917c0beed77bba6226"
+    },
+    {
+      "file": "emulator-offline-diagnostic-terminal-metadata.json",
+      "sha256": "1a1c140ade415f9f0c76dfd07aad5e66eee60c806edbde70a9f698b4729c11a2"
+    },
+    {
+      "file": "emulator-response-format-json-on-numeric.json",
+      "sha256": "71ce4ec19a5ee0ab292af71915aa23d749a0dfffdc6a24ce4de060e8b34127ad"
+    },
+    {
+      "file": "emulator-response-format-json-off-numeric.json",
+      "sha256": "330efbc5d3ab16f2b3ebf695fa4f1f0f151bbe18049cef3511a7085b549fc2e4"
+    }
+  ],
+  "promptDefinitionsUnchanged": true,
+  "frozenFixtureHashes": {
+    "meeting-corpus.json": "bd3492f9d5dc83a421889197f486bc929362955e53cfd1559594589b438e7a84",
+    "recovery-dev-corpus.json": "e85d3d4519bf93e12131b5c416c712e7abef20432db2a52a2edb21fc1d01f0fc",
+    "recovery-dev-corpus-runner.json": "b351d7c1e93eb76d43b15b43e206fbebe0986f54aef688fe166c32a98f2034c2"
+  },
+  "productionDependencyVersionChanged": false,
+  "unchangedContracts": {
+    "provider/gemma-translation/src/main/java/app/guidecast/provider/gemma/translation/GemmaWorkerDeadline.kt": true,
+    "provider/gemma-translation/src/main/java/app/guidecast/provider/gemma/translation/GemmaNativeTerminalBridge.kt": true,
+    "core/translation/src/main/kotlin/app/guidecast/core/translation/TextFidelityGuard.kt": true,
+    "app/src/main/java/app/guidecast/transmitter/BroadcastService.kt": true,
+    "app/src/main/java/app/guidecast/transmitter/DomainCorpusTranslationEngine.kt": true
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "model": "e4b_it",
+  "suite": "recovery-dev",
+  "evaluationMode": "OFFLINE_SEMANTIC_EVALUATION",
+  "requestBudgetMs": 60000,
+  "referenceCharacterBudget": 600,
+  "plannedRows": 48,
+  "trainingCorpus": "meeting",
+  "fixtureKind": "authored-text-not-microphone",
+  "semanticGrade": "REQUIRES_INDEPENDENT_REVIEW",
+  "rows": [
+    {
+      "id": "RC01",
+      "style": "CONVERSATIONAL",
+      "category": "actor_agency_and_directive_vs_self_promise",
+      "target": "en",
+      "source": "팀장님이 나보고 제안서를 수정하라고 하셨지, 본인이 직접 수정하시겠다고 한 건 아니에요.",
+      "context": "업무 분장 및 제안서 수정 책임 확인 중",
+      "domainEnabled": false,
+      "hintCharacters": 0,
+      "submittedHintCharacters": 0,
+      "lookupMs": 3,
+      "state": "TIMED_OUT",
+      "elapsedMs": 60057,
+      "failureClass": "GemmaRealtimeTimeoutException"
+    }
+  ],
+  "modelPreparationMs": 18959,
+  "cleanupCompleted": true,
+  "attemptedRows": 1,
+  "completedRows": 0,
+  "failedRows": 1,
+  "notAttemptedRows": 47
+}

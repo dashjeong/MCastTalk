@@ -1,0 +1,17 @@
+{
+  "scope": "Owned worker PID from synthetic test; terminal events only",
+  "state": "READ_OK",
+  "events": [
+    {
+      "epochSeconds": 1790961883.989,
+      "pid": 5027,
+      "event": "OWNED_WORKER_KILL_REPORTED"
+    }
+  ],
+  "rawOutputSaved": false,
+  "limits": [
+    "Process death is not proof of cause or per-request native callback acknowledgement",
+    "No cancellation log exists in provider code, so absence cannot prove cancel failure",
+    "This does not start stop or reset any app"
+  ]
+}

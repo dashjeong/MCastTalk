@@ -57,7 +57,22 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
     fun isAutomaticRetryBlocked(): Boolean =
         nativeCrashCircuitBreaker.isBlocked(modelManager.selectedVariant.id)
 
-    override fun engineFor(targetLanguageTag: String): ContextualTextTranslationEngine {
+    override fun engineFor(targetLanguageTag: String): ContextualTextTranslationEngine =
+        translationEngineFor(targetLanguageTag, offlineEvaluation = false)
+
+    /** Explicit controlled-text evaluation only; never selected by live translation callers. */
+    fun offlineEvaluationEngineFor(
+        targetLanguageTag: String,
+        jsonResponseFormat: Boolean = false,
+    ): ContextualTextTranslationEngine =
+        translationEngineFor(targetLanguageTag, offlineEvaluation = true, jsonResponseFormat = jsonResponseFormat)
+
+    private fun translationEngineFor(
+        targetLanguageTag: String,
+        offlineEvaluation: Boolean,
+        jsonResponseFormat: Boolean = false,
+    ): ContextualTextTranslationEngine {
+        require(!jsonResponseFormat || offlineEvaluation) { "JSON response format is evaluation-only" }
         val configuredTarget = targetLanguageTag.normalizedGemmaLanguage()
         require(configuredTarget in SUPPORTED_LANGUAGES) {
             "Gemma Translator target is not supported"
@@ -71,13 +86,17 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
             ): String {
                 check(!applyingModel.get()) { "모델 실행 점검·적용 중입니다. 완료 후 통역을 시작하세요." }
                 require(targetLanguageTag.normalizedGemmaLanguage() == configuredTarget)
-                return translate(
+                suspend fun request() = translate(
                     text = text,
                     contextBefore = contextBefore,
                     sourceLanguageTag = sourceLanguageTag,
                     targetLanguageTag = configuredTarget,
-                    timeoutMillis = REALTIME_TRANSLATION_TIMEOUT_MILLIS,
+                    timeoutMillis = if (offlineEvaluation) GEMMA_OFFLINE_EVALUATION_TIMEOUT_MILLIS
+                        else REALTIME_TRANSLATION_TIMEOUT_MILLIS,
+                    jsonResponseFormat = jsonResponseFormat,
                 )
+                return if (offlineEvaluation) withGemmaOfflineEvaluationDeadline { request() }
+                    else request()
             }
         }
     }
@@ -135,6 +154,7 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
         targetLanguageTag: String,
         timeoutMillis: Long,
         explicitVerification: Boolean = false,
+        jsonResponseFormat: Boolean = false,
     ): String {
         require(text.isNotBlank() && text.length <= MAX_SOURCE_CHARACTERS)
         val source = sourceLanguageTag.normalizedGemmaLanguage()
@@ -148,6 +168,7 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
         require(source != target) { "Gemma Translator source and target must be different" }
         return modelManager.withSelectedModel {
             val selectedModelId = modelManager.selectedVariant.id
+            gemmaEvaluationResponseSchema(selectedModelId, jsonResponseFormat)
             if (!explicitVerification) {
                 nativeCrashCircuitBreaker.requireAutomaticAttemptAllowed(selectedModelId)
             }
@@ -170,6 +191,7 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
                         sourceLanguageTag = source,
                         targetLanguageTag = if (targetLanguageTag.equals("zh-TW", ignoreCase = true)) "zh-TW" else target,
                         selectedModelId = selectedModelId,
+                        jsonResponseFormat = jsonResponseFormat,
                     )
                 } ?: throw GemmaRealtimeTimeoutException(
                     "Gemma 실시간 번역이 ${timeoutMillis}ms 안에 끝나지 않아 경량 오프라인 번역으로 전환합니다.",
@@ -196,6 +218,7 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
         sourceLanguageTag: String,
         targetLanguageTag: String,
         selectedModelId: String,
+        jsonResponseFormat: Boolean,
     ): String {
         val nativeTicket = currentNativeColdLoadTicket()
         val glossaryHints = currentCoroutineContext()[TranslationGlossaryContext]?.hints.orEmpty()
@@ -330,6 +353,7 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
                         translationStyle,
                         sessionMemory,
                         domainHints,
+                        jsonResponseFormat,
                         callback,
                     )
                 } catch (error: Throwable) {

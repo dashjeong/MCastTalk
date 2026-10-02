@@ -1,0 +1,51 @@
+{
+  "scope": "Owned emulator synthetic recovery test window; strict numeric/backend allowlist only",
+  "windowStartEpoch": 1790961007.893,
+  "windowEndEpoch": 1790961117.893,
+  "state": "READ_OK",
+  "events": [
+    {
+      "epochSeconds": 1790961013.007,
+      "utc": "2026-10-02T17:10:13.007000+00:00",
+      "pid": 4578,
+      "metadata": "Gemma translation started: target=en, chars=5"
+    },
+    {
+      "epochSeconds": 1790961013.017,
+      "utc": "2026-10-02T17:10:13.017000+00:00",
+      "pid": 4578,
+      "metadata": "Gemma execution options: model=e4b_it, backend=CPU, speculativeDecodingRequested=default"
+    },
+    {
+      "epochSeconds": 1790961014.276,
+      "utc": "2026-10-02T17:10:14.276000+00:00",
+      "pid": 4578,
+      "metadata": "Gemma LiteRT-LM CPU initialization finished: elapsedMs=1268"
+    },
+    {
+      "epochSeconds": 1790961029.972,
+      "utc": "2026-10-02T17:10:29.972000+00:00",
+      "pid": 4578,
+      "metadata": "Gemma decode timing: firstVisibleMs=6315, elapsedMs=15695, auxiliaryChars=0"
+    },
+    {
+      "epochSeconds": 1790961029.994,
+      "utc": "2026-10-02T17:10:29.994000+00:00",
+      "pid": 4578,
+      "metadata": "Gemma translation finished: target=en, elapsedMs=16987"
+    },
+    {
+      "epochSeconds": 1790961030.046,
+      "utc": "2026-10-02T17:10:30.046000+00:00",
+      "pid": 4578,
+      "metadata": "Gemma translation started: target=en, chars=49"
+    }
+  ],
+  "rawOutputSaved": false,
+  "limits": [
+    "No request IDs in runtime log; event-to-utterance mapping is inference unless independently matched",
+    "Missing events may reflect rotation or absent logging; not proof of no native work",
+    "No token counts or prefill timing available",
+    "Caller timeout and native terminal are distinct boundaries"
+  ]
+}

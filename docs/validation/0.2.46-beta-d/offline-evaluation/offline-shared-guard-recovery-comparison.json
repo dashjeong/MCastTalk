@@ -1,0 +1,17 @@
+{
+  "beforeSha256": "3ce19012b7185878a1728680229c2250c66678aafe2e97614c46cc43db1feebb",
+  "afterSha256": "471bf9df4564c9e8abb1cb33153fcb1d6f44c6c0ec66fa66928f742e9e12af36",
+  "completedRows": 32,
+  "sameCompletedOutputs": 32,
+  "failedRow": {
+    "id": "RC01",
+    "target": "zh",
+    "domainEnabled": false,
+    "elapsedMs": 1479,
+    "failureClass": "IllegalStateException",
+    "failureCode": "GEMMA_TARGET_SCRIPT_MISMATCH",
+    "codeEvidence": "emulator-offline-shared-guard-recovery-e2b-instrumentation.log"
+  },
+  "notAttemptedRows": 15,
+  "actualFallbackExecutionVerified": false
+}

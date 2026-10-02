@@ -1020,3 +1020,61 @@ The preceding source commit `7bf885293640291c15805ae255b4b08b327d2697` passed
 GitHub Android CI run `37035015461`. That run excludes this instrumentation
 follow-up and must not be presented as CI coverage of a later commit. Release
 status remains draft; new S23+ quality/latency and web/human/soak gates are unproven.
+
+## 2026-10-03 KST: offline evaluation, shared output validation and model application review
+
+The named offline evaluation API uses a fixed 60-second budget including model
+admission and generation-lane wait. The live API remains 10 seconds; native
+terminal ownership and its 120-second protection are unchanged. E2B and E4B now
+share the existing narrow target-script/copy validation and unambiguous fidelity
+repairs. JSON response constraints are E4B/offline-only, explicitly opt-in and
+default OFF. No production dependency or model/prompt definition was changed in
+this follow-up.
+
+Executed module gates on JDK 17: `:provider:gemma-translation:testDebugUnitTest`,
+`:core:translation:test`, `:app:testAlphaUnitTest`, `:app:lintAlpha`,
+`:app:assembleAlpha`, `:app:assembleAlphaAndroidTest`, and
+`:app:verifyPackagedThirdPartyLicenseAssets`. The final build completed in 3m 51s;
+parsed XML counts are **163 / 292 / 589**, with zero failures/errors/skips.
+Public branding, listener scheduling, fragmented resampling and eight-language
+listener UI scripts passed. The public-snapshot scanner's nine regression tests
+also passed.
+
+Final signed product SHA-256:
+`2e699db1554c456aa13e0fa861b7e3097cddd2898afa7814c56ab4b406bb6e48`;
+matching test APK:
+`5af68436fab006a8c15e5e7469feed25d151ee4850ca80846ed21694644bb9cc`.
+Codex independently verified product v3 signature, the existing release
+certificate, 16 KiB alignment and both hashes. The exact pair was installed on
+API 35 ARM64 emulator-5554; the emulator-only storage reserve was restored to
+its original `null`, with no user/model data deletion. The exact pair passed the
+bounded 12 repository/original-audio/broadcast regressions in **13.481s** and
+E2B meeting 18-row instrumentation in **47.699s**. All final meeting inputs,
+contexts, styles and outputs match the preceding shared-guard 18-row execution.
+
+Meaning is not approved by those completion results: the shared guard actually
+repaired three meeting outputs, while MC09 Chinese negation remained incorrect.
+Recovery testing stopped with **33 attempted / 32 completed / 1 failed / 15 not
+attempted**, after correctly rejecting English output requested as Chinese.
+The matching JUnit log confirms `GEMMA_TARGET_SCRIPT_MISMATCH`; this is not proof
+of completed ML Kit fallback speech.
+
+E4B JSON ON/OFF was one identical authored English request per mode, in that
+order, on the same final CPU/emulator APK. ON timed out at **60,051ms**; OFF
+completed at **43,333ms**. First visible text was **7,240 / 5,532ms**. Model
+preparation differed; no causal speedup claim or full-corpus E4B approval follows.
+Earlier 10/60-second failures remain evidence, not overwritten successes.
+
+Codex checked the hashes of 27 controlled JSON evidence files and confirmed
+224 source fields match the frozen authored fixtures. Credential/artifact and
+private-path checks passed for this set. This targeted scan is not a guarantee
+that all possible sensitive material has been detected; no raw user logs/audio,
+keys, APKs or models are staged with these reports.
+See [evaluation report](validation/0.2.46-beta-d/OFFLINE_EVALUATION_REPORT.md),
+[evidence manifest](validation/0.2.46-beta-d/offline-evaluation/MANIFEST.json),
+and [mobile model application plan](GEMMA_MOBILE_APPLICATION_PLAN.md).
+
+**Release remains blocked:** outstanding meaning failures, latest physical-phone
+quality/thermal/memory/latency, full fallback speech, web first-PCM p95 and
+human/soak validation have not passed. A draft-PR source commit and its CI are
+separate from APK release approval.

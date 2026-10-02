@@ -7,6 +7,7 @@ import android.os.SystemClock
 import android.util.Log
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Content
+import com.google.ai.edge.litertlm.ResponseFormat
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
@@ -54,6 +55,7 @@ internal class GemmaInferenceRuntime(context: Context) : Closeable {
         translationStyle: String = "",
         sessionMemory: String = "",
         domainHints: String = "",
+        jsonResponseFormat: Boolean = false,
     ): String = inferenceMutex.withLock {
         if (requestedVariant != variant) {
             // Explicit IPC identity, not cross-process SharedPreferences. A replacement model
@@ -61,6 +63,7 @@ internal class GemmaInferenceRuntime(context: Context) : Closeable {
             resetEngineLocked()
             requestedVariant = variant
         }
+        gemmaEvaluationResponseSchema(variant.id, jsonResponseFormat)
         require(text.isNotBlank() && text.length <= MAX_SOURCE_CHARACTERS)
         require(glossaryHints.length <= 2_400) { "Glossary hints exceed the per-sentence budget" }
         require(domainHints.length <= 1_200) { "Domain hints exceed the per-sentence budget" }
@@ -85,7 +88,7 @@ internal class GemmaInferenceRuntime(context: Context) : Closeable {
         Log.i(LOG_TAG, "Gemma translation started: target=$targetLanguageTag, chars=${text.length}")
         try {
             val translated = try {
-                runTranslation(source, target, contextBefore, text, glossaryHints, reviewDraft, translationStyle, sessionMemory, domainHints)
+                runTranslation(source, target, contextBefore, text, glossaryHints, reviewDraft, translationStyle, sessionMemory, domainHints, jsonResponseFormat)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (fatal: VirtualMachineError) {
@@ -99,7 +102,7 @@ internal class GemmaInferenceRuntime(context: Context) : Closeable {
                 resetEngineLocked()
                 Log.w(LOG_TAG, "Gemma GPU inference failed; retrying same text on CPU", error)
                 try {
-                    runTranslation(source, target, contextBefore, text, glossaryHints, reviewDraft, translationStyle, sessionMemory, domainHints)
+                    runTranslation(source, target, contextBefore, text, glossaryHints, reviewDraft, translationStyle, sessionMemory, domainHints, jsonResponseFormat)
                 } catch (cpuError: Throwable) {
                     cpuError.addSuppressed(error)
                     throw cpuError
@@ -107,11 +110,7 @@ internal class GemmaInferenceRuntime(context: Context) : Closeable {
             }
             // A model-language failure is not evidence of a GPU driver failure. Check after the
             // backend retry block so copied speech cannot disable GPU or enter TTS as translation.
-            requireGemmaTranslationIsNotCopiedSource(text, translated, sourceCode, targetCode)
-            if (requestedVariant == GemmaModelVariant.E4B_IT) requireGemmaTargetScript(text, translated, targetCode)
-            if (requestedVariant == GemmaModelVariant.E4B_IT) {
-                app.guidecast.core.translation.TextFidelityGuard.repair(text, translated, sourceCode, targetCode)
-            } else translated
+            validateAndRepairGemmaTranslation(text, translated, sourceCode, targetCode)
         } finally {
             Log.i(
                 LOG_TAG,
@@ -131,11 +130,19 @@ internal class GemmaInferenceRuntime(context: Context) : Closeable {
         translationStyle: String,
         sessionMemory: String,
         domainHints: String = "",
+        jsonResponseFormat: Boolean = false,
     ): String = withContext(Dispatchers.Default) {
         val activeEngine = engine ?: createEngine().also { engine = it }
         val requestStarted = SystemClock.elapsedRealtime()
         val firstVisibleAt = AtomicLong(-1L)
         val auxiliaryCharacters = AtomicLong(0L)
+        val maxOutputToken = gemmaTranslationOutputTokenLimit(text.length)
+        val responseSchema = gemmaEvaluationResponseSchema(requestedVariant.id, jsonResponseFormat)
+        val responseFormat = responseSchema?.let { ResponseFormat.json(it) }
+        Log.i(LOG_TAG, "Gemma response format: mode=${if (responseSchema == null) "NONE" else "JSON_TRANSLATION_SCHEMA"}")
+        // Static execution metadata only; never prompt, partial output, or session memory.
+        Log.i(LOG_TAG, "Gemma generation options: model=${requestedVariant.id}, " +
+            "backend=${activeBackend?.name ?: "UNKNOWN"}, maxOutputToken=$maxOutputToken")
         activeEngine.createConversation(
                     ConversationConfig(
                 samplerConfig = SamplerConfig(
@@ -144,7 +151,8 @@ internal class GemmaInferenceRuntime(context: Context) : Closeable {
                     temperature = 0.0,
                     seed = 7,
                 ),
-                maxOutputToken = gemmaTranslationOutputTokenLimit(text.length),
+                maxOutputToken = maxOutputToken,
+                enableResponseFormat = responseSchema != null,
                 // Translation emits the final answer directly. Keep E2B's established template.
                 thinkingConfig = if (requestedVariant == GemmaModelVariant.E4B_IT) {
                     ThinkingConfig(enableThinking = false)
@@ -189,7 +197,10 @@ internal class GemmaInferenceRuntime(context: Context) : Closeable {
                                 try {
                                     auxiliaryCharacters.addAndGet(message.channels.values.sumOf { it.length }.toLong())
                                     if (message.contents.contents.any { it is Content.Text && it.text.isNotEmpty() }) {
-                                        firstVisibleAt.compareAndSet(-1L, SystemClock.elapsedRealtime())
+                                        val visibleAt = SystemClock.elapsedRealtime()
+                                        if (firstVisibleAt.compareAndSet(-1L, visibleAt)) {
+                                            Log.i(LOG_TAG, "Gemma first visible: elapsedMs=${visibleAt - requestStarted}")
+                                        }
                                     }
                                     nativeCallback.onChunk(
                                         message.contents.contents
@@ -218,6 +229,7 @@ internal class GemmaInferenceRuntime(context: Context) : Closeable {
                                 }
                             }
                         },
+                        responseFormat = responseFormat,
                     )
                 },
                 mergeChunk = { output, chunk -> output.mergeLiteRtChunk(chunk) },
