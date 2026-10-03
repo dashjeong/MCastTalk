@@ -53,6 +53,17 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
                 ui.isConverting || ui.isLoading || playback?.isPlaying == true || playback?.isTranslating == true
             }.distinctUntilChanged().collect { updateOwnership() }
         }
+        viewModelScope.launch {
+            app.translationApiSettings.state.map { it.provider != TranslationApiProvider.LOCAL }
+                .distinctUntilChanged().collect { online ->
+                    val next = if (online) FileTranslationEngine.API else
+                        mutableUi.value.translationEngine.takeUnless { it == FileTranslationEngine.API } ?: FileTranslationEngine.MLKIT
+                    if (next != mutableUi.value.translationEngine) {
+                        if (isBusy()) cancel("통번역 운용 모드가 변경되어 파일 작업을 중지했습니다.")
+                        mutableUi.update { it.copy(translationEngine = next, selectedFiles = requeueCompleted(it.selectedFiles)) }
+                    }
+                }
+        }
         viewModelScope.launch { refreshLibrary() }
         viewModelScope.launch {
             app.broadcastRuntime.state.map { runtime ->
@@ -121,7 +132,7 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
             },
         )
     }
-    fun selectEngine(engine: FileTranslationEngine) { if (!isBusy()) mutableUi.update { it.copy(translationEngine = engine, selectedFiles = requeueCompleted(it.selectedFiles)) } }
+    fun selectEngine(engine: FileTranslationEngine) { if (!isBusy() && app.translationApiSettings.state.value.provider == TranslationApiProvider.LOCAL && engine != FileTranslationEngine.API) mutableUi.update { it.copy(translationEngine = engine, selectedFiles = requeueCompleted(it.selectedFiles)) } }
     fun toggleTarget(tag: String) {
         if (isBusy()) return
         mutableUi.update { state ->

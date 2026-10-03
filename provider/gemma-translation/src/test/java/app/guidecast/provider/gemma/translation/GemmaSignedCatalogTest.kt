@@ -188,6 +188,28 @@ class GemmaSignedCatalogTest {
     }
 
     @Test(expected = IllegalArgumentException::class)
+    fun `rejects collision with builtin e4b id`() {
+        val model = createSampleModel(id = GemmaModelVariant.E4B_IT_ID, fileName = "new_e4b.litertlm")
+        val encoded = GemmaSignedCatalog.encode(
+            version = 1,
+            models = listOf(model),
+            privateKey = keyPair.private,
+        )
+        GemmaSignedCatalog.decode(encoded, keyPair.public)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `rejects collision with builtin e4b fileName`() {
+        val model = createSampleModel(id = "my_custom_e4b", fileName = GemmaModelVariant.E4B_IT.fileName)
+        val encoded = GemmaSignedCatalog.encode(
+            version = 1,
+            models = listOf(model),
+            privateKey = keyPair.private,
+        )
+        GemmaSignedCatalog.decode(encoded, keyPair.public)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
     fun `rejects invalid non-https or non-huggingface repositoryUrl`() {
         val model = createSampleModel(repositoryUrl = "http://insecure-server.com/repo")
         val encoded = GemmaSignedCatalog.encode(

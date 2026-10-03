@@ -75,6 +75,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -232,6 +233,7 @@ class MainActivity : ComponentActivity() {
                     onClearTranslationLanguages = viewModel::clearTranslationLanguages,
                     onPrepareTranslationModels = viewModel::prepareSelectedTranslationModels,
                     onSelectSpeechVoice = viewModel::selectSpeechVoice,
+                    onRecheckSpeechVoices = viewModel::recheckInstalledSpeechVoices,
                     onCancelModelPreparation = viewModel::cancelModelPreparation,
                     onRemoveTranslationModel = viewModel::removeTranslationModel,
                     onSetTranslationBroadcastEnabled = viewModel::setTranslationBroadcastEnabled,
@@ -325,6 +327,7 @@ private fun GuideCastScreen(
     onClearTranslationLanguages: () -> Unit,
     onPrepareTranslationModels: () -> Unit,
     onSelectSpeechVoice: (String, SpeechVoicePreference) -> Unit,
+    onRecheckSpeechVoices: () -> Unit = {},
     onCancelModelPreparation: () -> Unit,
     onRemoveTranslationModel: (String) -> Unit,
     onSetTranslationBroadcastEnabled: (Boolean) -> Unit,
@@ -359,15 +362,19 @@ private fun GuideCastScreen(
     var section by rememberSaveable { mutableStateOf(GuideCastSection.BROADCAST) }
     var service by rememberSaveable { mutableStateOf<MCastService?>(null) }
     val serviceScreens = rememberSaveableStateHolder()
-    var broadcastWorkspace by rememberSaveable { mutableStateOf<MCastService?>(null) }
     var showLicenses by rememberSaveable { mutableStateOf(false) }
     var showGlossary by rememberSaveable { mutableStateOf(false) }
     var showSpeechCorrections by rememberSaveable { mutableStateOf(false) }
+    var showDomainCorpus by rememberSaveable { mutableStateOf(false) }
     var settingsCategory by rememberSaveable { mutableStateOf(SettingsCategory.LANGUAGES) }
     var showAssistant by rememberSaveable { mutableStateOf(false) }
     val noiseSettings = (LocalContext.current.applicationContext as GuideCastApplication).microphoneNoiseSettings
     val developerInfo = LocalDeveloperInfo.current
-    val noiseMode by noiseSettings.mode.collectAsStateWithLifecycle()
+    val microphoneProfiles by noiseSettings.profiles.collectAsStateWithLifecycle()
+    val microphoneGroup = MicrophoneInputGroup.forKind(state.selectedDevice?.kind)
+    val microphoneProfile = microphoneProfiles.getValue(microphoneGroup)
+    val noiseMode = microphoneProfile.noiseMode
+    val nearSpeakerFocus = microphoneProfile.nearSpeakerFocus
     val glossaryWarning by (LocalContext.current.applicationContext as GuideCastApplication).glossary.warning.collectAsStateWithLifecycle()
     var sectionTopRequest by remember { mutableStateOf(0) }
     var accessMode by rememberSaveable { mutableStateOf(OperatorAccessMode.OPEN) }
@@ -392,6 +399,7 @@ private fun GuideCastScreen(
     BackHandler(enabled = showLicenses) { showLicenses = false }
     BackHandler(enabled = showGlossary) { showGlossary = false }
     BackHandler(enabled = showSpeechCorrections) { showSpeechCorrections = false }
+    BackHandler(enabled = showDomainCorpus) { showDomainCorpus = false }
     val inputActive = broadcast.inputPhase == InputPhase.STARTING ||
         broadcast.inputPhase == InputPhase.ACTIVE ||
         broadcast.inputPhase == InputPhase.PAUSED
@@ -407,6 +415,7 @@ private fun GuideCastScreen(
     val voiceNoteState by voiceNoteViewModel.state.collectAsStateWithLifecycle()
     val recognitionConnection by app.speechRecognitionEngine.status.collectAsStateWithLifecycle()
     val operatorOptions by app.operatorSettings.state.collectAsStateWithLifecycle()
+    val apiOptions by app.translationApiSettings.state.collectAsStateWithLifecycle()
     val fileState by fileViewModel.uiState.collectAsStateWithLifecycle()
     val filePlayback by fileViewModel.playbackState.collectAsStateWithLifecycle()
     val speechPreviewAllowed = !inputActive && !broadcastActive && !broadcast.translationTestActive &&
@@ -414,7 +423,7 @@ private fun GuideCastScreen(
         !fileState.isConverting && !fileState.isLoading && filePlayback?.isPlaying != true && filePlayback?.isTranslating != true
     val activeService = when {
         inputActive || broadcastActive || broadcast.translationTestActive ->
-            broadcastWorkspace ?: if (translationModels.broadcastTranslationEnabled) MCastService.MULTILINGUAL else MCastService.VOICE
+            MCastService.MULTILINGUAL
         voiceNoteState.recording || voiceNoteState.busy || voiceNoteState.playback.isPlaying -> MCastService.NOTES
         fileState.isConverting || fileState.isLoading || filePlayback?.isPlaying == true || filePlayback?.isTranslating == true -> MCastService.FILES
         else -> null
@@ -435,15 +444,15 @@ private fun GuideCastScreen(
     }
     val selectService: (MCastService) -> Unit = { selected ->
         // Opening a workspace is navigation, never a change to the operator's saved audio mode.
-        if (selected in setOf(MCastService.VOICE, MCastService.MULTILINGUAL)) broadcastWorkspace = selected
+        val destination = if (selected == MCastService.VOICE) MCastService.MULTILINGUAL else selected
         section = GuideCastSection.BROADCAST
-        showLicenses = false; showGlossary = false; showSpeechCorrections = false
+        showLicenses = false; showGlossary = false; showSpeechCorrections = false; showDomainCorpus = false
         showAssistant = false; showDataTransfer = false; showSentenceMemory = false
         showDeveloperLab = false; showFileTranslation = false; showLiveHud = false; showLiveTranscript = false
-        service = selected
+        service = destination
     }
     BackHandler(enabled = (service != null || section != GuideCastSection.BROADCAST) &&
-        !showLicenses && !showGlossary && !showSpeechCorrections && !showAssistant &&
+        !showLicenses && !showGlossary && !showSpeechCorrections && !showDomainCorpus && !showAssistant &&
         !showDataTransfer && !showSentenceMemory && !showDeveloperLab && !showFileTranslation && !showLiveHud && !showLiveTranscript) {
         if (section != GuideCastSection.BROADCAST) section = GuideCastSection.BROADCAST else service = null
     }
@@ -486,38 +495,41 @@ private fun GuideCastScreen(
           Column(Modifier.statusBarsPadding()) {
             if (section != GuideCastSection.BROADCAST || service in setOf(MCastService.VOICE, MCastService.MULTILINGUAL)) {
               TextButton(onClick = {
-                  showLicenses = false; showGlossary = false; showSpeechCorrections = false
+                  showLicenses = false; showGlossary = false; showSpeechCorrections = false; showDomainCorpus = false
                   showAssistant = false; showDataTransfer = false; showSentenceMemory = false; showDeveloperLab = false; showFileTranslation = false
                   section = GuideCastSection.BROADCAST; service = null
               }) {
                 Text("← 운영 메뉴")
               }
             }
-            if (section != GuideCastSection.BROADCAST || service in setOf(MCastService.VOICE, MCastService.MULTILINGUAL) || broadcastActive || inputActive) OperatorHeader(
+            if ((!showDomainCorpus && (section != GuideCastSection.BROADCAST || service in setOf(MCastService.VOICE, MCastService.MULTILINGUAL))) || broadcastActive || inputActive) OperatorHeader(
                 broadcast = broadcast,
                 onOpenBroadcast = {
                     showLicenses = false
                     showGlossary = false
                     showSpeechCorrections = false
+                    showDomainCorpus = false
                     showAssistant = false; showDataTransfer = false; showSentenceMemory = false; showDeveloperLab = false; showFileTranslation = false
-                    service = broadcastWorkspace ?: if (translationModels.broadcastTranslationEnabled) MCastService.MULTILINGUAL else MCastService.VOICE
+                    service = MCastService.MULTILINGUAL
                     section = GuideCastSection.BROADCAST
                     sectionTopRequest += 1
                 },
                 onOpenLicenses = {
-                    showSpeechCorrections = false; showGlossary = false; showAssistant = false; showDataTransfer = false
+                    showSpeechCorrections = false; showGlossary = false; showDomainCorpus = false; showAssistant = false; showDataTransfer = false
                     showSentenceMemory = false; showDeveloperLab = false; showFileTranslation = false; showLicenses = true
                 },
                 onStopTranslationTest = onStopTranslationTest,
             )
-            if (activeService != null && (section != GuideCastSection.BROADCAST || service != activeService)) {
+            val displayedService = if (service == MCastService.VOICE) MCastService.MULTILINGUAL else service
+            if (activeService != null && (section != GuideCastSection.BROADCAST || displayedService != activeService)) {
                 activeWorkNotice?.let { notice ->
                     Text(notice, style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp)
                             .semantics { liveRegion = LiveRegionMode.Polite })
                 }
-                FilledTonalButton(onClick = { selectService(activeService) }, modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
-                    Text("진행 중인 작업으로 · ${activeService.title}")
+                val normalizedActive = if (activeService == MCastService.VOICE) MCastService.MULTILINGUAL else activeService
+                FilledTonalButton(onClick = { selectService(normalizedActive) }, modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
+                    Text("진행 중인 작업으로 · ${normalizedActive.title}")
                 }
             }
           }
@@ -526,7 +538,7 @@ private fun GuideCastScreen(
                 GuideCastSectionTabs(
                     section = section,
                     onSelect = {
-                        showLicenses = false; showGlossary = false; showSpeechCorrections = false
+                        showLicenses = false; showGlossary = false; showSpeechCorrections = false; showDomainCorpus = false
                         showAssistant = false; showDataTransfer = false; showSentenceMemory = false; showDeveloperLab = false; showFileTranslation = false
                         section = it
                         sectionTopRequest += 1
@@ -543,7 +555,7 @@ private fun GuideCastScreen(
                     showAssistant -> OperatorAssistantScreen(broadcast, translationModels, onBack = { showAssistant = false }, onNavigate = { destination ->
                         showAssistant = false
                         when (destination) {
-                            AssistantDestination.INPUT -> { service = broadcastWorkspace ?: MCastService.MULTILINGUAL; section = GuideCastSection.BROADCAST }
+                            AssistantDestination.INPUT -> { service = MCastService.MULTILINGUAL; section = GuideCastSection.BROADCAST }
                             AssistantDestination.TEST -> section = GuideCastSection.TEST
                             AssistantDestination.LANGUAGES -> { section = GuideCastSection.MODELS; settingsCategory = SettingsCategory.LANGUAGES }
                             AssistantDestination.LEARNING -> { section = GuideCastSection.MODELS; settingsCategory = SettingsCategory.TOOLS; if (developerInfo) showDeveloperLab = true }
@@ -567,6 +579,14 @@ private fun GuideCastScreen(
                     else -> ServiceHomeScreen(activeService, selectService)
                 }
             }
+            return@Scaffold
+        }
+        if (showDomainCorpus) {
+            DomainCorpusScreen(
+                repository = app.domainCorpus,
+                onBack = { showDomainCorpus = false },
+                modifier = Modifier.padding(scaffoldPadding),
+            )
             return@Scaffold
         }
         if (showSpeechCorrections) {
@@ -604,12 +624,28 @@ private fun GuideCastScreen(
             item {
                 SectionIntroduction(
                     eyebrow = section.eyebrow,
-                    title = if (section == GuideCastSection.BROADCAST) service?.title.orEmpty() else section.title,
-                    description = if (section == GuideCastSection.BROADCAST) service?.description.orEmpty() else section.description,
+                    title = if (section == GuideCastSection.BROADCAST) (if (service == MCastService.VOICE) MCastService.MULTILINGUAL else service)?.title.orEmpty() else section.title,
+                    description = if (section == GuideCastSection.BROADCAST) (if (service == MCastService.VOICE) MCastService.MULTILINGUAL else service)?.description.orEmpty() else section.description,
                 )
             }
 
             if (section != GuideCastSection.MODELS) {
+                item(key = "current-interpretation-service") {
+                    OutlinedCard(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(serviceExperience(apiOptions).title, style = MaterialTheme.typography.titleMedium)
+                            Text(serviceExperience(apiOptions).processing, style = MaterialTheme.typography.bodySmall)
+                            Text("송출 언어 · " + translationModels.selectedLanguageTags.joinToString(", ").ifEmpty { "선택 없음" }, style = MaterialTheme.typography.bodySmall)
+                            if (apiOptions.provider != TranslationApiProvider.LOCAL) {
+                                Text("모델 · ${apiOptions.model}", style = MaterialTheme.typography.bodySmall)
+                                Text((if (apiOptions.hasKey) "키 준비됨" else "키 입력 필요") + " · " +
+                                    (if (apiOptions.allowOnline) "전송 동의됨" else "전송 동의 필요"), style = MaterialTheme.typography.bodySmall)
+                                Text("연결 확인은 실제 통역 음성 송출의 성공을 의미하지 않습니다.", style = MaterialTheme.typography.bodySmall)
+                            }
+                            TextButton(onClick = { section = GuideCastSection.MODELS; settingsCategory = SettingsCategory.MODELS }) { Text("통역 서비스 설정") }
+                        }
+                    }
+                }
                 item {
                     OutlinedButton(onClick = { showLiveTranscript = true }, modifier = Modifier.fillMaxWidth()) {
                         Text("화면 전환 · 전체 화면 스크립트")
@@ -715,7 +751,11 @@ private fun GuideCastScreen(
                     item {
                         MicrophoneNoiseOptions(noiseMode, !inputActive &&
                             state.selectedDevice?.kind != AudioInputKind.DEVICE_PLAYBACK &&
-                            state.selectedDevice?.kind != AudioInputKind.WEB_SPEAKER, noiseSettings::select)
+                            state.selectedDevice?.kind != AudioInputKind.WEB_SPEAKER,
+                            { noiseSettings.selectProfile(microphoneGroup, microphoneProfile.copy(noiseMode = it)) },
+                            nearSpeakerFocus,
+                            { noiseSettings.selectProfile(microphoneGroup, microphoneProfile.copy(nearSpeakerFocus = it)) },
+                            microphoneGroup.label)
                     }
                     item { OperatorStatusStrip(broadcast = broadcast, models = translationModels) }
                     item {
@@ -838,10 +878,10 @@ private fun GuideCastScreen(
                 }
 
                 GuideCastSection.MODELS -> {
-                  item(key = "operator-assistant") {
+                  if (settingsCategory == SettingsCategory.TOOLS) item(key = "operator-assistant") {
                     OutlinedButton(onClick = { showAssistant = true }, modifier = Modifier.fillMaxWidth()) { Text("아스트라 미니미 · 진단과 개선 제안") }
                   }
-                  item(key = "developer-display") { DeveloperInformationSettings() }
+                  if (settingsCategory == SettingsCategory.TOOLS) item(key = "developer-display") { DeveloperInformationSettings() }
                   item(key = "settings-navigation") {
                     SettingsCategoryPicker(settingsCategory) {
                         settingsCategory = it
@@ -852,7 +892,7 @@ private fun GuideCastScreen(
                     AutomaticPreparationSettings(app.operatorSettings)
                   }
                   if (settingsCategory == SettingsCategory.MODELS) item(key = "translation-api") {
-                    TranslationApiPanel(app.translationApiSettings, app.translationApiService,
+                    TranslationApiPanel(app.translationApiSettings, app.translationApiService, corpus = app.domainCorpus, liveMonitor = app.geminiLiveMonitor,
                         enabled = !inputActive && !broadcastActive && !broadcast.translationTestActive)
                   }
                   item(key = "settings-${settingsCategory.name}") {
@@ -899,6 +939,7 @@ private fun GuideCastScreen(
                         onClearSelection = onClearTranslationLanguages,
                         onPrepare = onPrepareTranslationModels,
                         onSelectSpeechVoice = onSelectSpeechVoice,
+                        onRecheckSpeechVoices = onRecheckSpeechVoices,
                         onCancelPreparation = onCancelModelPreparation,
                         onRemove = onRemoveTranslationModel,
                     )
@@ -927,6 +968,10 @@ private fun GuideCastScreen(
                             onClick = { showSpeechCorrections = true },
                             modifier = Modifier.fillMaxWidth().sizeIn(minHeight = 56.dp),
                         ) { Text("인식 학습·보정") }
+                        OutlinedButton(
+                            onClick = { showDomainCorpus = true },
+                            modifier = Modifier.fillMaxWidth().sizeIn(minHeight = 56.dp),
+                        ) { Text("도메인 학습·코퍼스") }
                         OutlinedButton(onClick = { showDataTransfer = true },
                             modifier = Modifier.fillMaxWidth().sizeIn(minHeight = 56.dp)) {
                             Text("설정 / 사전 / 스크립트 · 가져오기 / 내보내기")
@@ -936,7 +981,7 @@ private fun GuideCastScreen(
                             Text("문장·회화 사전 · 확인 / 수정")
                         }
                         SettingsInformationCard(onOpenLicenses = { showLicenses = true })
-                        DiagnosticsAndVoiceSettings()
+                        DiagnosticsAndVoiceSettings(onRecheckSpeechVoices)
                         if (developerInfo) OutlinedButton(onClick = { showDeveloperLab = true },
                             modifier = Modifier.fillMaxWidth().sizeIn(minHeight = 56.dp)) {
                             Text("개발자 실험실 · 표현 TTS / 의역 / API")
@@ -2013,13 +2058,14 @@ private fun OutputChannelsCard(
                                 },
                             )
                             }
-                            if (developerInfo && ((channel?.droppedUtterances ?: 0L) > 0L ||
+                            if (((channel?.droppedUtterances ?: 0L) > 0L ||
                                 (channel?.translationFailures ?: 0L) > 0L ||
                                 (channel?.synthesisFailures ?: 0L) > 0L ||
                                 (channel?.listenerDroppedFrames ?: 0L) > 0L)
                             ) {
                                 Text(
-                                    "누락 ${channel?.droppedUtterances ?: 0} · " +
+                                    "내용 누락 ${channel?.droppedUtterances ?: 0} · 마지막 문장 #${channel?.lastDroppedSequence ?: "—"} · " +
+                                        "번역 대기 초과 ${channel?.sourceBacklogDrops ?: 0} / 음성 대기 초과 ${channel?.speechBacklogDrops ?: 0} · " +
                                         "번역 오류 ${channel?.translationFailures ?: 0}" +
                                         "/복구 ${channel?.translationRecoveries ?: 0} · " +
                                         "음성 오류 ${channel?.synthesisFailures ?: 0}" +
@@ -3130,12 +3176,15 @@ private fun InputControls(
                 )
             }
             broadcast.inputProcessingSummary?.let { processingSummary ->
-                if (LocalDeveloperInfo.current || "미지원" in processingSummary) {
+                val focusFeedback = processingSummary.takeIf { it.startsWith("가까운 화자 ·") }
+                    ?.split(" · ", limit = 3)?.take(2)?.joinToString(" · ")
+                if (LocalDeveloperInfo.current || focusFeedback != null || "미지원" in processingSummary) {
                 Text(
                     if (LocalDeveloperInfo.current) processingSummary
+                        else if (focusFeedback != null) focusFeedback
                         else "일부 소음 처리를 사용할 수 없습니다. 원음을 확인하세요.",
                     style = MaterialTheme.typography.labelSmall,
-                    color = if ("미지원" in processingSummary) {
+                    color = if ("미지원" in processingSummary || "지원하지" in processingSummary || "일부만" in processingSummary) {
                         GuideCastWarning
                     } else {
                         MaterialTheme.colorScheme.primary
@@ -3296,6 +3345,7 @@ private fun TranslationModelCard(
     onClearSelection: () -> Unit,
     onPrepare: () -> Unit,
     onSelectSpeechVoice: (String, SpeechVoicePreference) -> Unit,
+    onRecheckSpeechVoices: () -> Unit,
     onCancelPreparation: () -> Unit,
     onRemove: (String) -> Unit,
 ) {
@@ -3311,9 +3361,18 @@ private fun TranslationModelCard(
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("번역 ${state.translationDisplayName(tag)}")
-                    Text("통역 음성 ${state.ttsDisplayName(tag)}")
+                    Text("통역 음성 · ${state.voicePreparationPresentation(tag).text}")
+                    state.ttsUnavailableReason(tag)?.let {
+                        Text(it, color = MaterialTheme.colorScheme.error)
+                    }
                     translationError?.let { Text("번역 오류 · ${it.take(1200)}", color = MaterialTheme.colorScheme.error) }
                     moonshineTtsFailureDetail(speechStatus)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    SystemVoiceSetupActions(
+                        languageLabel = state.options.firstOrNull { it.languageTag == tag }?.label ?: tag,
+                        preference = state.voicePreferences[tag] ?: SpeechVoicePreference.AUTO,
+                        enabled = enabled && !state.isBusy,
+                        onRecheck = onRecheckSpeechVoices,
+                    )
                     Text("다른 언어와 원음 방송은 별도로 동작합니다. 준비 상태를 확인한 뒤 다시 준비할 수 있습니다.")
                 }
             },
@@ -3504,18 +3563,18 @@ private fun TranslationModelCard(
                         Text(
                             text = "번역 ${state.translationDisplayName(option.languageTag)}",
                             style = MaterialTheme.typography.bodySmall,
-                            color = if (!translationModelReadyForChannel(state, option.languageTag) ||
-                                !state.ttsReady(option.languageTag)
-                            ) MaterialTheme.colorScheme.error else GuideCastSuccess,
+                            color = if (!translationModelReadyForChannel(state, option.languageTag))
+                                MaterialTheme.colorScheme.error else GuideCastSuccess,
                         )
+                        val voicePresentation = state.voicePreparationPresentation(option.languageTag)
                         Text(
-                            text = when {
-                                state.ttsUnavailableReason(option.languageTag) != null -> "통역 음성 · 확인 필요"
-                                state.ttsFallbackReady(option.languageTag) -> "통역 음성 · Galaxy 대체 음성 준비"
-                                else -> "통역 음성 · ${state.ttsReadiness(option.languageTag).displayName()}"
-                            },
+                            text = "통역 음성 · ${voicePresentation.text}",
                             style = MaterialTheme.typography.bodySmall,
-                            color = if (state.ttsReady(option.languageTag)) GuideCastSuccess else MaterialTheme.colorScheme.error,
+                            color = when (voicePresentation.phase) {
+                                VoicePreparationPhase.READY -> GuideCastSuccess
+                                VoicePreparationPhase.FAILED -> MaterialTheme.colorScheme.error
+                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            },
                         )
                         if (tts?.readiness == MoonshineTtsReadiness.DOWNLOADING) {
                             LinearProgressIndicator(
@@ -3537,14 +3596,21 @@ private fun TranslationModelCard(
                             )
                         }
                         if (translationModel?.errorMessage != null || moonshineTtsFailureDetail(tts) != null ||
-                            state.ttsUnavailableReason(option.languageTag) != null
+                            state.ttsUnavailableReason(option.languageTag) != null ||
+                            (selected && !state.ttsReady(option.languageTag))
                         ) {
                             TextButton(
                                 onClick = { detailLanguageTag = option.languageTag },
                                 modifier = Modifier.sizeIn(minHeight = 48.dp).semantics {
                                     contentDescription = "${option.label} 문제 상세"
                                 },
-                            ) { Text("문제 상세 · 복구 안내", color = MaterialTheme.colorScheme.error) }
+                            ) {
+                                Text(
+                                    if (!state.ttsReady(option.languageTag)) "음성팩 설치 · 복구" else "문제 상세 · 복구 안내",
+                                    color = if (voicePresentation.phase == VoicePreparationPhase.FAILED)
+                                        MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                )
+                            }
                         }
                     }
                     if (readiness == ModelReadiness.READY) {
@@ -3675,7 +3741,7 @@ private fun SpeechVoicePreferencePicker(
         }
     }
     Text(
-        "자동은 설치된 오프라인 음성을 사용합니다. Moonshine 파일은 해당 옵션 선택 후 준비할 때 내려받습니다. 음성 실패 시 설치된 다른 엔진으로 복구합니다.",
+        "이미 설치한 음성은 재사용합니다. Google·Samsung 음성팩은 해당 엔진의 설치 화면에서 준비하고, Moonshine 파일은 Moonshine 선택 후 준비할 때 내려받습니다.",
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -3880,8 +3946,10 @@ private fun GemmaModelCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Text(
-                "두 모델 모두 모바일 양자화 계열입니다. GPU형은 새 QAT 학습 모델이 아닌 별도 실행 파일이며, " +
-                    "속도·메모리·번역 품질 개선은 기기에서 비교해야 합니다. 한 번에 하나만 실행합니다.",
+                "E2B는 기존 모델입니다. E4B는 약 3.41 GiB 파일과 실행 캐시가 필요하며, " +
+                    "처음 준비할 때 약 6.3 GiB의 여유 공간을 확보해 주세요. 더 많은 메모리도 필요합니다. " +
+                    "일반 E4B-IT 모델이며 번역 특화 모델은 아닙니다. 속도와 품질은 기기에서 비교해 주세요. " +
+                    "기존 모델은 보관하고 한 번에 하나만 실행합니다.",
                 style = MaterialTheme.typography.bodySmall,
             )
             state.availableModels.forEach { variant ->
@@ -4768,13 +4836,7 @@ private fun TranslationModelUiState.translationDisplayName(languageTag: String):
 }
 
 private fun TranslationModelUiState.ttsDisplayName(languageTag: String): String =
-    if (ttsUnavailableReason(languageTag) != null) {
-        "사용 불가 · ${ttsUnavailableReason(languageTag)?.take(120)}"
-    } else if (ttsFallbackReady(languageTag)) {
-        "설치된 Android 오프라인 음성 준비"
-    } else {
-        ttsReadiness(languageTag).displayName()
-    }
+    voicePreparationPresentation(languageTag).text
 
 internal fun moonshineTtsFailureDetail(status: MoonshineTtsStatus?): String? = status
     ?.takeIf { it.readiness == MoonshineTtsReadiness.FAILED }

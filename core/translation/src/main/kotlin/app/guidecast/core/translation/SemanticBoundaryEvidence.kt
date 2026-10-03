@@ -61,10 +61,39 @@ internal fun List<String>.hasIncompleteEnglishMeaning(): Boolean {
 }
 
 /** A detached reported-speech suffix belongs to the apparent sentence on its left. */
-internal fun hasKoreanDependentRightContext(tokens: List<String>): Boolean =
+internal fun hasKoreanDependentRightContext(tokens: List<String>, leftWord: String): Boolean =
     tokens.firstOrNull()?.trimStart('"', '\'', '“', '‘')?.let { token ->
-        KOREAN_DEPENDENT_RIGHT_PREFIXES.any(token::startsWith)
+        KOREAN_REPORTED_SPEECH_PREFIXES.any(token::startsWith) ||
+            // "좋지 못해서" belongs together, but "기량이 떨어져. 못 쉬어서" starts
+            // a postposed explanation. A negative word in a new clause must not hold every
+            // preceding finite sentence forever. Keep auxiliary dependencies on -지/-고.
+            ((leftWord.endsWith("지") || leftWord.endsWith("고")) &&
+                KOREAN_AUXILIARY_PREFIXES.any(token::startsWith)) ||
+            // A spoken imperative-looking form can introduce an auxiliary construction:
+            // "설명해 드릴게요", "기다려 주세요", "해 보니". Keep the whole predicate.
+            (leftWord.lastOrNull() in setOf('아', '어', '해', '려', '줘', '봐') &&
+                KOREAN_CONJUGATED_AUXILIARY_PREFIXES.any(token::startsWith))
     } == true
+
+/** Never publish the interior of an open reported-speech quote as an independent claim. */
+internal fun List<String>.hasUnclosedSpeechQuote(): Boolean {
+    val text = joinToString(" ")
+    var straightQuoteOpen = false
+    var singleQuoteOpen = false
+    var curvedQuoteDepth = 0
+    for ((index, character) in text.withIndex()) {
+        when (character) {
+            '"' -> straightQuoteOpen = !straightQuoteOpen
+            '\'' -> if (!(text.getOrNull(index - 1)?.isLetter() == true &&
+                    text.getOrNull(index + 1)?.isLetter() == true)) {
+                singleQuoteOpen = !singleQuoteOpen
+            }
+            '“', '‘' -> curvedQuoteDepth++
+            '”', '’' -> curvedQuoteDepth = (curvedQuoteDepth - 1).coerceAtLeast(0)
+        }
+    }
+    return straightQuoteOpen || singleQuoteOpen || curvedQuoteDepth > 0
+}
 
 internal fun String.withoutSpeculativeIncompleteEnglishPunctuation(): String {
     val text = trim()
@@ -108,4 +137,17 @@ private val ENGLISH_NUMBER_WORDS = setOf(
 )
 private val ENGLISH_ABBREVIATION = Regex("(?i)(?:(?:[a-z]\\.){2,}|(?:dr|mr|mrs|ms|no|vs|etc)\\.)")
 private val ENGLISH_DECIMAL = Regex("[+-]?\\d+\\.\\d+%?\\.?")
-private val KOREAN_DEPENDENT_RIGHT_PREFIXES = setOf("라고", "라는", "라며", "라던", "라니")
+private val KOREAN_REPORTED_SPEECH_PREFIXES = setOf(
+    "라고", "라는", "라며", "라던", "라니",
+)
+private val KOREAN_AUXILIARY_PREFIXES = setOf(
+    // “좋지 않은/못한 …” is one dependent meaning, not an affirmative “좋지”.
+    "않", "못", "말아", "말고", "싶",
+)
+private val KOREAN_CONJUGATED_AUXILIARY_PREFIXES = setOf(
+    "드리", "드릴", "드렸", "드려", "드려야", "드리는",
+    "주세", "주세요", "주십", "주셔", "주셨", "주실", "주면", "주니", "주고", "주는",
+    "줘", "줬", "줄", "준",
+    "보니", "보면", "보세", "보세요", "보십", "보셨", "보시", "볼", "본", "봐", "봤",
+    "버리", "버렸", "버려", "두었", "뒀", "놓았", "놓는", "놓고",
+)

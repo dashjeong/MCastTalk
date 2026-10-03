@@ -4,9 +4,9 @@
 
 Android에서 음성을 통번역하고, 같은 Wi-Fi 또는 핫스팟의 청취자에게 음성과 자막을 전달하는 앱입니다. 청취자는 별도 앱 없이 웹브라우저로 접속합니다. 기기 단독 사용, 음성노트, 파일 변환·재생을 지원합니다.
 
-현재 공개 패키지: **0.2.46-beta-c** · versionCode **56** · 공개 시험판
+현재 공개 패키지: **0.2.47-beta** · versionCode **59** · 공개 시험판
 
-[APK 다운로드](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.46-beta-c) · [한국어 사용 안내](docs/USER_GUIDE_KO.md) · [English guide](docs/USER_GUIDE_EN.md)
+[APK 다운로드](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.47-beta) · [한국어 사용 안내](docs/USER_GUIDE_KO.md) · [English guide](docs/USER_GUIDE_EN.md)
 
 ## 설치와 사용
 
@@ -27,16 +27,16 @@ Android에서 음성을 통번역하고, 같은 Wi-Fi 또는 핫스팟의 청취
 
 ## 알려진 제한
 
-시험판이며 번역·음성인식 오류와 통역 지연이 발생할 수 있습니다. 모든 언어·기기의 정확도, 장시간 연속 운영과 사람 수준의 통역 품질은 검증되지 않았습니다. HTTP 청취 방송은 암호화되지 않으므로 신뢰할 수 있는 네트워크에서 사용하세요. 철회된 0.2.43은 사용하지 마세요. 이전 버전으로 되돌리기 전에 데이터를 백업하세요.
+시험판이며 번역·음성인식 오류와 통역 지연이 발생할 수 있습니다. 러시아어 음성 출력은 호환되는 러시아어 오프라인 음성 데이터를 기기에 설치해야 합니다. 러시아어 음성 출력은 호환되는 러시아어 오프라인 음성 데이터를 기기에 설치해야 합니다. 모든 언어·기기의 정확도, 장시간 연속 운영과 사람 수준의 통역 품질은 검증되지 않았습니다. HTTP 청취 방송은 암호화되지 않으므로 신뢰할 수 있는 네트워크에서 사용하세요. 철회된 0.2.43은 사용하지 마세요. 이전 버전으로 되돌리기 전에 데이터를 백업하세요.
 
 [문제 해결](docs/TROUBLESHOOTING_KO.md) · [개인정보·보안](SECURITY.md)
 
 ## 소스와 라이선스
 
-공개 APK에 대응하는 소스는 `v0.2.46-beta-c` 태그입니다. 기본 브랜치 `main`의 소스는 `0.2.44-alpha` 기준으로, 현재 공개 APK와 버전이 다릅니다. 빌드에는 JDK 17, Android SDK API 36과 Gradle 설정의 도구가 필요합니다.
+공개 APK에 대응하는 소스는 `v0.2.47-beta` 태그입니다. 빌드에는 JDK 17, Android SDK API 36과 Gradle 설정의 도구가 필요합니다.
 
 ```sh
-git switch --detach v0.2.46-beta-c
+git switch --detach v0.2.47-beta
 ./gradlew :app:assembleDebug
 ```
 

@@ -121,6 +121,12 @@ class AndroidOfflineSpeechSynthesisProvider internal constructor(
         engines.reconcileLanguages(SETTINGS_RETENTION_OWNER, languageTags)
     }
 
+    /** Retires existing engines for specified languages so subsequent access creates fresh clients. */
+    fun refreshLanguages(languageTags: Set<String>) {
+        require(languageTags.all(String::isNotBlank))
+        engines.retireLanguages(languageTags)
+    }
+
     override fun close() {
         engines.closeAll()
     }
@@ -403,8 +409,28 @@ internal class AndroidOfflineSpeechSynthesisEngine internal constructor(
         val candidateEngines = candidateEngineResolver(context.packageManager, latestPreference)
         var lastError: Throwable? = null
 
+        val installedPackages = if (context.packageManager != null) {
+            val intent = Intent(TextToSpeech.Engine.INTENT_ACTION_TTS_SERVICE)
+            context.packageManager.queryIntentServices(intent, 0)
+                .mapNotNull { it.serviceInfo?.packageName }
+                .distinct()
+        } else {
+            emptyList()
+        }
+
+        if (context.packageManager != null && installedPackages.isEmpty()) {
+            throw IllegalStateException("기기에 설치된 TTS 음성 엔진이 없습니다.")
+        }
+
         for (enginePackage in candidateEngines) {
             if (enginePackage in failedEnginePackages) {
+                continue
+            }
+            if (enginePackage != null && context.packageManager != null && enginePackage !in installedPackages) {
+                failedEnginePackages.add(enginePackage)
+                lastError = IllegalStateException(
+                    "${ttsEngineLabel(enginePackage)} 음성 엔진이 기기에 설치되어 있지 않습니다.",
+                )
                 continue
             }
 
@@ -438,7 +464,7 @@ internal class AndroidOfflineSpeechSynthesisEngine internal constructor(
                     }
                 }.also { initializedClient = it }
 
-                configureOfflineVoice(client)
+                configureOfflineVoice(client, enginePackage)
                 val installed = synchronized(lifecycleLock) {
                     if (!closed && pendingInitialization === attempt && textToSpeech == null) {
                         pendingInitialization = null
@@ -501,21 +527,112 @@ internal class AndroidOfflineSpeechSynthesisEngine internal constructor(
         Log.i(LOG_TAG, "Invalidated Android TTS engine generation for $languageTag: ${error.message}")
     }
 
-    private suspend fun configureOfflineVoice(client: AndroidTtsClient) {
-        val availableVoices = queryVoices(client, VOICE_QUERY_TIMEOUT_MILLIS)
+    private suspend fun configureOfflineVoice(client: AndroidTtsClient, enginePackage: String?) {
+        val engineLabel = ttsEngineLabel(enginePackage ?: client.defaultEngine)
+        val availableVoices = try {
+            queryVoices(client, VOICE_QUERY_TIMEOUT_MILLIS)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            Log.w(LOG_TAG, "Failed querying voices from TTS engine: ${error.message}", error)
+            throw IllegalStateException(
+                "$engineLabel 음성 목록 조회에 실패했습니다. 잠시 후 다시 시도해 주세요: ${error.message ?: error.javaClass.simpleName}",
+                error,
+            )
+        }
         val voice = selectOfflineVoice(availableVoices, languageTag)
-            ?: error("오프라인 TTS 음성을 찾지 못했습니다 (target=$languageTag, engine=${client.defaultEngine})")
-        awaitAndroidTtsBinderCall(binderExecutorFor(client), BINDER_CALL_TIMEOUT_MILLIS, "voice configuration") {
-            check(client.setVoice(voice) == TextToSpeech.SUCCESS) {
-                "오프라인 TTS 음성을 선택하지 못했습니다: $languageTag"
+        if (voice != null) {
+            awaitAndroidTtsBinderCall(binderExecutorFor(client), BINDER_CALL_TIMEOUT_MILLIS, "voice configuration") {
+                check(client.setVoice(voice) == TextToSpeech.SUCCESS) {
+                    "오프라인 TTS 음성을 선택하지 못했습니다: $languageTag"
+                }
+                check(client.setPitch(1.0f) == TextToSpeech.SUCCESS) {
+                    "오프라인 TTS 음성 피치를 고정하지 못했습니다: $languageTag"
+                }
+                check(client.setSpeechRate(NATURAL_SPEECH_RATE) == TextToSpeech.SUCCESS) {
+                    "오프라인 TTS 재생 속도를 고정하지 못했습니다: $languageTag"
+                }
+                client.setOnUtteranceProgressListener(listener)
             }
-            check(client.setPitch(1.0f) == TextToSpeech.SUCCESS) {
-                "오프라인 TTS 음성 피치를 고정하지 못했습니다: $languageTag"
+            return
+        }
+
+        val targetLocale = normalizeTargetLocale(languageTag)
+        val languageLabel = targetLocale.getDisplayName(Locale.KOREAN).ifBlank { languageTag }
+
+        val candidateInfos = availableVoices.mapNotNull { OfflineVoiceInfo.fromVoice(it) }
+        val linguisticallyCompatibleVoices = candidateInfos.filter { candidate ->
+            isVoiceLinguisticallyCompatible(candidate, targetLocale, languageTag)
+        }
+        val hasUninstalledFeature = linguisticallyCompatibleVoices.any { candidate ->
+            TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED in candidate.features
+        }
+        if (hasUninstalledFeature) {
+            throw IllegalStateException(
+                "$engineLabel 음성 데이터가 설치되지 않았습니다 ($languageLabel). 음성팩 설치·설정 화면에서 내려받으세요.",
+            )
+        }
+
+        val availability = try {
+            queryLanguageAvailability(client, targetLocale, BINDER_CALL_TIMEOUT_MILLIS)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            Log.w(LOG_TAG, "Failed querying language availability from TTS engine: ${error.message}", error)
+            throw IllegalStateException(
+                "$engineLabel 음성 가용성 확인에 실패했습니다. 잠시 후 다시 시도해 주세요: ${error.message ?: error.javaClass.simpleName}",
+                error,
+            )
+        }
+
+        if (availability == TextToSpeech.LANG_MISSING_DATA) {
+            throw IllegalStateException(
+                "$engineLabel 음성 데이터가 설치되지 않았습니다 ($languageLabel). 음성팩 설치·설정 화면에서 내려받으세요.",
+            )
+        }
+        if (availability == TextToSpeech.LANG_NOT_SUPPORTED) {
+            throw IllegalStateException(
+                "$engineLabel 엔진에서 $languageLabel 언어를 지원하지 않습니다.",
+            )
+        }
+
+        if (targetLocale.language.equals("zh", ignoreCase = true)) {
+            val targetVariant = resolveChineseScriptVariant(targetLocale, languageTag)
+            val installedChineseCandidateInfos = candidateInfos.filter {
+                canonicalLanguage(it.locale.language) == "zh" &&
+                    !it.isNetworkConnectionRequired &&
+                    TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED !in it.features
             }
-            check(client.setSpeechRate(NATURAL_SPEECH_RATE) == TextToSpeech.SUCCESS) {
-                "오프라인 TTS 재생 속도를 고정하지 못했습니다: $languageTag"
+            val anyTraditionalInstalled = installedChineseCandidateInfos.any {
+                resolveChineseScriptVariant(it.locale, it.name) == ChineseScriptVariant.TRADITIONAL
             }
-            client.setOnUtteranceProgressListener(listener)
+            val anySimplifiedInstalled = installedChineseCandidateInfos.any {
+                resolveChineseScriptVariant(it.locale, it.name) == ChineseScriptVariant.SIMPLIFIED
+            }
+            if (targetVariant == ChineseScriptVariant.SIMPLIFIED && anyTraditionalInstalled && !anySimplifiedInstalled) {
+                throw IllegalStateException(
+                    "$engineLabel 엔진에서 요청한 간체 오프라인 음성을 찾지 못했습니다. 간체 음성 데이터를 설치하거나 다른 엔진을 선택하세요.",
+                )
+            }
+            if (targetVariant == ChineseScriptVariant.TRADITIONAL && anySimplifiedInstalled && !anyTraditionalInstalled) {
+                throw IllegalStateException(
+                    "$engineLabel 엔진에서 요청한 번체 오프라인 음성을 찾지 못했습니다. 번체 음성 데이터를 설치하거나 다른 엔진을 선택하세요.",
+                )
+            }
+        }
+
+        throw IllegalStateException(
+            "$engineLabel 오프라인 TTS 음성을 찾지 못했습니다 (target=$languageTag, engine=${enginePackage ?: client.defaultEngine})",
+        )
+    }
+
+    private suspend fun queryLanguageAvailability(
+        client: AndroidTtsClient,
+        locale: Locale,
+        timeoutMillis: Long,
+    ): Int {
+        return awaitAndroidTtsBinderCall(binderExecutorFor(client), timeoutMillis, "language availability query") {
+            client.isLanguageAvailable(locale)
         }
     }
 
@@ -536,15 +653,8 @@ internal class AndroidOfflineSpeechSynthesisEngine internal constructor(
      * with [RejectedExecutionException] rather than leaking unbounded IO threads.
      */
     private suspend fun queryVoices(client: AndroidTtsClient, timeoutMillis: Long): Set<android.speech.tts.Voice> {
-        return try {
-            awaitAndroidTtsBinderCall(binderExecutorFor(client), timeoutMillis, "voice query") {
-                client.getVoices()
-            }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Throwable) {
-            Log.w(LOG_TAG, "Failed querying voices from TTS engine: ${error.javaClass.simpleName}")
-            emptySet()
+        return awaitAndroidTtsBinderCall(binderExecutorFor(client), timeoutMillis, "voice query") {
+            client.getVoices()
         }
     }
 
@@ -733,6 +843,7 @@ private class AndroidTtsSynthesisAdmission(
 internal interface AndroidTtsClient {
     val defaultEngine: String?
     fun getVoices(): Set<android.speech.tts.Voice>
+    fun isLanguageAvailable(locale: Locale): Int
     fun setVoice(voice: android.speech.tts.Voice): Int
     fun setPitch(pitch: Float): Int
     fun setSpeechRate(speechRate: Float): Int
@@ -748,7 +859,8 @@ private class DefaultAndroidTtsClient(
 ) : AndroidTtsClient {
     override val defaultEngine: String?
         get() = requestedEnginePackage ?: runCatching { tts.defaultEngine }.getOrNull()
-    override fun getVoices(): Set<android.speech.tts.Voice> = runCatching { tts.voices }.getOrNull().orEmpty()
+    override fun getVoices(): Set<android.speech.tts.Voice> = tts.voices ?: emptySet()
+    override fun isLanguageAvailable(locale: Locale): Int = tts.isLanguageAvailable(locale)
     override fun setVoice(voice: android.speech.tts.Voice): Int = tts.setVoice(voice)
     override fun setPitch(pitch: Float): Int = tts.setPitch(pitch)
     override fun setSpeechRate(speechRate: Float): Int = tts.setSpeechRate(speechRate)
@@ -787,6 +899,13 @@ private fun Throwable.findCancellation(): CancellationException? {
 internal const val SAMSUNG_TTS_PACKAGE = "com.samsung.SMT"
 internal const val GOOGLE_TTS_PACKAGE = "com.google.android.tts"
 
+internal fun ttsEngineLabel(enginePackage: String?): String = when (enginePackage) {
+    GOOGLE_TTS_PACKAGE -> "Google"
+    SAMSUNG_TTS_PACKAGE -> "Samsung"
+    null -> "기기 기본"
+    else -> enginePackage
+}
+
 internal fun orderCandidateTtsEngines(
     installedPackages: Collection<String>,
     preferredPackage: String? = null,
@@ -812,18 +931,19 @@ internal fun orderCandidateTtsEngines(
     return candidates
 }
 
+internal fun queryInstalledTtsPackages(packageManager: PackageManager?): List<String> {
+    if (packageManager == null) return emptyList()
+    val intent = Intent(TextToSpeech.Engine.INTENT_ACTION_TTS_SERVICE)
+    return packageManager.queryIntentServices(intent, 0)
+        .mapNotNull { it.serviceInfo?.packageName }
+        .distinct()
+}
+
 internal fun resolveCandidateTtsEngines(
     packageManager: PackageManager?,
     preferredPackage: String? = null,
 ): List<String?> {
-    val installed = if (packageManager != null) {
-        val intent = Intent(TextToSpeech.Engine.INTENT_ACTION_TTS_SERVICE)
-        packageManager.queryIntentServices(intent, 0)
-            .mapNotNull { it.serviceInfo?.packageName }
-            .distinct()
-    } else {
-        emptyList()
-    }
+    val installed = queryInstalledTtsPackages(packageManager)
     return orderCandidateTtsEngines(installed, preferredPackage)
 }
 
@@ -1096,18 +1216,28 @@ internal fun resolveChineseScriptVariant(locale: Locale, voiceName: String = "")
     return ChineseScriptVariant.UNSPECIFIED
 }
 
-internal fun isVoiceCompatible(voice: OfflineVoiceInfo, targetLocale: Locale, languageTag: String): Boolean {
-    fun canonicalLanguage(language: String): String = when (language.lowercase(Locale.ROOT)) {
-        "cmn", "zho", "chi" -> "zh" // Android engines may report Mandarin using ISO-639-3.
-        else -> language.lowercase(Locale.ROOT)
+internal fun canonicalLanguage(language: String): String = when (language.lowercase(Locale.ROOT)) {
+    "cmn", "zho", "chi" -> "zh" // Android engines may report Mandarin using ISO-639-3.
+    else -> language.lowercase(Locale.ROOT)
+}
+
+internal fun normalizeTargetLocale(languageTag: String): Locale {
+    val base = Locale.forLanguageTag(languageTag)
+    return when {
+        languageTag.equals("zh", ignoreCase = true) || languageTag.equals("zh-cn", ignoreCase = true) || languageTag.equals("zh-hans", ignoreCase = true) ->
+            Locale.SIMPLIFIED_CHINESE
+        languageTag.equals("zh-tw", ignoreCase = true) || languageTag.equals("zh-hant", ignoreCase = true) ->
+            Locale.TRADITIONAL_CHINESE
+        else -> base
     }
+}
+
+internal fun isVoiceLinguisticallyCompatible(
+    voice: OfflineVoiceInfo,
+    targetLocale: Locale,
+    languageTag: String,
+): Boolean {
     if (canonicalLanguage(voice.locale.language) != canonicalLanguage(targetLocale.language)) {
-        return false
-    }
-    if (voice.isNetworkConnectionRequired) {
-        return false
-    }
-    if (TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED in voice.features) {
         return false
     }
     if (targetLocale.language.equals("zh", ignoreCase = true)) {
@@ -1119,6 +1249,19 @@ internal fun isVoiceCompatible(voice: OfflineVoiceInfo, targetLocale: Locale, la
         ) {
             return false
         }
+    }
+    return true
+}
+
+internal fun isVoiceCompatible(voice: OfflineVoiceInfo, targetLocale: Locale, languageTag: String): Boolean {
+    if (!isVoiceLinguisticallyCompatible(voice, targetLocale, languageTag)) {
+        return false
+    }
+    if (voice.isNetworkConnectionRequired) {
+        return false
+    }
+    if (TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED in voice.features) {
+        return false
     }
     return true
 }
@@ -1152,7 +1295,7 @@ internal fun selectBestOfflineVoiceInfo(
     availableVoices: Collection<OfflineVoiceInfo>,
     languageTag: String,
 ): OfflineVoiceInfo? {
-    val targetLocale = Locale.forLanguageTag(languageTag)
+    val targetLocale = normalizeTargetLocale(languageTag)
     return availableVoices
         .asSequence()
         .filter { isVoiceCompatible(it, targetLocale, languageTag) }
@@ -1169,7 +1312,7 @@ internal fun selectOfflineVoice(
     availableVoices: Collection<android.speech.tts.Voice>,
     languageTag: String,
 ): android.speech.tts.Voice? {
-    val targetLocale = Locale.forLanguageTag(languageTag)
+    val targetLocale = normalizeTargetLocale(languageTag)
     val candidates = availableVoices.mapNotNull { voice ->
         val info = OfflineVoiceInfo.fromVoice(voice) ?: return@mapNotNull null
         if (!isVoiceCompatible(info, targetLocale, languageTag)) return@mapNotNull null

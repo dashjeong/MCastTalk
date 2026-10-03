@@ -205,15 +205,14 @@ internal fun FileTranslationScreen(
                     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(selected = state.translationEngine == FileTranslationEngine.MLKIT,
-                            enabled = !busy, onClick = { onTranslationEngineChange(FileTranslationEngine.MLKIT) },
+                            enabled = !busy && state.translationEngine != FileTranslationEngine.API, onClick = { onTranslationEngineChange(FileTranslationEngine.MLKIT) },
                             label = { Text(if (developerInfo) "Google ML Kit" else "기본 번역") })
                         FilterChip(selected = state.translationEngine == FileTranslationEngine.GEMMA,
-                            enabled = !busy, onClick = { onTranslationEngineChange(FileTranslationEngine.GEMMA) },
+                            enabled = !busy && state.translationEngine != FileTranslationEngine.API, onClick = { onTranslationEngineChange(FileTranslationEngine.GEMMA) },
                             label = { Text(if (developerInfo) "ML Kit + AI 검토" else "번역 + 추가 검토") })
-                        FilterChip(selected = state.translationEngine == FileTranslationEngine.API,
-                            enabled = !busy, onClick = { onTranslationEngineChange(FileTranslationEngine.API) }, label = { Text("설정한 API") })
+
                     }
-                    Text("준비된 모델과 기기 성능에 따라 처리 시간과 지원 언어가 달라집니다.",
+                    Text("위 선택은 OFFLINE의 기기 내 엔진입니다. ONLINE 선택 시 모든 파일도 설정한 API를 사용합니다. 운용 모드는 통번역 설정에서 변경합니다.",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 item {

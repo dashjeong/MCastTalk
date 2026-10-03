@@ -41,6 +41,9 @@ class GemmaInferenceService : Service() {
             glossaryHints: String,
             reviewDraft: String,
             translationStyle: String,
+            sessionMemory: String,
+            domainHints: String,
+            jsonResponseFormat: Boolean,
             callback: IGuideCastGemmaInferenceCallback?,
         ) {
             if (requestId < 0L || callback == null) return
@@ -61,6 +64,9 @@ class GemmaInferenceService : Service() {
                         glossaryHints,
                         reviewDraft,
                         translationStyle,
+                        sessionMemory,
+                        domainHints,
+                        jsonResponseFormat,
                     )
                     currentCoroutineContext().ensureActive()
                     runCatching { callback.onSuccess(requestId, translated) }

@@ -131,7 +131,7 @@ data class GemmaSignedCatalog(
             require(id.matches(SAFE_ID_REGEX)) {
                 "행 $rowNumber: ID는 1~64자의 안전한 ASCII여야 합니다: $id"
             }
-            require(id != GemmaModelVariant.STANDARD_ID && id != GemmaModelVariant.GPU_OPTIMIZED_ID) {
+            require(GemmaModelVariant.BUILTIN_VARIANTS.none { it.id == id }) {
                 "행 $rowNumber: 기본 제공 모델 ID '$id'는 덮어쓸 수 없습니다."
             }
 
@@ -147,7 +147,7 @@ data class GemmaSignedCatalog(
             require(!fileName.contains('/') && !fileName.contains('\\') && !fileName.contains("..")) {
                 "행 $rowNumber: 파일명에 경로 순회 문자가 포함될 수 없습니다: $fileName"
             }
-            require(fileName != GemmaModelVariant.STANDARD.fileName && fileName != GemmaModelVariant.GPU_OPTIMIZED.fileName) {
+            require(GemmaModelVariant.BUILTIN_VARIANTS.none { it.fileName == fileName }) {
                 "행 $rowNumber: 기본 제공 파일명 '$fileName'은 덮어쓸 수 없습니다."
             }
 

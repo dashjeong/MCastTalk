@@ -20,7 +20,7 @@ class ThirdPartyLicenseCatalogTest {
 
     @Test
     fun catalogHasUniqueCompleteOfflineMetadata() {
-        assertEquals(48, GUIDECAST_LICENSE_CATALOG.size)
+        assertEquals(49, GUIDECAST_LICENSE_CATALOG.size)
         assertEquals(
             GUIDECAST_LICENSE_CATALOG.size,
             GUIDECAST_LICENSE_CATALOG.map { it.id }.distinct().size,
@@ -48,6 +48,10 @@ class ThirdPartyLicenseCatalogTest {
         assertEquals(
             listOf("gemma-gpu-model"),
             filteredLicenseCatalog("gemma-4-E2B-it-gpu.litertlm", null).map { it.id },
+        )
+        assertEquals(
+            listOf("gemma-e4b-model"),
+            filteredLicenseCatalog("gemma-4-E4B-it.litertlm", null).map { it.id },
         )
         assertEquals(
             listOf("moonshine-voice"),

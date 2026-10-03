@@ -82,6 +82,9 @@ data class BroadcastChannelSnapshot(
     val lastWebSocketDeliveredSequence: Long? = null,
     val lastCompletedSequence: Long? = null,
     val droppedUtterances: Long = 0,
+    val lastDroppedSequence: Long? = null,
+    val sourceBacklogDrops: Long = 0,
+    val speechBacklogDrops: Long = 0,
     val translationFailures: Long = 0,
     val synthesisFailures: Long = 0,
     /** Translation failure states cleared by a later successful sentence on this channel. */
@@ -150,6 +153,8 @@ data class TranslationTranscriptLine(
     val synthesisLatencyMillis: Map<String, Long> = emptyMap(),
     /** Retained with the source, so a later operator language change cannot relabel corrections. */
     val sourceLanguageTag: String? = null,
+    /** Live providers segment each language independently; never imply cross-language alignment. */
+    val liveSegmentLanguage: String? = null,
 )
 
 class BroadcastRuntime {

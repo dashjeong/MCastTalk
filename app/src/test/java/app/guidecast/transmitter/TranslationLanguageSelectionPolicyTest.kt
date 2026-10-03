@@ -13,6 +13,20 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 class TranslationLanguageSelectionPolicyTest {
+    @Test
+    fun `Korean input accepts the requested four output languages including Russian`() {
+        var selected: Set<String> = linkedSetOf()
+        listOf("en", "zh", "ja", "ru").forEach { tag ->
+            selected = toggleTranslationLanguageSelection(
+                current = selected,
+                languageTag = tag,
+                sourceLanguageTag = "ko-KR",
+            ).selectedLanguageTags
+        }
+        assertEquals(listOf("en", "zh", "ja", "ru"), selected.toList())
+        assertTrue(translationTargetLanguageOptions("ko-KR").any { it.languageTag == "ru" })
+    }
+
     private val options = listOf("en", "ja", "zh", "nl", "es", "ar", "vi", "de").map { tag ->
         TranslationLanguageOption(tag, tag)
     }

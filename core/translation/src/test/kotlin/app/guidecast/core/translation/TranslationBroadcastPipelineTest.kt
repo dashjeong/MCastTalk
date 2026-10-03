@@ -633,6 +633,57 @@ class TranslationBroadcastPipelineTest {
         }
 
     @Test
+    fun `meaning rejection has readable warning no speech and next sentence recovers`() = runTest {
+        val streams = AudioStreamRegistry()
+        val utterances = MutableSharedFlow<RecognizedUtterance>(extraBufferCapacity = 2)
+        val spoken = mutableListOf<Pair<String, String>>()
+        var chineseCalls = 0
+        val running = TranslationBroadcastPipeline(
+            streams = streams,
+            translationEngines = FailoverTranslationEngineProvider(
+                primary = TranslationEngineProvider { target ->
+                TextTranslationEngine { text, _, _ ->
+                    val translated = if (target == "zh" && ++chineseCalls == 1) "不是自己发送吗？" else "$target:$text"
+                    if (target == "zh" && chineseCalls == 1) requireProtectedTranslationMeaning(text, translated, "ko", "zh")
+                    translated
+                }
+                },
+                fallback = TranslationEngineProvider { TextTranslationEngine { _, _, _ -> error("Review item must not reach fallback") } },
+                allowFallbackForPrimaryFailure = { protectedTranslationReviewMessage(it.message) == null },
+            ),
+            speechEngines = SpeechSynthesisEngineProvider {
+                object : SpeechSynthesisEngine {
+                    override fun synthesize(text: String, languageTag: String): kotlinx.coroutines.flow.Flow<PcmAudioFrame> {
+                        spoken += languageTag to text
+                        return flowOf(PcmAudioFrame(text.encodeToByteArray().toEvenPcm(), 1L))
+                    }
+                }
+            },
+        ).start(this, utterances, listOf("zh", "ja").map { TranslationTarget(it, it, it, 24_000) })
+        val chinese = streams.subscribe("zh")
+        val japanese = streams.subscribe("ja")
+        runCurrent()
+        utterances.emit(RecognizedUtterance(1, "직접 보내겠다는 뜻은 아니에요.", "ko", true, 1L))
+        runCurrent()
+        assertTrue(chinese.frames.tryReceive().isFailure)
+        assertTrue(japanese.frames.tryReceive().isSuccess)
+        val failed = running.health.value.single { it.channelId == "zh" }
+        assertEquals(TranslationWorkerState.DEGRADED, failed.translationState)
+        assertEquals(protectedTranslationReviewMessage("GEMMA_SENTENCE_TYPE_REVIEW_REQUIRED"), failed.lastTranslationError)
+        assertTrue(spoken.none { it.first == "zh" })
+        utterances.emit(RecognizedUtterance(2, "둘째 문장을 진행합니다.", "ko", true, 2L))
+        advanceUntilIdle()
+        assertTrue(chinese.frames.tryReceive().isSuccess)
+        assertTrue(japanese.frames.tryReceive().isSuccess)
+        val recovered = running.health.value.single { it.channelId == "zh" }
+        assertEquals(2L, recovered.lastCompletedSequence)
+        assertEquals(1L, recovered.translationRecoveries)
+        assertEquals(null, recovered.lastError)
+        assertEquals(1, spoken.count { it.first == "zh" })
+        running.close(); chinese.close(); japanese.close()
+    }
+
+    @Test
     fun `provider cancellation degrades only that translation item and next sentence recovers`() =
         runTest {
             var englishCalls = 0
@@ -1981,6 +2032,9 @@ class TranslationBroadcastPipelineTest {
             assertEquals(5L, waitingHealth.getValue("en").lastTranslatedSequence)
             assertEquals(2L, waitingHealth.getValue("en").droppedUtterances)
             assertEquals(2L, waitingHealth.getValue("en").synthesisFailures)
+            assertEquals(2L, waitingHealth.getValue("en").speechBacklogDrops)
+            assertEquals(0L, waitingHealth.getValue("en").sourceBacklogDrops)
+            assertEquals(3L, waitingHealth.getValue("en").lastDroppedSequence)
             assertTrue(
                 waitingHealth.getValue("en").lastSynthesisError.orEmpty()
                     .contains("자막은 보존"),
@@ -1997,6 +2051,9 @@ class TranslationBroadcastPipelineTest {
             assertEquals(5L, recoveredHealth.getValue("en").lastCompletedSequence)
             assertEquals(1L, recoveredHealth.getValue("en").synthesisRecoveries)
             assertEquals(null, recoveredHealth.getValue("en").lastSynthesisError)
+            // A later successful sentence must not erase evidence of missing content.
+            assertEquals(2L, recoveredHealth.getValue("en").speechBacklogDrops)
+            assertEquals(3L, recoveredHealth.getValue("en").lastDroppedSequence)
             running.close()
         }
 

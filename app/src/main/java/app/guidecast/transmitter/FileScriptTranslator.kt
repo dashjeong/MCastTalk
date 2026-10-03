@@ -1,11 +1,14 @@
 package app.guidecast.transmitter
 
 import app.guidecast.provider.gemma.translation.GemmaModelReadiness
+import app.guidecast.provider.gemma.translation.GemmaModelVariant
 import app.guidecast.provider.gemma.translation.GemmaBroadcastCapability
 import app.guidecast.core.translation.SelectiveRefinementReason
 import app.guidecast.core.translation.ContextualTextTranslationEngine
 import app.guidecast.core.translation.TextTranslationEngine
+import app.guidecast.core.translation.ModelReadiness
 import app.guidecast.core.translation.TranslationReviewContext
+import app.guidecast.core.translation.TranslationRequestIdentity
 import app.guidecast.core.translation.TranslationStyle
 import app.guidecast.core.translation.TranslationStyleContext
 import kotlin.coroutines.EmptyCoroutineContext
@@ -37,6 +40,11 @@ internal suspend fun translateFileScript(
     onLine: suspend (Int, String) -> Unit = { _, _ -> },
     onProgress: (Int, Int) -> Unit,
 ): FileScriptTranslation {
+    val requestScope = java.util.UUID.randomUUID().toString()
+    val requestedMode = mode
+    val mode = if (app.translationApiSettings.state.value.provider == TranslationApiProvider.LOCAL) {
+        if (requestedMode == FileTranslationEngine.API) FileTranslationEngine.MLKIT else requestedMode
+    } else FileTranslationEngine.API
     require(entry.segments.isNotEmpty()) { "번역할 원문이 없습니다." }
     sourceOnlyFileTranslation(entry, target)?.let { sourceOnly ->
         sourceOnly.lines.forEachIndexed { index, text ->
@@ -76,11 +84,21 @@ internal suspend fun translateFileScript(
         try {
             withTimeout(180_000) {
                 app.selectTranslationSource(owner)
-                if (mode != FileTranslationEngine.API) app.prepareTranslationModelsWithProcessAdmission(setOf(target), true, owner)
-                else app.refreshTranslationModels(setOf(target), owner)
+                // Runtime OFFLINE must never implicitly download missing translation models.
+                // Model acquisition belongs to the operator's explicit preparation screen.
+                app.refreshTranslationModels(setOf(target), owner)
+                if (mode != FileTranslationEngine.API) check(app.translationProvider.modelManager.statuses.value.any {
+                    it.languageTag == target && it.readiness == ModelReadiness.READY
+                }) { "OFFLINE 번역 모델이 없습니다. 설정에서 모델을 먼저 준비하세요." }
             }
-            val localEngine = app.translationProvider.engineFor(target)
-            val draftEngine = if (mode == FileTranslationEngine.API) app.translationApiService.engine(localEngine) else localEngine
+            val installedEngine = app.translationProvider.engineFor(target)
+            val localEngine = TextTranslationEngine { text, sourceTag, targetTag ->
+                if (app.translationProvider.hasActivePreparedWorker(target)) {
+                    installedEngine.translate(text, sourceTag, targetTag)
+                } else app.withProcessNativeColdLoadLease(ProcessNativeColdLoadKeys.mlKitTranslation(target), true) {
+                    installedEngine.translate(text, sourceTag, targetTag)
+                }
+            }
             val reviewerReady = mode == FileTranslationEngine.GEMMA &&
                 app.gemmaTranslationProvider.modelManager.status.value.readiness == GemmaModelReadiness.READY &&
                 !app.gemmaTranslationProvider.isAutomaticRetryBlocked() &&
@@ -90,38 +108,21 @@ internal suspend fun translateFileScript(
                 notes += "AI 검토 모델을 사용할 수 없어 Google ML Kit 번역을 보존했습니다. 설정에서 모델을 준비·점검하세요."
             }
             var reviewAvailable = reviewerReady
-            indexes.forEach { index ->
-                currentCoroutineContext().ensureActive()
-                if (!app.isPreparationCurrent(owner)) throw CancellationException("File translation superseded")
-                val original = entry.segments[index].text
-                // Long recognizer segments are translated in bounded, word-aware pieces. Source
-                // text and its word timing remain untouched in the saved transcript.
-                val chunks = fileTranslationChunks(original)
-                val translated = chunks.mapIndexed { chunkIndex, chunk ->
-                    val contextBefore = fileWholeTranslationContext(
-                        listOfNotNull(contexts[entry.segments[index]]) + chunks.take(chunkIndex),
-                    )
-                    val lab = app.developerLabSettings.state.value
-                    val style = if (app.uiDisplaySettings.developerInfo.value && lab.paraphraseEnabled)
-                        TranslationStyleContext(TranslationStyle.valueOf(lab.translationRegister.name))
-                    else TranslationStyleContext(app.translationApiSettings.state.value.tone)
-                    withContext(style) {
-                    val draft = withTimeout(20_000) {
-                        translateFileChunkWithContext(draftEngine, chunk, contextBefore, source, target)
-                    }
-                    if (mode == FileTranslationEngine.API && app.translationApiService.states.value[target] != TranslationApiState.READY) allApiCompleted = false
-                    check(draft.isNotBlank()) { "번역 결과가 비어 있습니다." }
+            val completedLocalEngine = object : ContextualTextTranslationEngine {
+                override suspend fun translateWithContext(text: String, contextBefore: String?, sourceLanguageTag: String, targetLanguageTag: String): String {
+                    val chunk = text; val source = sourceLanguageTag; val target = targetLanguageTag
+                    val draft = translateFileChunkWithContext(localEngine, chunk, contextBefore, source, target)
                     val localResult = if (!reviewAvailable || !TranslationReviewContext.canRepresent(chunk, draft)) {
                         if (mode == FileTranslationEngine.GEMMA) allReviewsCompleted = false
                         draft
-                    }
-                    else {
+                    } else {
                         val reviewed = try {
                             withTimeout(30_000) {
                                 app.withProcessNativeColdLoadLease(ProcessNativeColdLoadKeys.GEMMA_MODEL, true) {
+                                    val gemmaEngine = app.gemmaTranslationProvider.engineFor(target)
                                     withContext(TranslationReviewContext(chunk, draft, source, target,
                                         setOf(SelectiveRefinementReason.LONG_COMPLETE_SENTENCE))) {
-                                        translateFileChunkWithContext(app.gemmaTranslationProvider.engineFor(target),
+                                        translateFileChunkWithContext(gemmaEngine,
                                             chunk, contextBefore, source, target)
                                     }
                                 }
@@ -145,10 +146,39 @@ internal suspend fun translateFileScript(
                             draft
                         } else reviewed
                     }
+
                     val refined = if (allowCloudReview) app.cloudTranslationReviewer.refine(source, target, chunk, localResult,
                         contextBefore = contextBefore) else localResult
-                    if (refined != localResult) notes += "문장 사전 또는 사용자가 활성화한 API 검토 보정을 반영했습니다."
-                    if (target.equals("zh-TW", true)) convertToTraditionalChinese(refined) else refined
+                    if (refined != localResult) notes += "검수된 로컬 문장 사전 보정을 반영했습니다."
+                    return if (target.equals("zh-TW", true)) convertToTraditionalChinese(refined) else refined
+                }
+                override suspend fun translate(text: String, sourceLanguageTag: String, targetLanguageTag: String): String =
+                    translateWithContext(text, null, sourceLanguageTag, targetLanguageTag)
+            }
+            val localDomainEngine = DomainCorpusTranslationEngine(completedLocalEngine, app.domainCorpus) { 600 }
+            val draftEngine = app.translationApiService.engine(localDomainEngine)
+            indexes.forEach { index ->
+                currentCoroutineContext().ensureActive()
+                if (!app.isPreparationCurrent(owner)) throw CancellationException("File translation superseded")
+                val original = entry.segments[index].text
+                // Long recognizer segments are translated in bounded, word-aware pieces. Source
+                // text and its word timing remain untouched in the saved transcript.
+                val chunks = fileTranslationChunks(original)
+                val translated = chunks.mapIndexed { chunkIndex, chunk ->
+                    val contextBefore = fileWholeTranslationContext(
+                        listOfNotNull(contexts[entry.segments[index]]) + chunks.take(chunkIndex),
+                    )
+                    val lab = app.developerLabSettings.state.value
+                    val style = if (app.uiDisplaySettings.developerInfo.value && lab.paraphraseEnabled)
+                        TranslationStyleContext(TranslationStyle.valueOf(lab.translationRegister.name))
+                    else TranslationStyleContext(app.translationApiSettings.state.value.tone)
+                    withContext(style + TranslationRequestIdentity(requestScope, (index.toLong() shl 32) + chunkIndex)) {
+                    val draft = withTimeout(if (mode == FileTranslationEngine.GEMMA) 55_000 else 20_000) {
+                        translateFileChunkWithContext(draftEngine, chunk, contextBefore, source, target)
+                    }
+                    if (mode == FileTranslationEngine.API && app.translationApiService.states.value[target] != TranslationApiState.READY) allApiCompleted = false
+                    check(draft.isNotBlank()) { "번역 결과가 비어 있습니다." }
+                    if (target.equals("zh-TW", true)) convertToTraditionalChinese(draft) else draft
                     }
                 }.joinToString(" ")
                 if (translationNumbersNeedReview(original, translated)) notes += "숫자 표현이 원문과 다른 번역이 있습니다. 원음과 대조하세요."
@@ -162,7 +192,7 @@ internal suspend fun translateFileScript(
     if (mode != FileTranslationEngine.API) notes += if (!allReviewsCompleted) "Google ML Kit 번역 · 자동 검사는 의미 정확성을 보증하지 않습니다."
         else "Google ML Kit 번역 + 준비된 AI 모델 검토 · 최종 내용은 원음과 대조하세요."
     if (mode == FileTranslationEngine.API) notes += "설정한 API 경로 · " + (app.translationApiService.states.value[target]?.label ?: "기기 내 번역")
-    if (mode == FileTranslationEngine.API && !allApiCompleted) notes += "일부 구간은 기기 내 번역으로 대체했습니다."
+    if (mode == FileTranslationEngine.API && !allApiCompleted) error("선택한 API가 일부 구간을 완료하지 못했습니다.")
     FileScriptTranslation(results, notes.toList(), if (allApiCompleted) FileTranslationEngine.API else if (allReviewsCompleted) FileTranslationEngine.GEMMA else FileTranslationEngine.MLKIT)
     }
 }

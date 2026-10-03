@@ -31,6 +31,17 @@ class CloudTranslationReviewerTest {
         setCloudReviewEnabled(true)
     }
 
+    @Test fun offlineModeOverridesSavedCloudConsent() = runBlocking {
+        val settings = enabledSettings().apply { setAutoLearnEnabled(true); setTeacherLearningEnabled(true) }
+        var calls = 0
+        CloudTranslationReviewer(settings, { true }, Memory(), CloudReviewTransport { _, _ ->
+            calls++; "Unexpected network result"
+        }, networkAllowed = { false }).use { reviewer ->
+            assertEquals("Draft.", reviewer.refine("ko", "en", "원문", "Draft.", requestTeacherReview = true))
+            assertEquals(0, calls)
+        }
+    }
+
     @Test fun queuedAiWriteRechecksDeveloperCloudAndLearningConsentAtExecution() = runBlocking {
         for (revoked in listOf("developer", "cloud", "learning")) {
             val settings = enabledSettings().apply { setAutoLearnEnabled(true) }

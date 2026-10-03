@@ -95,6 +95,20 @@ class SentenceRefiningTranslationEngineTest {
         assertEquals(1, calls)
     }
 
+    @Test fun selectedOnlineAnswerCannotBeReplacedByLegacyLocalMemory() = runBlocking {
+        val memory = Memory().apply {
+            saved = SentenceMemoryEntry(sourceLanguageTag = "ko", targetLanguageTag = "en",
+                translationRegister = TranslationRegister.FORMAL, original = "같이 가요.",
+                corrected = "Legacy correction.", origin = SentenceMemoryOrigin.USER)
+        }
+        CloudTranslationReviewer(settings(), { false }, memory, noTransport).use { reviewer ->
+            val wrapped = SentenceRefiningTranslationEngine(TextTranslationEngine { _, _, _ -> "Selected online answer." },
+                reviewer, allowLocalRefinement = { false })
+            assertEquals("Selected online answer.", wrapped.translate("같이 가요.", "ko", "en"))
+            assertEquals(0, memory.lookups)
+        }
+    }
+
     @Test fun confirmedSentenceWorksOfflineButUnapprovedAiMemoryDoesNotReplaceBaseline() = runBlocking {
         val memory = Memory().apply {
             saved = SentenceMemoryEntry(sourceLanguageTag = "ko", targetLanguageTag = "en",

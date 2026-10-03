@@ -21,3 +21,20 @@ internal suspend fun forwardRecognitionFrame(
 } catch (_: ClosedSendChannelException) {
     false
 }
+
+/** A busy source output skips that output only; the same captured frame still reaches STT. */
+internal suspend fun publishSourceThenForwardRecognitionFrame(
+    frame: PcmAudioFrame,
+    publishSource: Boolean,
+    publication: app.guidecast.core.stream.ChannelAudioPublicationCoordinator?,
+    publish: (PcmAudioFrame) -> Unit,
+    recognition: SendChannel<PcmAudioFrame>?,
+): Boolean {
+    if (publishSource) {
+        val lease = publication?.tryAcquireChannel("source")
+        if (publication == null || lease != null) {
+            try { publish(frame) } finally { lease?.close() }
+        }
+    }
+    return recognition?.let { forwardRecognitionFrame(it, frame) } ?: true
+}

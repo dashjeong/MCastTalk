@@ -3,7 +3,7 @@ package app.guidecast.provider.gemma.translation
 /**
  * Descriptor for a validated Gemma model artifact.
  *
- * Both builtin models use mobile quantization; GPU is not a new QAT model.
+ * Builtin models use mobile quantization; the E2B GPU variant is not a new QAT model.
  */
 data class GemmaModelVariant(
     val id: String,
@@ -36,6 +36,7 @@ data class GemmaModelVariant(
         const val DEFAULT_RUNTIME_CONTRACT = "gemma4-translator-v1"
         const val STANDARD_ID = "standard"
         const val GPU_OPTIMIZED_ID = "gpu_optimized"
+        const val E4B_IT_ID = "e4b_it"
 
         @JvmField
         val STANDARD: GemmaModelVariant = GemmaModelVariant(
@@ -67,7 +68,22 @@ data class GemmaModelVariant(
             isBuiltin = true,
         )
 
-        val BUILTIN_VARIANTS: List<GemmaModelVariant> = listOf(STANDARD, GPU_OPTIMIZED)
+        @JvmField
+        val E4B_IT: GemmaModelVariant = GemmaModelVariant(
+            id = E4B_IT_ID,
+            label = "E4B 기본형 · LiteRT-LM (시험용)",
+            fileName = "gemma-4-E4B-it.litertlm",
+            revision = "2eee7ac325f20eb8c9ac1d0e972f7c84663062da",
+            sizeBytes = 3_659_530_240L,
+            sha256 = "0b2a8980ce155fd97673d8e820b4d29d9c7d99b8fa6806f425d969b145bd52e0",
+            gpuOnly = false,
+            minSdk = 29,
+            runtimeContract = DEFAULT_RUNTIME_CONTRACT,
+            repositoryUrl = "https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm",
+            isBuiltin = true,
+        )
+
+        val BUILTIN_VARIANTS: List<GemmaModelVariant> = listOf(STANDARD, GPU_OPTIMIZED, E4B_IT)
 
         val entries: List<GemmaModelVariant>
             get() = BUILTIN_VARIANTS
@@ -77,6 +93,7 @@ data class GemmaModelVariant(
         fun valueOf(name: String): GemmaModelVariant = when (name) {
             "STANDARD" -> STANDARD
             "GPU_OPTIMIZED" -> GPU_OPTIMIZED
+            "E4B_IT" -> E4B_IT
             else -> fromId(name)
         }
 

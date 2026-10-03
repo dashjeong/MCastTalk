@@ -520,7 +520,7 @@ class SpeechSynthesisPreparationFailoverTest {
             assertSame(androidError, error.cause)
             assertTrue(error.suppressed.contains(moonshineError))
             assertTrue(error.message.orEmpty().contains("Moonshine"))
-            assertTrue(error.message.orEmpty().contains("Galaxy 오프라인 음성"))
+            assertTrue(error.message.orEmpty().contains("기기 오프라인 음성"))
         }
     }
 
@@ -596,7 +596,7 @@ class SpeechSynthesisPreparationFailoverTest {
         listOf("zh-TW", "vi").forEach { languageTag ->
             val error = outcomes.single { it.languageTag == languageTag }.error
             assertTrue(error is SpeechSynthesisPreparationException)
-            assertTrue(error?.message.orEmpty().contains("$languageTag Galaxy 오프라인 음성 준비 시간 초과"))
+            assertTrue(error?.message.orEmpty().contains("$languageTag 기기 오프라인 음성 준비 시간 초과"))
             assertTrue(error?.message.orEmpty().contains("오프라인 음성을 설치한 뒤 다시 준비"))
         }
     }
@@ -1082,5 +1082,29 @@ class SpeechSynthesisPreparationFailoverTest {
         override fun completeNative() = Unit
 
         override fun close() = Unit
+    }
+
+    @Test
+    fun installedOfflineVoiceSelectedOmitsMoonshineSkipTextAndPutsDeviceErrorFirst() {
+        val moonshineError = InstalledOfflineVoiceSelected()
+        val androidError = IllegalStateException("Google 음성 데이터가 설치되지 않았습니다. 음성팩 설치·설정 화면에서 내려받으세요.")
+
+        val message = buildSpeechSynthesisPreparationErrorMessage("zh", moonshineError, androidError)
+
+        assertTrue("Must start with preparation failure and device offline voice",
+            message.startsWith("통역 음성 준비 실패: zh · 기기 오프라인 음성: Google 음성 데이터가 설치되지 않았습니다"))
+        assertFalse("Must not include normal preference skip text", message.contains("Moonshine"))
+        assertTrue("Must preserve actionable advice within 120 chars for UI display",
+            message.take(120).contains("음성팩 설치·설정 화면에서 내려받으세요"))
+    }
+
+    @Test
+    fun realMoonshineFailureIncludesBothBackendReasonsWithDeviceFirst() {
+        val moonshineError = IllegalStateException("Moonshine native crashed")
+        val androidError = IllegalStateException("Google 엔진에서 한국어 언어를 지원하지 않습니다.")
+
+        val message = buildSpeechSynthesisPreparationErrorMessage("ko", moonshineError, androidError)
+
+        assertTrue(message.startsWith("통역 음성 준비 실패: ko · 기기 오프라인 음성: Google 엔진에서 한국어 언어를 지원하지 않습니다. · Moonshine: Moonshine native crashed"))
     }
 }

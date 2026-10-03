@@ -47,6 +47,7 @@ data class AudioCaptureConfig(
     val enableAutomaticGain: Boolean = false,
     val enableEchoCanceler: Boolean = false,
     val noiseMode: MicrophoneNoiseMode = MicrophoneNoiseMode.DEVICE,
+    val nearSpeakerFocus: Boolean = false,
 )
 
 /** Selects requested session effects; OEM processing inside an audio source remains outside this API. */
@@ -87,6 +88,7 @@ data class AudioProcessingStatus(
     val echoCancelerActive: Boolean = false,
     val clientSilenced: Boolean = false,
     val noiseReductionSummary: String? = null,
+    val microphoneFocusStatus: MicrophoneFocusStatus = MicrophoneFocusStatus.OFF,
 ) {
     val operatorSummary: String?
         get() = when (mode) {
@@ -101,7 +103,7 @@ data class AudioProcessingStatus(
                     if (automaticGainActive) add("음성 레벨 자동 조정")
                     if (echoCancelerActive) add("반향 제거")
                 }
-                when {
+                val effectsSummary = when {
                     noiseReductionSummary != null && activeEffects.isEmpty() -> noiseReductionSummary
                     noiseReductionSummary != null ->
                         "$noiseReductionSummary + ${activeEffects.joinToString(" + ")} 활성"
@@ -110,6 +112,7 @@ data class AudioProcessingStatus(
                             "기기 입력 처리 여부는 단말에 따름"
                     else -> activeEffects.joinToString(" + ") + " 활성"
                 }
+                listOfNotNull(microphoneFocusStatus.summary, effectsSummary).joinToString(" · ")
             }
         }
 }
@@ -210,16 +213,31 @@ class AudioCaptureEngine(
             throw mismatch
         }
 
+        val processingSession = processingGeneration.incrementAndGet()
+        fun focusForCurrentRoute(): MicrophoneFocusStatus = requestNearSpeakerFocus(
+            enabled = config.nearSpeakerFocus,
+            builtInMicrophone = recorder.routedDevice?.let { it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC },
+            requestDirection = {
+                recorder.setPreferredMicrophoneDirection(android.media.MicrophoneDirection.MIC_DIRECTION_TOWARDS_USER)
+            },
+            requestField = { recorder.setPreferredMicrophoneFieldDimension(1.0f) },
+        )
+        val focusStatus = java.util.concurrent.atomic.AtomicReference(focusForCurrentRoute())
         val routingListener = AudioRecord.OnRoutingChangedListener { record ->
             try {
                 routeController.verifyRoutedDevice(routeLease.requestedInput, record.routedDevice)
+                focusStatus.set(focusForCurrentRoute())
+                if (processingGeneration.get() == processingSession) {
+                    mutableProcessingStatus.value = mutableProcessingStatus.value.copy(
+                        microphoneFocusStatus = focusStatus.get(),
+                    )
+                }
             } catch (disconnected: Throwable) {
                 close(disconnected)
             }
         }
         recorder.addOnRoutingChangedListener(routingListener, Handler(Looper.getMainLooper()))
 
-        val processingSession = processingGeneration.incrementAndGet()
         var noiseSummary = when (config.noiseMode) {
             MicrophoneNoiseMode.OFF -> "앱 소음 감소 끄기 요청 · 단말 입력 처리는 별도"
             MicrophoneNoiseMode.DEVICE -> null
@@ -230,6 +248,7 @@ class AudioCaptureEngine(
                 mutableProcessingStatus.value = effects.status.copy(
                     clientSilenced = mutableClientSilenced.value,
                     noiseReductionSummary = noiseSummary,
+                    microphoneFocusStatus = focusStatus.get(),
                 )
             }
         }

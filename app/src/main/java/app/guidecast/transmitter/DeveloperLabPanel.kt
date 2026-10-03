@@ -74,10 +74,6 @@ internal fun DeveloperLabPanel(
     val owner = LocalLifecycleOwner.current
     var text by remember { mutableStateOf("안녕하세요. 다음 장소로 함께 이동해 볼까요?") }
     var language by remember { mutableStateOf("ko") }
-    var keyInput by remember(options.provider) { mutableStateOf("") }
-    var modelInput by remember(options.provider, options.modelId) { mutableStateOf(options.modelId) }
-    var secondaryModelInput by remember(options.secondaryModelId) { mutableStateOf(options.secondaryModelId) }
-    var situationInput by remember(options.comparisonSituation) { mutableStateOf(options.comparisonSituation) }
     var message by remember { mutableStateOf<String?>(null) }
     var previewMessage by remember { mutableStateOf<String?>(null) }
     var previewBusy by remember { mutableStateOf(false) }
@@ -168,50 +164,19 @@ internal fun DeveloperLabPanel(
             if (previewBusy) OutlinedButton(onClick = { previewJob?.cancel() }) { Text("음성 시험 중지") }
             previewMessage?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             HorizontalDivider()
-            Text("온라인 문장 검토", style = MaterialTheme.typography.titleMedium)
-            Text("허용하면 원문·번역문·언어 정보를 선택한 API 제공자에게 전송하며 해당 계정 요금이 발생할 수 있습니다. 음원과 진단 로그는 보내지 않습니다.", style = MaterialTheme.typography.bodySmall)
+            Text("이전 온라인 검토 설정", style = MaterialTheme.typography.titleMedium)
+            Text("통번역 설정의 단일 제공자·예산·학습 비교로 통합했습니다. 이 화면의 이전 키는 전송에 사용하지 않습니다. 기존 검수 기록은 확인할 수 있습니다.", style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 CloudReviewProvider.entries.forEach { provider ->
                     FilterChip(selected = options.provider == provider, onClick = { settings.setProvider(provider) },
-                        label = { Text(if (provider == CloudReviewProvider.OPENAI) "OpenAI" else "Google") })
+                        label = { Text(provider.name) })
                 }
             }
-            OutlinedTextField(modelInput, { if (it.length <= 80) modelInput = it }, label = { Text("API 모델 ID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            TextButton(onClick = { message = if (settings.setModelId(modelInput)) "모델 설정을 저장했습니다." else "모델 ID 형식을 확인하세요." }) { Text("모델 설정 저장") }
-            OutlinedTextField(keyInput, { if (it.length <= 512) keyInput = it }, label = { Text("API 키") },
-                visualTransformation = PasswordVisualTransformation(), singleLine = true, modifier = Modifier.fillMaxWidth())
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = {
-                    val saved = settings.setApiKey(keyInput)
-                    keyInput = ""
-                    message = if (saved) "API 키를 기기에 저장했습니다." else "API 키를 저장하지 못했습니다. 키 형식과 기기 보안 저장소를 확인하세요."
-                }, enabled = keyInput.isNotBlank()) { Text("키 저장") }
-                TextButton(onClick = {
-                    val removed = settings.clearApiKey()
-                    keyInput = ""
-                    message = if (removed) "저장된 키를 삭제했습니다."
-                        else "키 삭제를 확인하지 못했습니다. 온라인 전송은 해제했습니다."
-                }, enabled = options.hasApiKey) { Text("키 삭제") }
-            }
-            Text(if (options.hasApiKey) "API 키 저장됨" else "API 키 없음", style = MaterialTheme.typography.bodySmall)
-            LabSwitch("온라인 전송·문장 검토 허용", options.cloudReviewEnabled, settings::setCloudReviewEnabled, options.hasApiKey)
-            LabSwitch("자가진단·자기개선 모드", options.teacherLearningEnabled, settings::setTeacherLearningEnabled)
-            Text("Gemini·ChatGPT 교차 검증", style = MaterialTheme.typography.titleMedium)
-            Text("두 제공자에서 각각 번역안을 받고 다른 제공자가 후보를 다시 검사합니다. 원문·앱 번역·직전 문맥 최대 1,000자·아래 상황을 두 API에 전송합니다. 재검증에는 이 문장의 기존 교정과 기기에 저장된 유사 교정 최대 3건의 원문·번역·상황도 포함됩니다. 비교 1건당 최대 3회 API 요청이며 각 제공자의 요금이 발생할 수 있습니다. 채팅 구독과 API 요금은 별개입니다.", style = MaterialTheme.typography.bodySmall)
-            Text(if (options.hasComparisonKeys) "두 제공자의 API 키 저장됨" else "위 제공자 선택에서 OpenAI·Google 키를 각각 저장하세요.")
-            OutlinedTextField(secondaryModelInput, { if (it.length <= 80) secondaryModelInput = it },
-                label = { Text("다른 제공자(${options.provider.other().name})의 모델 ID") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(situationInput, { if (it.length <= 300) situationInput = it },
-                label = { Text("방송·대화 상황 · 예: 박물관 관람 안내") }, modifier = Modifier.fillMaxWidth())
-            TextButton(onClick = { message = if (settings.setComparisonDetails(secondaryModelInput, situationInput))
-                "비교 설정을 저장했습니다. 내용을 확인한 뒤 두 제공자 전송을 켜세요." else "모델 ID·상황 길이·민감 정보 포함 여부를 확인하세요." }) { Text("비교 설정 저장") }
-            LabSwitch("두 제공자 전송·교차 검증 허용", options.comparisonEnabled, settings::setComparisonEnabled,
-                options.hasComparisonKeys && options.cloudReviewEnabled)
-            Text("문맥 후보는 분당 최대 2건씩 선별합니다. 두 모델의 답변 일치만으로 정답이라 판단하지 않습니다. 검증 실패·의견 불일치는 보류하며, 승인 전에는 기존 번역을 바꾸지 않습니다. 유사 문장은 후보 검색에만 쓰고 다른 상황에 자동 적용하지 않습니다.", style = MaterialTheme.typography.bodySmall)
+            TextButton(enabled = options.hasApiKey, onClick = {
+                message = if (settings.clearApiKey()) "이전 키를 삭제했습니다." else "키 삭제를 확인하지 못했습니다."
+            }) { Text("이전 검토 키 삭제") }
+            TextButton(onClick = { reportsVisible = true }) { Text("기존 검수 기록 보기") }
             SelfImprovementPanel(app)
-            Text("선별된 원문과 해당 번역만 선택한 API에 전송합니다. 검사 통과는 의미 품질 보증이 아닙니다. 사용자 확정 문장은 덮어쓰지 않습니다.", style = MaterialTheme.typography.bodySmall)
-            TeacherLearningControls(settings, app.cloudTranslationReviewer) { reportsVisible = true }
-            Text("자가개선 모드에서는 실시간·파일 번역 모두 개선안을 먼저 제안합니다. 이미 표시·낭독한 문장은 바꾸지 않으며, 승인한 표현은 이후 같은 문장을 사용할 때 반영합니다.", style = MaterialTheme.typography.bodySmall)
             message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             HorizontalDivider()
             Text("현재 기기의 음성 엔진", style = MaterialTheme.typography.titleMedium)

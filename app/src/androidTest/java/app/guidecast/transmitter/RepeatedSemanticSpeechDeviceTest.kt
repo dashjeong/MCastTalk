@@ -1,13 +1,17 @@
 package app.guidecast.transmitter
 
 import android.os.SystemClock
+import android.util.Log
 import androidx.test.platform.app.InstrumentationRegistry
 import app.guidecast.core.audio.pcmS16LeSignalStats
 import app.guidecast.core.stream.PcmAudioFrame
 import app.guidecast.core.translation.RecognizedUtterance
 import app.guidecast.core.translation.SpeechRecognitionConfig
+import app.guidecast.provider.gemma.translation.GemmaModelVariant
 import java.security.MessageDigest
+import java.util.Locale
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
@@ -103,6 +107,178 @@ class RepeatedSemanticSpeechDeviceTest {
                         recognition.cancelAndJoin()
                     }
                 }
+            }
+        }
+    }
+
+    @Test
+    fun e2bStandardSpeechToTranslationPipelineSucceeds(): Unit = runBlocking {
+        assertKoreanSpeechToGemmaTranslationPipeline(
+            variant = GemmaModelVariant.STANDARD,
+            captureDelayNanos = 0L,
+        )
+    }
+
+    @Test
+    fun e4bModelOptionSpeechToTranslationPipelineSucceeds(): Unit = runBlocking {
+        assertKoreanSpeechToGemmaTranslationPipeline(
+            variant = GemmaModelVariant.E4B_IT,
+            captureDelayNanos = 0L,
+        )
+    }
+
+    @Test
+    fun lastE4bSentenceTranslatesWhileInputRemainsOpenWithoutNextSpeech(): Unit = runBlocking {
+        assertKoreanSpeechToGemmaTranslationPipeline(
+            variant = GemmaModelVariant.E4B_IT,
+            captureDelayNanos = 0L,
+            rounds = 1,
+            idleFinalDeadlineMillis = 10_000L,
+        )
+    }
+
+    /**
+     * Evaluates regression where PCM capture timestamps lag behind wallclock (e.g. 800ms)
+     * while the E4B resident model is active. Note: Whether E4B CPU contention alone produced
+     * this lag in production remains an unproven hypothesis; this test proves pipeline tolerance
+     * to delayed capture timestamps regardless of root workload cause.
+     */
+    @Test
+    fun e4bModelOptionWithDelayedPcmCaptureTimestampsSucceeds(): Unit = runBlocking {
+        assertKoreanSpeechToGemmaTranslationPipeline(
+            variant = GemmaModelVariant.E4B_IT,
+            captureDelayNanos = 800_000_000L,
+        )
+    }
+
+    private suspend fun assertKoreanSpeechToGemmaTranslationPipeline(
+        variant: GemmaModelVariant,
+        captureDelayNanos: Long,
+        rounds: Int = ROUNDS,
+        idleFinalDeadlineMillis: Long = 35_000L,
+    ) {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val app = instrumentation.targetContext.applicationContext as GuideCastApplication
+        val provider = app.gemmaTranslationProvider
+        val manager = provider.modelManager
+        val initialVariant = manager.selectedVariant
+
+        val fixture = instrumentation.context.assets.open("fixtures/fleurs-ko-1959.pcm").use { it.readBytes() }
+        val finals = CopyOnWriteArrayList<RecognizedUtterance>()
+        assertEquals(224_640, fixture.size)
+        assertEquals("b35aa5acf7ff72a4ec1b68415957ac9e7fe89268312cc8f5e5325a88acea841f",
+            MessageDigest.getInstance("SHA-256").digest(fixture).joinToString("") { "%02x".format(it) })
+        val translations = CopyOnWriteArrayList<String>()
+        val roundsCompleted = CompletableDeferred<Unit>()
+        val translationQueue = Channel<RecognizedUtterance>(capacity = 16)
+        val backendLease = requireNotNull(app.acquireTranslationBackendUseIf({ true }))
+
+        try {
+            provider.applyVerifiedModel(variant)
+            assertEquals(variant, manager.appliedVariant)
+            assertTrue("Selected model must be resident before speech starts", provider.hasActivePreparedWorker())
+            val translator = provider.engineFor("en")
+
+            withTimeout(300_000L) {
+                withPreparedLocalSpeechRecognition(app, "ko-KR") { engine ->
+                    coroutineScope {
+                        var lastCaptureNanos = -1L
+                        suspend fun FlowCollector<PcmAudioFrame>.sendFrame(bytes: ByteArray) {
+                            val rawNanos = SystemClock.elapsedRealtimeNanos()
+                            val captureNanos = (rawNanos - captureDelayNanos).coerceAtLeast(0L)
+                            assertTrue("Input frame capture times must advance", rawNanos > lastCaptureNanos)
+                            lastCaptureNanos = rawNanos
+                            emit(PcmAudioFrame(bytes, captureNanos))
+                            delay(FRAME_MILLIS)
+                        }
+                        val input = flow {
+                            repeat(50) { sendFrame(ByteArray(FRAME_BYTES)) }
+                            repeat(rounds) { round ->
+                                assertEquals("Prior round must commit before next", round, finals.size)
+                                var offset = 0
+                                while (offset < fixture.size) {
+                                    sendFrame(fixture.copyOfRange(offset, offset + FRAME_BYTES))
+                                    offset += FRAME_BYTES
+                                }
+                                val speechEndedAt = SystemClock.elapsedRealtime()
+                                withTimeout(idleFinalDeadlineMillis) {
+                                    while (finals.size <= round) sendFrame(ByteArray(FRAME_BYTES))
+                                }
+                                Log.i("GemmaSpeechGate", "idleFinalMs=${SystemClock.elapsedRealtime() - speechEndedAt} " +
+                                    "round=$round inputRemainsOpen=true noNextSpeech=true")
+                                repeat(50) { sendFrame(ByteArray(FRAME_BYTES)) }
+                                assertEquals("Round $round must produce semantic final", round + 1, finals.size)
+                            }
+                            roundsCompleted.complete(Unit)
+                            while (true) sendFrame(ByteArray(FRAME_BYTES))
+                        }
+
+                        // Independent translation consumer worker prevents translation wait from blocking recognition producer
+                        val translationWorker = launch {
+                            for (utterance in translationQueue) {
+                                val started = SystemClock.elapsedRealtime()
+                                val translated = translator.translate(
+                                    text = utterance.text,
+                                    sourceLanguageTag = utterance.sourceLanguageTag,
+                                    targetLanguageTag = "en",
+                                )
+                                assertTrue("Translated text must not be blank", translated.isNotBlank())
+                                // Record the bundled public fixture before the semantic assertion so
+                                // a failure still identifies whether STT or translation changed its meaning.
+                                Log.i("GemmaSpeechGate", "model=${variant.id} delayMs=${captureDelayNanos / 1_000_000} " +
+                                    "sequence=${utterance.sequence} elapsedMs=${SystemClock.elapsedRealtime() - started} " +
+                                    "source=${utterance.text} translation=$translated")
+                                assertTrue(
+                                    "Public safety fixture must retain compliance with signs: $translated",
+                                    Regex(
+                                        """\b(?:follow|obey|observe|heed|respect|comply with|adhere to|abide by)\s+(?:(?:all|the|posted|safety)\s+)*sign(?:s|age|posts)\b""",
+                                    ).containsMatchIn(translated.lowercase(Locale.ROOT)),
+                                )
+                                translations += translated
+                            }
+                        }
+
+                        val recognition = launch {
+                            engine.recognize(input, SpeechRecognitionConfig("ko-KR", SAMPLE_RATE_HZ, 1)).collect { utterance ->
+                                if (utterance.isFinal) {
+                                    assertTrue(
+                                        "Semantic final must contain required meaning words: ${utterance.text}",
+                                        REQUIRED_MEANING_WORDS.all { it in utterance.text },
+                                    )
+                                    finals += utterance
+                                    translationQueue.send(utterance)
+                                }
+                            }
+                        }
+
+                        try {
+                            roundsCompleted.await()
+                            assertEquals(rounds, finals.size)
+                            assertEquals(rounds, finals.map { it.sequence }.toSet().size)
+                            assertTrue(finals.zipWithNext().all { (a, b) -> a.sequence < b.sequence })
+                            // Wait for all queued translations to finish
+                            withTimeout(60_000L) {
+                                while (translations.size < rounds) delay(100L)
+                            }
+                            assertEquals(rounds, translations.size)
+                            assertTrue("Input must remain open after the last translation", recognition.isActive)
+                        } finally {
+                            recognition.cancelAndJoin()
+                            translationQueue.close()
+                            translationWorker.cancelAndJoin()
+                        }
+                    }
+                }
+            }
+        } finally {
+            // Always safely restore initial variant
+            try {
+                if (manager.selectedVariant != initialVariant) {
+                    provider.applyVerifiedModel(initialVariant)
+                }
+                assertEquals(initialVariant, manager.appliedVariant)
+            } finally {
+                backendLease.close()
             }
         }
     }

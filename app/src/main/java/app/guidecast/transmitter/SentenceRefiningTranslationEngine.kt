@@ -8,6 +8,7 @@ import app.guidecast.core.translation.TextTranslationEngine
 internal class SentenceRefiningTranslationEngine(
     private val delegate: TextTranslationEngine,
     private val reviewer: CloudTranslationReviewer,
+    private val allowLocalRefinement: () -> Boolean = { true },
 ) : BoundedQueuedTranslationEngine {
     override val maximumCallDurationMillis: Long
         get() = ((delegate as? BoundedQueuedTranslationEngine)?.maximumCallDurationMillis ?: 4_000L) + 200L
@@ -17,6 +18,8 @@ internal class SentenceRefiningTranslationEngine(
         val draft = if (delegate is ContextualTextTranslationEngine)
             delegate.translateWithContext(text, contextBefore, sourceLanguageTag, targetLanguageTag)
         else delegate.translate(text, sourceLanguageTag, targetLanguageTag)
+        // ONLINE must publish its selected provider result, never a legacy local-memory replacement.
+        if (!allowLocalRefinement()) return draft
         return reviewer.refine(sourceLanguageTag, targetLanguageTag, text, draft, live = true, contextBefore = contextBefore)
     }
 }

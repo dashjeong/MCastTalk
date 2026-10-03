@@ -1,5 +1,7 @@
 package app.guidecast.transmitter
 
+import app.guidecast.core.translation.protectedTranslationReviewMessage
+
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -25,6 +27,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import app.guidecast.core.audio.AudioCaptureConfig
+import app.guidecast.provider.gemma.translation.GemmaModelVariant
 import app.guidecast.core.audio.AudioInputDevice
 import app.guidecast.core.audio.AudioInputKind
 import app.guidecast.core.audio.PcmFrame
@@ -390,6 +393,8 @@ class BroadcastService : Service() {
     private var selectiveRefinementRecovery: SelectiveRefinementRecovery? = null
     private var translationHealthJob: Job? = null
     private var translationPipeline: RunningTranslationPipeline? = null
+    @Volatile private var geminiLiveSessions: List<GeminiLiveSession> = emptyList()
+    private var geminiLivePreview: StreamSession? = null
     private var sharedTranslationQueue: FairQueuedTranslationEngineProvider? = null
     private var translationBackendUseLease: TranslationBackendUseLease? = null
     private var translationPreparationOwner: TranslationPreparationOwnerToken? = null
@@ -422,6 +427,16 @@ class BroadcastService : Service() {
     private val testToneRequestGeneration = AtomicLong(0)
     private val inputPaused = AtomicBoolean(false)
     private val inputGeneration = AtomicLong(0)
+    private val diagnosticSessionId = java.util.UUID.randomUUID().toString()
+    private var lastCaptureDiagnosticMillis = 0L
+    private var lastRecognitionDiagnosticMillis = 0L
+    private var recognitionPartialCount = 0L
+    private var recognitionFinalCount = 0L
+    private fun recordInputControl(action: ServiceFlowAction, before: InputPhase, after: InputPhase,
+        reason: ServiceFlowReason = ServiceFlowReason.REQUEST) {
+        RuntimeDiagnosticLog.record("input_control", serviceFlowSnapshot(app.translationApiSettings.state.value,
+            diagnosticSessionId, inputGeneration.get(), action, reason, before, after))
+    }
     private val broadcastGeneration = AtomicLong(0)
     @Volatile private var latestDeliveredStartId = 0
     private val translationResourceLock = Any()
@@ -527,6 +542,7 @@ class BroadcastService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        app.translationApiSettings.endSessionLearning()
         releaseBroadcastResources()
         invalidateInputCapture()
         stopProjection()
@@ -621,6 +637,8 @@ class BroadcastService : Service() {
     private fun launchInputCapture(input: AudioInputDevice) {
         if (inputJob != null) return
         val generation = inputGeneration.incrementAndGet()
+        lastCaptureDiagnosticMillis = 0L
+        recordInputControl(ServiceFlowAction.INPUT_START, app.broadcastRuntime.state.value.inputPhase, InputPhase.STARTING)
         val signalTracker = InputSignalTracker()
         app.broadcastRuntime.update { current ->
             current.copy(
@@ -663,7 +681,8 @@ class BroadcastService : Service() {
                 app.audioCaptureEngine.frames(
                     preferredDeviceId = input.platformId,
                     config = AudioCaptureConfig(sampleRateHz = SAMPLE_RATE_HZ,
-                        noiseMode = app.microphoneNoiseSettings.mode.value),
+                        noiseMode = app.microphoneNoiseSettings.profileFor(input.kind).noiseMode,
+                        nearSpeakerFocus = app.microphoneNoiseSettings.profileFor(input.kind).nearSpeakerFocus),
                 )
             },
             playbackFrames = {
@@ -705,6 +724,13 @@ class BroadcastService : Service() {
             peak = stats.peak,
             elapsedRealtimeMillis = SystemClock.elapsedRealtime(),
         )
+        val diagnosticNow = SystemClock.elapsedRealtime()
+        if (signal.frameCount == 1L || diagnosticNow - lastCaptureDiagnosticMillis >= 2_000L) {
+            lastCaptureDiagnosticMillis = diagnosticNow
+            RuntimeDiagnosticLog.record("capture_progress", "session_id=$diagnosticSessionId input_generation=$generation " +
+                "frames=${signal.frameCount} audible_frames=${signal.audibleFrameCount} " +
+                "last_frame_ns=${frame.capturedAtElapsedRealtimeNanos} observed_ms=$diagnosticNow")
+        }
         if (!isInputGenerationCurrent(generation) || inputPaused.get()) return
         if (signal.frameCount == 1L || signal.frameCount % 5L == 0L) {
             app.broadcastRuntime.update { current ->
@@ -735,44 +761,36 @@ class BroadcastService : Service() {
         val current = app.broadcastRuntime.state.value
         if (testToneActive.get()) return
         val pcm = PcmAudioFrame(frame.bytes, frame.capturedAtElapsedRealtimeNanos)
-        if (current.phase == BroadcastPhase.LIVE) {
-            // Input and broadcast have independent stop controls. If the server generation is
-            // being replaced, its channel registry can disappear between two captured frames.
-            // Drop only that obsolete output frame; never fail the microphone/input session.
-            val publicationCoordinator = broadcastAudioPublicationCoordinator
-            val publicationLease = publicationCoordinator?.tryAcquireChannel("source")
-            // A tone may start after the early flag check. Do not suspend capture behind it.
-            if (publicationCoordinator != null && publicationLease == null) return
-            try {
-                val latest = app.broadcastRuntime.state.value
-                // Recheck after acquiring the lease: a tone request can win the race while this
-                // capture coroutine was waiting, and no source frame may be woven into its PCM.
-                if (!testToneActive.get() && latest.phase == BroadcastPhase.LIVE) {
-                    broadcastStreamSession?.tryPublish("source", pcm)
-                }
-            } finally {
-                publicationLease?.close()
-            }
+        if (current.translationTestActive || current.phase == BroadcastPhase.LIVE) geminiLiveSessions.forEach { it.offer(pcm) }
+        val recognitionInput = recognitionFrames.takeIf {
+            current.translationTestActive || current.phase == BroadcastPhase.LIVE
         }
-        // Source audio is independent of STT/TTS readiness and is published before STT backpressure.
-        if (
-            recognitionFrames != null &&
-            (current.translationTestActive || current.phase == BroadcastPhase.LIVE)
-        ) {
-            val recognitionInput = recognitionFrames
-            if (recognitionInput != null && !forwardRecognitionFrame(recognitionInput, pcm)) {
-                app.broadcastRuntime.update { latest ->
-                    if (!isInputGenerationCurrent(generation)) latest else latest.copy(
-                        recognitionDroppedFrameCount = latest.recognitionDroppedFrameCount + 1,
-                    )
-                }
+        // Output congestion never stops this capture frame from reaching speech recognition.
+        if (!publishSourceThenForwardRecognitionFrame(
+                frame = pcm,
+                publishSource = current.phase == BroadcastPhase.LIVE,
+                publication = broadcastAudioPublicationCoordinator,
+                publish = { captured ->
+                    val latest = app.broadcastRuntime.state.value
+                    if (!testToneActive.get() && latest.phase == BroadcastPhase.LIVE) {
+                        broadcastStreamSession?.tryPublish("source", captured)
+                    }
+                },
+                recognition = recognitionInput,
+            )) {
+            app.broadcastRuntime.update { latest ->
+                if (!isInputGenerationCurrent(generation)) latest else latest.copy(
+                    recognitionDroppedFrameCount = latest.recognitionDroppedFrameCount + 1,
+                )
             }
         }
     }
 
     private fun pauseInput() {
         if (app.broadcastRuntime.state.value.inputPhase != InputPhase.ACTIVE) return
+        recordInputControl(ServiceFlowAction.PAUSE_REQUEST, InputPhase.ACTIVE, InputPhase.PAUSED)
         inputPaused.set(true)
+        stopGeminiLiveForPause()
         app.broadcastRuntime.update { current ->
             current.copy(
                 inputPhase = InputPhase.PAUSED,
@@ -791,6 +809,7 @@ class BroadcastService : Service() {
             failInput("입력 스트림이 종료됐습니다. 입력 시작을 다시 누르세요.")
             return
         }
+        recordInputControl(ServiceFlowAction.RESUME_REQUEST, InputPhase.PAUSED, InputPhase.ACTIVE)
         inputPaused.set(false)
         app.broadcastRuntime.update { current ->
             current.copy(inputPhase = InputPhase.ACTIVE, inputErrorMessage = null)
@@ -799,6 +818,7 @@ class BroadcastService : Service() {
     }
 
     private fun stopInput() {
+        recordInputControl(ServiceFlowAction.STOP_REQUEST, app.broadcastRuntime.state.value.inputPhase, InputPhase.IDLE)
         if (app.broadcastRuntime.state.value.translationTestActive) {
             stopTranslationTest(preservePass = true)
         }
@@ -829,6 +849,8 @@ class BroadcastService : Service() {
     }
 
     private fun failInput(message: String) {
+        recordInputControl(ServiceFlowAction.INPUT_FAILURE, app.broadcastRuntime.state.value.inputPhase, InputPhase.FAILED,
+            ServiceFlowReason.UNKNOWN)
         if (app.broadcastRuntime.state.value.translationTestActive) {
             stopTranslationTest(preservePass = false)
         }
@@ -1158,7 +1180,7 @@ class BroadcastService : Service() {
 
     private fun startPreviewPlayback(languageTag: String, sessionId: Long) {
         val channelId = languageTag.lowercase(Locale.ROOT)
-        val subscription = translationPipeline?.streamSession?.subscribeLocalMonitor(channelId)
+        val subscription = (translationPipeline?.streamSession ?: geminiLivePreview)?.subscribeLocalMonitor(channelId)
             ?: error("통역 음성 시험 세션이 종료되었습니다.")
         val track = try {
             createMonitorAudioTrack(MoonshineSpeechSynthesisProvider.OUTPUT_SAMPLE_RATE_HZ)
@@ -1640,6 +1662,8 @@ class BroadcastService : Service() {
         selectiveRefinementRecovery = null
         recognitionFrames?.close()
         recognitionFrames = null
+        geminiLiveSessions.forEach { it.close() }; geminiLiveSessions = emptyList()
+        geminiLivePreview?.close(); geminiLivePreview = null
         translationPipeline?.close()
         translationPipeline = null
         sharedTranslationQueue?.close()
@@ -1965,6 +1989,8 @@ class BroadcastService : Service() {
                         translationHealthJob = null
                         recognitionFrames?.close()
                         recognitionFrames = null
+                        geminiLiveSessions.forEach { it.close() }; geminiLiveSessions = emptyList()
+                        geminiLivePreview?.close(); geminiLivePreview = null
                         translationPipeline?.close()
                         translationPipeline = null
                         app.translationDiagnostics.end()
@@ -1984,8 +2010,15 @@ class BroadcastService : Service() {
         return job
     }
 
+    private fun stopGeminiLiveForPause() {
+        if (geminiLiveSessions.isEmpty()) return
+        geminiLiveSessions.forEach { it.close() }; geminiLiveSessions = emptyList()
+        app.broadcastRuntime.update { it.copy(translationWarning = "Gemini Live 연결 중지됨 · 이전 음성을 재전송하지 않습니다. 통역을 다시 시작하세요.") }
+    }
+
     private fun pauseBroadcast() {
         if (app.broadcastRuntime.state.value.phase != BroadcastPhase.LIVE) return
+        stopGeminiLiveForPause()
         app.broadcastRuntime.update { it.copy(phase = BroadcastPhase.PAUSED) }
         updateNotification()
     }
@@ -2126,6 +2159,60 @@ class BroadcastService : Service() {
         }
     }
 
+    private fun prepareGeminiLive(targets: List<String>, source: String, sessionId: Long,
+        archiveSessionId: Long?, stream: StreamSession?, publication: ChannelAudioPublicationCoordinator?): TranslationPreparationResult {
+        val options = app.translationApiSettings.state.value
+        check(targets.size == 1) { "여러 언어 통역은 서비스 설정에서 Gemini · 다국어 통역을 선택하세요. 같은 음성을 여러 번 전송하지 않습니다." }
+        check(app.translationApiSettings.authorized(options) && options.allowLiveAudio) { "Gemini Live 키·온라인 허용·이번 실행의 원음 전송 동의를 확인하세요." }
+        check(!app.translationApiSettings.sessionLearning.value) { "Live 음성 비교 검증 전에는 학습을 꺼 주세요. 텍스트 제공자의 네 가지 학습 모드는 별도로 사용할 수 있습니다." }
+        val session = stream ?: AudioStreamRegistry().configure(targets.map { tag ->
+            AudioChannelDescriptor(tag.lowercase(Locale.ROOT), requireNotNull(TRANSLATION_LANGUAGES[tag]), tag, 24_000)
+        }).also { geminiLivePreview = it }
+        val connections = targets.distinct().mapIndexed { index, tag ->
+            val segments = GeminiLiveSegments(tag, source, 1_000_000_000L + index * 1_000_000L)
+            GeminiLiveSession(serviceScope, options, tag, app.translationApiSettings, app.geminiLiveMonitor,
+                allowed = { isTranslationSessionCurrent(sessionId) && session.isActive() },
+                onEvent = { event ->
+                    ensureTranslationSessionCurrent(sessionId)
+                    val now = SystemClock.elapsedRealtimeNanos()
+                    val segment = segments.accept(event, now)
+                    if (segment != null) {
+                        app.broadcastRuntime.update { current ->
+                            if (!isTranslationSessionCurrent(sessionId)) current else current.copy(
+                                transcripts = (current.transcripts.filterNot { it.sequence == segment.sequence } + segment).takeLast(MAX_TRANSCRIPT_LINES))
+                        }
+                        // Do not archive an invented source for untranslated/late-transcription audio.
+                        if (segment.isFinal && segment.sourceText.isNotBlank()) persistTranscriptIfAvailable(archiveSessionId, segment.sequence)
+                    }
+                    event.audio.forEach { bytes ->
+                        ensureTranslationSessionCurrent(sessionId)
+                        val current = app.broadcastRuntime.state.value
+                        var result: app.guidecast.core.stream.StreamPublishResult? = null
+                        if (current.translationTestActive || current.phase == BroadcastPhase.LIVE) {
+                            val lease = publication?.tryAcquireChannel(tag.lowercase(Locale.ROOT))
+                            if (publication == null || lease != null) try {
+                                ensureTranslationSessionCurrent(sessionId)
+                                if (app.translationApiSettings.authorized(options)) result = session.tryPublish(tag.lowercase(Locale.ROOT), PcmAudioFrame(bytes, now, segment?.sequence))
+                            } finally { lease?.close() }
+                        }
+                        recordLivePublication(result, bytes.size) { reason, count ->
+                            app.geminiLiveMonitor.loss(tag, reason, count)
+                            app.broadcastRuntime.update { it.copy(translationWarning = "Gemini Live $tag 음성 송출 누락 · API 설정의 언어별 누락 계측을 확인하세요.") }
+                        }
+                    }
+                }, onFailure = { warning -> if (isTranslationSessionCurrent(sessionId)) app.broadcastRuntime.update { it.copy(translationWarning = warning, translationTestMessage = warning) } },
+                onDiagnostic = { action -> RuntimeDiagnosticLog.record("service_flow", serviceFlowSnapshot(options,
+                    diagnosticSessionId, inputGeneration.get(), action)) })
+        }
+        synchronized(translationResourceLock) {
+            ensureTranslationSessionCurrent(sessionId)
+            geminiLiveSessions.forEach { it.close() }
+            geminiLiveSessions = connections
+            connections.forEach { it.start() }
+        }
+        return TranslationPreparationResult("Gemini Live · ${options.model}", "실험 음성 경로 · 최대 60초 · 문장 간 정확한 시간 정렬·의미 품질 실기기 미검증")
+    }
+
     private suspend fun prepareTranslationPipeline(
         translationLanguages: List<String>,
         sourceLanguageTag: String,
@@ -2138,12 +2225,17 @@ class BroadcastService : Service() {
         selectiveTranslationRefinement: Boolean = false,
     ): TranslationPreparationResult {
         val useGemma = requestedGemma && app.translationApiSettings.state.value.provider == TranslationApiProvider.LOCAL
+        val needsLocalTranslation = app.translationApiSettings.state.value.provider == TranslationApiProvider.LOCAL ||
+            app.translationApiSettings.state.value.alwaysLearnOnline || app.translationApiSettings.sessionLearning.value
         ensureTranslationSessionCurrent(sessionId)
         require(translationLanguages.size in 1..MAX_TRANSLATION_LANGUAGES)
         requireSupportedSourceLanguage(sourceLanguageTag)
         require(translationLanguages.none {
             normalizeSourceLanguage(it) == normalizeSourceLanguage(sourceLanguageTag)
         }) { "원문과 출력 언어는 서로 달라야 합니다." }
+        if (app.translationApiSettings.state.value.provider == TranslationApiProvider.GEMINI_LIVE) {
+            return prepareGeminiLive(translationLanguages, sourceLanguageTag, sessionId, archiveSessionId, streamSession, audioPublicationCoordinator)
+        }
         val preparationOwner = app.beginBroadcastPreparation(
             sourceLanguageTag = sourceLanguageTag,
             targetLanguageTags = translationLanguages.toSet(),
@@ -2311,7 +2403,7 @@ class BroadcastService : Service() {
                     ?: error.javaClass.simpleName),
             )
         }
-        val reconciliationFailures = if (awaitChannelPreparation) {
+        val reconciliationFailures = if (awaitChannelPreparation && needsLocalTranslation) {
             app.translationProvider.reconcileTargets(
                 requested,
                 preparationOwner.generation,
@@ -2327,8 +2419,8 @@ class BroadcastService : Service() {
         // Both test and broadcast consume the last completed snapshot and warm ready fallbacks.
         val fallbackRefreshWarning: String? = null
         ensureTranslationSessionCurrent(sessionId)
-        val missingFallback = missingMlKitModels(requested)
-        val readyFallbackTargets = requested - missingFallback.toSet()
+        val missingFallback = if (needsLocalTranslation) missingMlKitModels(requested) else emptyList()
+        val readyFallbackTargets = if (needsLocalTranslation) requested - missingFallback.toSet() else emptySet()
         val fallbackWarmupFailures = linkedMapOf<String, String>()
         // READY proves the files exist. Warm each native client independently so one corrupt or
         // unsupported language model cannot prevent the other selected channels from listening.
@@ -2559,6 +2651,7 @@ class BroadcastService : Service() {
             FailoverTranslationEngineProvider(
                     primary = admittedGemmaTranslationProvider,
                     fallback = admittedFallbackTranslationProvider,
+                    allowFallbackForPrimaryFailure = { protectedTranslationReviewMessage(it.message) == null },
                     primaryAttemptTimeoutMillis = GEMMA_PRIMARY_ATTEMPT_TIMEOUT_MILLIS,
                     primaryRetryCooldownMillis = if (
                         shouldRetryGemmaWithinBroadcast(gemmaCapability.constrainedMemoryMode)
@@ -2598,7 +2691,8 @@ class BroadcastService : Service() {
                                         "이 방송은 경량 번역으로 유지하고 다음 방송에서 Gemma를 " +
                                         "다시 확인합니다 · "
                                 } +
-                                    (error.message ?: error.javaClass.simpleName),
+                                    (protectedTranslationReviewMessage(error.message)
+                                        ?: error.message ?: error.javaClass.simpleName),
                             ).joinToString(" · ")
                             updateProviderFallbackUi(translationLanguages, sessionId)
                             // Engine teardown can include Binder/native cleanup. Keep it out of
@@ -2783,7 +2877,11 @@ class BroadcastService : Service() {
             },
         )
         val baseTranslationProvider = TranslationEngineProvider { target ->
-            if (selectiveTranslationRefinement && target in readyFallbackTargets &&
+            if (!needsLocalTranslation) {
+                TextTranslationEngine { _, _, _ ->
+                    error("온라인 주 모드에는 기기 번역을 자동 실행하지 않습니다.")
+                }
+            } else if (selectiveTranslationRefinement && target in readyFallbackTargets &&
                 target !in fallbackWarmupFailures) {
                 selectiveProvider.engineFor(target)
             } else {
@@ -2791,14 +2889,22 @@ class BroadcastService : Service() {
                 preferredTranslationProvider.engineFor(target)
             }
         }
+        // No first-utterance disk/index warm-up. A failure remains visible before capture starts.
+        app.domainCorpus.prepareActiveIndex()
         val translationProvider = TranslationEngineProvider { targetLanguageTag ->
-            val baseEngine = SentenceRefiningTranslationEngine(
-                app.translationApiService.engine(baseTranslationProvider.engineFor(targetLanguageTag)), app.cloudTranslationReviewer,
+            val localDomainEngine = DomainCorpusTranslationEngine(baseTranslationProvider.engineFor(targetLanguageTag), app.domainCorpus) {
+                if (app.gemmaTranslationProvider.modelManager.selectedVariant ==
+                    GemmaModelVariant.E4B_IT) 600
+                else DomainCorpusFormat.MAX_HINTS_LENGTH
+            }
+            val domainEngine = SentenceRefiningTranslationEngine(
+                app.translationApiService.engine(localDomainEngine), app.cloudTranslationReviewer,
+                allowLocalRefinement = { app.translationApiSettings.state.value.provider == TranslationApiProvider.LOCAL },
             )
             if (targetLanguageTag.equals("zh-TW", ignoreCase = true)) {
-                TraditionalChineseTranslatingEngine(baseEngine)
+                TraditionalChineseTranslatingEngine(domainEngine)
             } else {
-                baseEngine
+                domainEngine
             }
         }
         val input = Channel<PcmAudioFrame>(
@@ -2811,6 +2917,14 @@ class BroadcastService : Service() {
             frames = input.receiveAsFlow(),
             config = SpeechRecognitionConfig(sourceLanguageTag = sourceLanguageTag),
         ).map { utterance ->
+            val now = SystemClock.elapsedRealtime()
+            if (utterance.isFinal) recognitionFinalCount++ else recognitionPartialCount++
+            if (utterance.isFinal || now - lastRecognitionDiagnosticMillis >= 2_000L) {
+                lastRecognitionDiagnosticMillis = now
+                RuntimeDiagnosticLog.record("recognition_progress", "session_id=$diagnosticSessionId input_generation=${inputGeneration.get()} " +
+                    "sequence=${utterance.sequence} final=${utterance.isFinal} partial_count=$recognitionPartialCount final_count=$recognitionFinalCount " +
+                    "captured_ns=${utterance.capturedAtElapsedRealtimeNanos} recognized_ns=${utterance.recognizedAtElapsedRealtimeNanos} observed_ms=$now")
+            }
             val lab = app.developerLabSettings.state.value
             val enabled = app.uiDisplaySettings.developerInfo.value
             utterance.copy(
@@ -2962,6 +3076,9 @@ class BroadcastService : Service() {
                             publishedFrameCount = health.publishedFrameCount,
                             lastCompletedSequence = health.lastCompletedSequence,
                             droppedUtterances = health.droppedUtterances,
+                            lastDroppedSequence = health.lastDroppedSequence,
+                            sourceBacklogDrops = health.sourceBacklogDrops,
+                            speechBacklogDrops = health.speechBacklogDrops,
                             translationFailures = health.translationFailures,
                             synthesisFailures = health.synthesisFailures,
                             translationRecoveries = health.translationRecoveries,
@@ -3322,10 +3439,17 @@ class BroadcastService : Service() {
     private fun updateProviderFallbackUi(
         translationLanguages: List<String>,
         sessionId: Long,
-        providerLabel: String = "ML Kit",
+        providerLabel: String? = null,
         gemmaPriorityActive: Boolean = false,
     ) {
         if (!isTranslationSessionCurrent(sessionId)) return
+        // Voice/reconciliation updates must preserve the active translation route.
+        val currentProviderLabel = providerLabel ?: translationProviderPresentation(
+            translationLanguages = translationLanguages,
+            gemmaActive = gemmaPriorityActive,
+            mlKitReady = true,
+            displayName = TRANSLATION_LANGUAGES::getValue,
+        ).providerLabel
         app.broadcastRuntime.update { current ->
             if (!isTranslationSessionCurrent(sessionId)) return@update current
             val warning = listOfNotNull(
@@ -3334,7 +3458,7 @@ class BroadcastService : Service() {
             ).joinToString(" · ").ifEmpty { null }
             if (current.phase == BroadcastPhase.LIVE || current.phase == BroadcastPhase.PAUSED) {
                 current.copy(
-                    channelSummary = "$providerLabel · " + translationLanguages.joinToString {
+                    channelSummary = "$currentProviderLabel · " + translationLanguages.joinToString {
                         requireNotNull(TRANSLATION_LANGUAGES[it])
                     },
                     translationWarning = warning,
@@ -3419,6 +3543,8 @@ class BroadcastService : Service() {
             elapsedMillis: Long,
         ) {
             if (!isTranslationSessionCurrent(sessionId)) return
+            RuntimeDiagnosticLog.record("translation_complete", "session_id=$diagnosticSessionId input_generation=${inputGeneration.get()} " +
+                "sequence=${utterance.sequence} target=${target.languageTag} elapsed_ms=$elapsedMillis")
             app.translationDiagnostics.stage(TranslationRunStage.SPEAKING)
             updateTranscript(sessionId, utterance.sequence) { line ->
                 line.copy(
@@ -3437,6 +3563,8 @@ class BroadcastService : Service() {
             pcm: SynthesizedPcmStats,
         ) {
             if (!isTranslationSessionCurrent(sessionId)) return
+            RuntimeDiagnosticLog.record("synthesis_complete", "session_id=$diagnosticSessionId input_generation=${inputGeneration.get()} " +
+                "sequence=${utterance.sequence} target=${target.languageTag} elapsed_ms=$elapsedMillis frames=${pcm.frameCount} bytes=${pcm.byteCount}")
             app.translationDiagnostics.stage(TranslationRunStage.RUNNING)
             updateTranscript(sessionId, utterance.sequence) { line ->
                 line.copy(
@@ -3454,6 +3582,8 @@ class BroadcastService : Service() {
             elapsedMillis: Long,
         ) {
             if (!isTranslationSessionCurrent(sessionId)) return
+            RuntimeDiagnosticLog.record("synthesis_first_pcm", "session_id=$diagnosticSessionId input_generation=${inputGeneration.get()} " +
+                "sequence=${utterance.sequence} target=${target.languageTag} elapsed_ms=$elapsedMillis observed_ns=${SystemClock.elapsedRealtimeNanos()}")
             val endToEndMillis = (
                 (SystemClock.elapsedRealtimeNanos() - utterance.recognizedAtElapsedRealtimeNanos) /
                     1_000_000L
@@ -3936,6 +4066,7 @@ class BroadcastService : Service() {
             "nl" to "네덜란드어 · Nederlands",
             "es" to "스페인어 · Español",
             "ar" to "아랍어 · العربية",
+            "ru" to "러시아어 · Русский",
         )
         private val MOONSHINE_TTS_LANGUAGES = setOf("en", "ja", "zh", "nl", "es", "ar")
 

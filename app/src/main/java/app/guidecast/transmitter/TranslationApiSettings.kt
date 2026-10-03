@@ -16,20 +16,32 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONObject
 
-enum class TranslationApiProvider(val label: String) { LOCAL("기기 내 번역"), OPENAI("OpenAI"), GEMINI("Gemini"), COMPATIBLE("OpenAI 호환 API") }
+enum class TranslationApiProvider(val label: String) { LOCAL("기기 내 번역"), OPENAI("OpenAI 텍스트"), OPENAI_REALTIME("OpenAI Realtime"), GEMINI("Gemini 텍스트"), GEMINI_LIVE("Gemini Live 음성"), COMPATIBLE("OpenAI 호환 API") }
+enum class OnlineInterpretationMode(val label: String) { CONTINUOUS("연속통역"), PROFESSIONAL("전문통역") }
 enum class TranslationApiProtocol { RESPONSES, CHAT_COMPLETIONS }
 
 data class TranslationApiOptions(
     val provider: TranslationApiProvider = TranslationApiProvider.LOCAL,
     val model: String = "gpt-5.4-mini", val baseUrl: String = "https://api.openai.com/v1",
     val protocol: TranslationApiProtocol = TranslationApiProtocol.RESPONSES,
-    val tone: TranslationStyle = TranslationStyle.AUTO,
-    val allowOnline: Boolean = false, val localFallback: Boolean = true,
+    val tone: TranslationStyle = TranslationStyle.CONVERSATIONAL,
+    val interpretationMode: OnlineInterpretationMode = OnlineInterpretationMode.CONTINUOUS,
+    val domainPrompt: String = "",
+    val allowOnline: Boolean = false, val localFallback: Boolean = false,
     val hasKey: Boolean = false, val revision: Long = 0,
+    val alwaysLearnOnline: Boolean = false,
+    val allowDomainReferences: Boolean = false,
+    val allowLiveAudio: Boolean = false,
+    val budgetLimitUsd: String = "1.00",
 ) {
     internal fun portable() = JSONObject().put("provider", provider.name).put("model", model).put("baseUrl", baseUrl)
-        .put("protocol", protocol.name).put("tone", tone.name).put("localFallback", localFallback)
-    internal val credentialScope: String get() = provider.name + ":" + baseUrl
+        .put("protocol", protocol.name).put("tone", tone.name).put("interpretationMode", interpretationMode.name).put("domainPrompt", domainPrompt).put("localFallback", localFallback)
+    internal val credentialScope: String get() = if (provider in setOf(TranslationApiProvider.GEMINI, TranslationApiProvider.GEMINI_LIVE))
+        "GOOGLE:" + baseUrl else provider.name + ":" + baseUrl
+    internal val readableCredentialScopes: List<String> get() = if (provider in setOf(TranslationApiProvider.GEMINI, TranslationApiProvider.GEMINI_LIVE))
+        listOf(credentialScope, provider.name + ":" + baseUrl,
+            (if (provider == TranslationApiProvider.GEMINI) "GEMINI_LIVE:" else "GEMINI:") + baseUrl)
+        else listOf(credentialScope)
     internal val endpoint: String get() = when (provider) {
         TranslationApiProvider.GEMINI -> "$baseUrl/models/$model:generateContent"
         else -> "$baseUrl/" + if (protocol == TranslationApiProtocol.RESPONSES) "responses" else "chat/completions"
@@ -40,7 +52,9 @@ data class TranslationApiOptions(
                 provider = TranslationApiProvider.valueOf(row.optString("provider", "LOCAL")),
                 model = row.optString("model", "gpt-5.4-mini"), baseUrl = row.optString("baseUrl", "https://api.openai.com/v1"),
                 protocol = TranslationApiProtocol.valueOf(row.optString("protocol", "RESPONSES")),
-                tone = TranslationStyle.valueOf(row.optString("tone", "AUTO")), localFallback = row.optBoolean("localFallback", true))
+                interpretationMode = OnlineInterpretationMode.valueOf(row.optString("interpretationMode", "CONTINUOUS")),
+                domainPrompt = row.optString("domainPrompt", ""),
+                tone = TranslationStyle.valueOf(row.optString("tone", "CONVERSATIONAL")), localFallback = false)
             require(validTranslationApiOptions(result))
             return result
         }
@@ -48,6 +62,7 @@ data class TranslationApiOptions(
 }
 
 internal fun validTranslationApiOptions(options: TranslationApiOptions): Boolean = runCatching {
+    require(options.domainPrompt.length <= 300 && options.domainPrompt.none { it.code < 32 || it.code == 127 } && !containsCredentialLikeText(options.domainPrompt))
     require(options.model.matches(Regex("[A-Za-z0-9][A-Za-z0-9._/:-]{0,119}")) && ".." !in options.model)
     val uri = URI(options.baseUrl)
     require(options.baseUrl.length <= 300 && uri.scheme == "https" && !uri.host.isNullOrBlank() &&
@@ -55,7 +70,9 @@ internal fun validTranslationApiOptions(options: TranslationApiOptions): Boolean
         !options.baseUrl.endsWith('/') && ".." !in uri.path && '%' !in uri.rawPath &&
         uri.path.matches(Regex("(?:/[A-Za-z0-9._-]+)*")))
     when (options.provider) {
+        TranslationApiProvider.OPENAI_REALTIME -> require(options.baseUrl == "https://api.openai.com/v1" && options.model == "gpt-realtime-2.1-mini" && options.protocol == TranslationApiProtocol.RESPONSES)
         TranslationApiProvider.OPENAI -> require(options.baseUrl == "https://api.openai.com/v1")
+        TranslationApiProvider.GEMINI_LIVE -> require(options.baseUrl == "https://generativelanguage.googleapis.com/v1beta" && options.model in setOf("gemini-3.5-live-translate-preview", "gemini-3.8-live"))
         TranslationApiProvider.GEMINI -> require(options.baseUrl == "https://generativelanguage.googleapis.com/v1beta" && validReviewModel(options.model))
         else -> Unit
     }
@@ -66,38 +83,128 @@ internal fun validTranslationApiOptions(options: TranslationApiOptions): Boolean
 class TranslationApiSettings(context: Context) {
     private val preferences = context.getSharedPreferences("translation_api", Context.MODE_PRIVATE)
     private val vault = TranslationCredentialVault(context)
+    private val sessionKeys = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private fun resolvedKey(options: TranslationApiOptions): String? = options.readableCredentialScopes
+        .firstNotNullOfOrNull { sessionKeys[it] ?: vault.read(it) }
     private val mutableState = MutableStateFlow(runCatching {
         TranslationApiOptions.fromPortable(JSONObject(preferences.getString("options", "{}").orEmpty()))
-            .let { it.copy(allowOnline = preferences.getBoolean("allow_online", false), hasKey = vault.read(it.credentialScope) != null) }
+            .let { it.copy(allowOnline = preferences.getBoolean("allow_online", false) && resolvedKey(it) != null, hasKey = resolvedKey(it) != null,
+                alwaysLearnOnline = preferences.getBoolean("always_learn_online", false),
+                allowLiveAudio = preferences.getBoolean("allow_live_audio", false) && resolvedKey(it) != null,
+                allowDomainReferences = preferences.getBoolean("allow_domain_references", false),
+                budgetLimitUsd = preferences.getString("budget_limit_usd", "1.00") ?: "1.00") }
     }.getOrDefault(TranslationApiOptions()))
     val state = mutableState.asStateFlow()
-    @Synchronized fun configure(options: TranslationApiOptions): Boolean {
-        if (!validTranslationApiOptions(options)) return false
-        store(options.copy(allowOnline = false, hasKey = vault.read(options.credentialScope) != null, revision = state.value.revision + 1))
+    private val mutableSessionLearning = MutableStateFlow(false)
+    val sessionLearning = mutableSessionLearning.asStateFlow()
+    private val mutableLearningOnline = MutableStateFlow<TranslationApiOptions?>(null)
+    val learningOnline = mutableLearningOnline.asStateFlow()
+    private var learningGeneration = 0L
+    internal fun preparedLearningProvider(): TranslationApiOptions? = runCatching {
+        TranslationApiOptions.fromPortable(JSONObject(preferences.getString("last_online_options", null) ?: return null))
+            .let { it.copy(hasKey = resolvedKey(it) != null, budgetLimitUsd = state.value.budgetLimitUsd) }
+    }.getOrNull()
+    /** Restore choices and scoped credentials, never a previous transmission permission. */
+    @Synchronized internal fun restoreOnlineSelection(): Boolean =
+        configure(preparedLearningProvider() ?: onlineServiceChoice(state.value, true))
+    @Synchronized fun endSessionLearning() { mutableSessionLearning.value = false; mutableLearningOnline.value = null }
+    /** User confirmation is session-only; saved online opt-in can never enable OFFLINE networking. */
+    @Synchronized fun beginSessionLearning(agreeToTextAndCost: Boolean, allowReferences: Boolean): Boolean {
+        endSessionLearning()
+        if (!agreeToTextAndCost) return false
+        if (state.value.provider == TranslationApiProvider.LOCAL) {
+            val candidate = preparedLearningProvider()?.takeIf { it.hasKey } ?: return false
+            if (candidate.provider == TranslationApiProvider.GEMINI_LIVE) return false
+            mutableLearningOnline.value = candidate.copy(allowOnline = true, allowDomainReferences = allowReferences,
+                revision = ++learningGeneration)
+        } else {
+            if (!authorized(state.value) || state.value.provider == TranslationApiProvider.GEMINI_LIVE) return false
+            store(state.value.copy(allowDomainReferences = allowReferences, revision = state.value.revision + 1))
+        }
+        mutableSessionLearning.value = true
         return true
     }
+    internal fun learningAuthorized(options: TranslationApiOptions): Boolean = state.value.provider == TranslationApiProvider.LOCAL &&
+        mutableSessionLearning.value && mutableLearningOnline.value == options && options.allowOnline && options.hasKey
+    /** Consent is distinct from account billing and never depends on estimated usage. */
+    @Synchronized fun consentToSelectedService() {
+        if (!state.value.hasKey) return
+        store(state.value.copy(allowOnline = true,
+            allowLiveAudio = state.value.provider == TranslationApiProvider.GEMINI_LIVE,
+            revision = state.value.revision + 1))
+    }
+    @Synchronized fun revokeSelectedService() {
+        store(state.value.copy(allowOnline = false, allowLiveAudio = false, allowDomainReferences = false,
+            revision = state.value.revision + 1))
+    }
+    internal fun usesTemporaryKey(): Boolean = sessionKeys.containsKey(state.value.credentialScope)
+    @Synchronized fun setLiveAudioConsent(allowed: Boolean) {
+        store(state.value.copy(allowLiveAudio = allowed && state.value.hasKey && state.value.provider == TranslationApiProvider.GEMINI_LIVE, revision = state.value.revision + 1))
+    }
+    @Synchronized fun setBudgetLimit(value: String): Boolean {
+        val next = state.value.copy(budgetLimitUsd = value.trim(), revision = state.value.revision + 1)
+        if (!validTranslationApiOptions(next)) return false
+        store(next); return true
+    }
+    @Synchronized fun setAllowDomainReferences(enabled: Boolean) {
+        store(state.value.copy(allowDomainReferences = enabled, revision = state.value.revision + 1))
+    }
+    @Synchronized fun configure(options: TranslationApiOptions): Boolean {
+        if (!validTranslationApiOptions(options)) return false
+        if (options.provider == TranslationApiProvider.GEMINI_LIVE) {
+            mutableSessionLearning.value = false
+            mutableLearningOnline.value = null
+        }
+        store(options.copy(allowLiveAudio = false, allowOnline = false, alwaysLearnOnline = state.value.alwaysLearnOnline, allowDomainReferences = false, localFallback = false, hasKey = resolvedKey(options) != null, revision = state.value.revision + 1))
+        return true
+    }
+    @Synchronized fun setDomainPrompt(prompt: String): Boolean {
+        val next = state.value.copy(domainPrompt = prompt.trim(), revision = state.value.revision + 1)
+        if (!validTranslationApiOptions(next)) return false
+        // Same provider/data category; keep consent, but invalidate any in-flight snapshot.
+        store(next)
+        return true
+    }
+    @Synchronized fun setAlwaysLearnOnline(enabled: Boolean) { store(state.value.copy(alwaysLearnOnline = enabled, revision = state.value.revision + 1)) }
     @Synchronized fun setTone(tone: TranslationStyle) { store(state.value.copy(tone = tone, revision = state.value.revision + 1)) }
     @Synchronized fun setAllowOnline(allowed: Boolean) { store(state.value.copy(allowOnline = allowed && state.value.hasKey, revision = state.value.revision + 1)) }
-    @Synchronized fun setFallback(enabled: Boolean) { store(state.value.copy(localFallback = enabled, revision = state.value.revision + 1)) }
+    @Deprecated("Single mode operation never falls back across the network boundary")
+    @Synchronized fun setFallback(enabled: Boolean) { store(state.value.copy(localFallback = false, revision = state.value.revision + 1)) }
+    @Synchronized fun useSessionKey(key: String): Boolean {
+        if (key.length !in 20..512 || key.any { it.code !in 33..126 }) return false
+        // Temporary replacement must not revive an older persisted key after restart.
+        if (!vault.removeAll(state.value.readableCredentialScopes)) return false
+        state.value.readableCredentialScopes.forEach(sessionKeys::remove)
+        sessionKeys[state.value.credentialScope] = key
+        store(state.value.copy(hasKey = true, allowLiveAudio = false, allowOnline = false, revision = state.value.revision + 1))
+        return true
+    }
     @Synchronized fun saveKey(key: String): Boolean {
-        if (key.length !in 20..512 || key.any { it.code !in 33..126 } || !vault.write(state.value.credentialScope, key)) return false
-        store(state.value.copy(hasKey = true, allowOnline = false, revision = state.value.revision + 1)); return true
+        if (key.length !in 20..512 || key.any { it.code !in 33..126 } || !vault.write(state.value.credentialScope, key,
+                state.value.readableCredentialScopes.filterNot { it == state.value.credentialScope })) return false
+        state.value.readableCredentialScopes.forEach(sessionKeys::remove)
+        store(state.value.copy(hasKey = true, allowLiveAudio = false, allowOnline = false, revision = state.value.revision + 1)); return true
     }
     @Synchronized fun clearKey(): Boolean {
-        val removed = vault.remove(state.value.credentialScope)
-        store(state.value.copy(hasKey = if (removed) false else state.value.hasKey, allowOnline = false, revision = state.value.revision + 1))
+        state.value.readableCredentialScopes.forEach(sessionKeys::remove)
+        val removed = vault.removeAll(state.value.readableCredentialScopes)
+        store(state.value.copy(hasKey = !removed && resolvedKey(state.value) != null,
+            allowLiveAudio = false, allowOnline = false, revision = state.value.revision + 1))
         return removed
     }
-    internal fun key(options: TranslationApiOptions): String? = if (authorized(options)) vault.read(options.credentialScope) else null
+    internal fun key(options: TranslationApiOptions): String? = if (authorized(options) || learningAuthorized(options)) resolvedKey(options) else null
     internal fun authorized(options: TranslationApiOptions) = options.provider != TranslationApiProvider.LOCAL &&
         options.allowOnline && options.hasKey && state.value == options
     private fun store(value: TranslationApiOptions) {
-        preferences.edit().putString("options", value.portable().toString()).putBoolean("allow_online", value.allowOnline).apply()
+        endSessionLearning()
+        if (value.provider != TranslationApiProvider.LOCAL) preferences.edit().putString("last_online_options", value.portable().toString()).apply()
+        preferences.edit().putString("options", value.portable().toString()).putBoolean("allow_online", value.allowOnline).putBoolean("always_learn_online", value.alwaysLearnOnline)
+            .putBoolean("allow_live_audio", value.allowLiveAudio).putBoolean("allow_domain_references", value.allowDomainReferences).putString("budget_limit_usd", value.budgetLimitUsd).apply()
         mutableState.value = value
     }
 }
 
-private class TranslationCredentialVault(context: Context) {
+internal class TranslationCredentialVault(context: Context) {
     private val preferences = context.getSharedPreferences("translation_api_credentials", Context.MODE_PRIVATE)
     private fun slot(scope: String) = MessageDigest.getInstance("SHA-256").digest(scope.toByteArray()).joinToString("") { "%02x".format(it) }
     fun read(scope: String): String? = runCatching {
@@ -109,7 +216,7 @@ private class TranslationCredentialVault(context: Context) {
             init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, bytes.copyOfRange(0, 12))); updateAAD(scope.toByteArray())
         }.doFinal(bytes.copyOfRange(12, bytes.size)).toString(Charsets.UTF_8)
     }.getOrNull()
-    fun write(scope: String, value: String): Boolean = runCatching {
+    fun write(scope: String, value: String, obsoleteScopes: List<String> = emptyList()): Boolean = runCatching {
         val key = keyStore().getKey(ALIAS, null) as? SecretKey ?: KeyGenerator.getInstance("AES", "AndroidKeyStore").apply {
             init(KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT)
                 .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
@@ -117,9 +224,10 @@ private class TranslationCredentialVault(context: Context) {
         }.generateKey()
         val cipher = Cipher.getInstance("AES/GCM/NoPadding").apply { init(Cipher.ENCRYPT_MODE, key); updateAAD(scope.toByteArray()) }
         val bytes = cipher.doFinal(value.toByteArray())
-        preferences.edit().putString(slot(scope), Base64.encodeToString(cipher.iv + bytes, Base64.NO_WRAP)).commit()
+        preferences.edit().apply { obsoleteScopes.forEach { remove(slot(it)) } }
+            .putString(slot(scope), Base64.encodeToString(cipher.iv + bytes, Base64.NO_WRAP)).commit()
     }.getOrDefault(false)
-    fun remove(scope: String) = preferences.edit().remove(slot(scope)).commit()
+    fun removeAll(scopes: List<String>) = preferences.edit().apply { scopes.forEach { remove(slot(it)) } }.commit()
     private fun keyStore() = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
     private companion object { const val ALIAS = "mcasttalk.translation.credentials.v1" }
 }

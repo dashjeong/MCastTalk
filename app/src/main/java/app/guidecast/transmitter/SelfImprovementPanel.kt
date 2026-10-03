@@ -19,7 +19,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import app.guidecast.core.translation.TranslationStyle
 
-internal enum class ImprovementAction { AUTOMATIC_PREPARATION, LOCAL_FALLBACK, CONTEXT_REGISTER, DEVELOPMENT_REVIEW }
+internal enum class ImprovementAction { AUTOMATIC_PREPARATION, CONTEXT_REGISTER, DEVELOPMENT_REVIEW }
 internal data class ImprovementProposal(val id: String, val category: String, val evidence: String,
     val proposal: String, val comparison: String, val verification: String, val action: ImprovementAction)
 
@@ -29,10 +29,6 @@ internal fun improvementProposals(operator: OperatorOptions, api: TranslationApi
         "선택 언어 자동 준비가 꺼져 있습니다.", "선택 언어 자동 준비 활성화",
         "현재: 수동 준비 → 승인 후: 저장된 자료를 확인하고 누락된 자료만 준비",
         "다음 유휴 상태에 한 번 준비합니다. 인터넷·저장 공간이 필요하며 중지할 수 있습니다.", ImprovementAction.AUTOMATIC_PREPARATION))
-    if (api.provider != TranslationApiProvider.LOCAL && !api.localFallback) add(ImprovementProposal("local-fallback", "서비스 연속성",
-        "API 실패 시 기기 내 대체 번역이 꺼져 있습니다.", "준비된 기기 내 번역으로 복구 활성화",
-        "현재: API 실패가 해당 번역 실패로 이어짐 → 승인 후: 준비된 로컬 번역을 시도",
-        "기기에 모델이 있어야 합니다. 원음·다른 언어의 처리는 독립적으로 유지합니다.", ImprovementAction.LOCAL_FALLBACK))
     if (api.tone != TranslationStyle.AUTO) add(ImprovementProposal("context-register", "통번역 품질",
         "번역 문체가 ${api.tone.name}로 고정되어 있습니다.", "문맥에 맞는 문체로 전환",
         "현재: 고정 문체 → 승인 후: 대화·안내 문맥을 모델이 판단하도록 요청",
@@ -73,7 +69,6 @@ internal fun SelfImprovementPanel(app: GuideCastApplication) {
                 OutlinedButton(enabled = !runtime.dataTransferUnavailable() && decision != "approved", onClick = {
                     when (proposal.action) {
                         ImprovementAction.AUTOMATIC_PREPARATION -> app.operatorSettings.setAutomaticPreparation(true)
-                        ImprovementAction.LOCAL_FALLBACK -> app.translationApiSettings.setFallback(true)
                         ImprovementAction.CONTEXT_REGISTER -> app.translationApiSettings.setTone(TranslationStyle.AUTO)
                         ImprovementAction.DEVELOPMENT_REVIEW -> preferences.edit().putString(proposal.id, "approved").apply()
                     }

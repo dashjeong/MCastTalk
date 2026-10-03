@@ -28,6 +28,7 @@ import app.guidecast.core.stream.PcmAudioFrame
 import app.guidecast.core.translation.ModelReadiness
 import app.guidecast.provider.gemma.translation.GemmaBroadcastCapability
 import app.guidecast.provider.gemma.translation.GemmaModelReadiness
+import app.guidecast.provider.gemma.translation.GemmaModelVariant
 import app.guidecast.provider.moonshine.tts.MoonshineSpeechSynthesisProvider
 import app.guidecast.provider.moonshine.tts.MoonshineTtsReadiness
 import java.io.ByteArrayOutputStream
@@ -51,6 +52,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -730,6 +732,47 @@ class BroadcastEmulatorIntegrationTest {
     }
 
     @Test
+    fun capturedKoreanSpeechProducesGemmaE4BEnglishAlongsideOriginalAudio(): Unit = runBlocking {
+        UiDevice.getInstance(instrumentation).openServiceWorkspace(MCastService.MULTILINGUAL)
+        val viewModel = requireUserViewModel()
+        val provider = app.gemmaTranslationProvider
+        val manager = provider.modelManager
+        val initialVariant = manager.selectedVariant
+        val lease = requireNotNull(app.acquireTranslationBackendUseIf({ true }))
+        try {
+            instrumentation.runOnMainSync {
+                viewModel.selectSourceLanguage("ko-KR")
+                viewModel.clearTranslationLanguages()
+                viewModel.toggleTranslationLanguage("en")
+                viewModel.setTranslationBroadcastEnabled(true)
+            }
+            provider.applyVerifiedModel(GemmaModelVariant.E4B_IT)
+            requireDirectGemmaReady(viewModel)
+            assertEquals(GemmaModelVariant.E4B_IT, manager.appliedVariant)
+            assertCapturedKoreanSpeechProducesTranslatedWebAudioChannels(
+                useGemma = true,
+                requireGemmaPriority = true,
+                languages = listOf("en"),
+                speechFixture = recordedKoreanFixture(),
+                operatorControls = true,
+            )
+        } finally {
+            try {
+                BroadcastService.stop(targetContext)
+                withTimeout(15_000) {
+                    app.broadcastRuntime.state.first {
+                        it.phase == BroadcastPhase.IDLE && it.inputPhase == InputPhase.IDLE
+                    }
+                }
+                if (manager.selectedVariant != initialVariant) provider.applyVerifiedModel(initialVariant)
+                assertEquals(initialVariant, manager.appliedVariant)
+            } finally {
+                lease.close()
+            }
+        }
+    }
+
+    @Test
     fun capturedKoreanSpeechProducesFourMlKitWebAudioChannelsWithoutProcessExit() {
         runBlocking {
             assertCapturedKoreanSpeechProducesTranslatedWebAudioChannels(useGemma = false)
@@ -1047,8 +1090,16 @@ class BroadcastEmulatorIntegrationTest {
             assertTrue(live.channelSummary.orEmpty().contains("영어"))
             if ("nl" in languages) assertTrue(live.channelSummary.orEmpty().contains("네덜란드어"))
 
+            var lastReadySummary: String? = null
             val ready = withTimeout(10 * 60 * 1_000L) {
-                app.broadcastRuntime.state.first {
+                app.broadcastRuntime.state.onEach { state ->
+                    val summary = "phase=${state.phase}, channels=${state.channelSummary}, " +
+                        "warning=${state.translationWarning}, error=${state.errorMessage}"
+                    if (summary != lastReadySummary) {
+                        Log.i("E4BOperatorGate", summary)
+                        lastReadySummary = summary
+                    }
+                }.first {
                     it.phase == BroadcastPhase.FAILED ||
                         (it.phase == BroadcastPhase.LIVE &&
                             it.channelSummary.orEmpty().startsWith(
@@ -1221,6 +1272,20 @@ class BroadcastEmulatorIntegrationTest {
         }
     }
 
+    @Test
+    fun readyWorkspaceAndInstalledVoiceNoticesDoNotBlockRecordedSpeech() {
+        val ready = "Gemma 6GB급 메모리 절약 모드 · Android 인식 RAM 6.9 GiB · Gemma 우선 채널 단일 순차 실행"
+        val reused = "$ready · 이미 추론을 통과한 Gemma 작업 공간 재사용"
+        val installed = "$reused · 설치된 Android 오프라인 음성 사용: en"
+        for (notice in listOf(ready, reused, installed)) {
+            assertTrue(notice, isExpectedProviderNotice(notice, true, true))
+        }
+        for (notice in listOf("통역 엔진을 준비 중입니다.", "$installed · 준비 실패", "$ready · 알 수 없는 오류")) {
+            assertFalse(notice, isExpectedProviderNotice(notice, true, true))
+        }
+        assertFalse(isExpectedProviderNotice(installed, true, false))
+    }
+
     private fun isExpectedProviderNotice(
         warning: String?,
         useGemma: Boolean,
@@ -1228,6 +1293,9 @@ class BroadcastEmulatorIntegrationTest {
     ): Boolean = warning == null ||
         warning.contains("Note9 호환 음성 처리") ||
         warning.contains("Galaxy 오프라인 대체 음성으로 계속합니다") ||
+        (gemmaBroadcastSupported && Regex(
+            """Gemma 6GB급 메모리 절약 모드 · Android 인식 RAM \d+\.\d+ GiB · Gemma 우선 채널 단일 순차 실행(?: · 이미 추론을 통과한 Gemma 작업 공간 재사용)?(?: · 설치된 Android 오프라인 음성 사용: [a-z]{2}(?:-[A-Za-z0-9]+)?(?:, [a-z]{2}(?:-[A-Za-z0-9]+)?)*)?""",
+        ).matches(warning)) ||
         (gemmaBroadcastSupported && warning.contains("ML Kit 대체 모델 미준비")) ||
         (useGemma && warning.contains("자동 전환")) ||
         (gemmaBroadcastSupported && warning.contains("혼합 번역 경로"))

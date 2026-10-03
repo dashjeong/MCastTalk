@@ -71,18 +71,19 @@ class CloudTranslationReviewer internal constructor(
     private val memory: SentenceMemoryStore,
     private val transport: CloudReviewTransport,
     private val clockMillis: () -> Long = { System.nanoTime() / 1_000_000L },
+    private val networkAllowed: () -> Boolean = { true },
 ) : Closeable {
-    constructor(settings: DeveloperLabSettings, displaySettings: UiDisplaySettings, memory: SentenceTranslationMemory) :
+    constructor(settings: DeveloperLabSettings, displaySettings: UiDisplaySettings, memory: SentenceTranslationMemory, networkAllowed: () -> Boolean) :
         this(settings, { displaySettings.developerInfo.value }, memory, OfficialCloudReviewTransport(isAuthorized = { request ->
             val current = settings.state.value
-            displaySettings.developerInfo.value && current.cloudReviewEnabled && current.hasApiKey &&
+            networkAllowed() && displaySettings.developerInfo.value && current.cloudReviewEnabled && current.hasApiKey &&
                 (current.provider == request.provider && current.modelId == request.modelId ||
                     request.comparisonMode && current.provider.other() == request.provider && current.secondaryModelId == request.modelId) &&
                 (!request.comparisonMode || current.comparisonEnabled && current.hasComparisonKeys) &&
                 current.authorizationRevision == request.authorizationRevision &&
                 (request.teacherSignals.isEmpty() || current.teacherLearningEnabled) &&
                 (!request.requiresAutoLearning || current.autoLearnEnabled)
-        }))
+        }), networkAllowed = networkAllowed)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val admission = CloudReviewAdmission(clockMillis)
@@ -189,7 +190,7 @@ class CloudTranslationReviewer internal constructor(
     }
 
     private fun maySend(options: DeveloperLabOptions) =
-        developerInfo() && options.cloudReviewEnabled && options.hasApiKey
+        networkAllowed() && developerInfo() && options.cloudReviewEnabled && options.hasApiKey
 
     private fun mayUseReview(request: CloudReviewRequest): Boolean {
         val current = settings.state.value
@@ -512,6 +513,9 @@ internal object CloudReviewJson {
     }
 }
 
+internal enum class CloudTransportPhase { ATTEMPT, BODY_SENT, RESPONSE }
+internal data class CloudTransportObservation(val phase: CloudTransportPhase, val status: Int? = null)
+
 internal class BoundedCloudHttps(
     private val endpointAllowed: ((URL, CloudReviewProvider) -> Boolean)? = null,
     private val networkExecutor: java.util.concurrent.Executor = workers,
@@ -519,7 +523,13 @@ internal class BoundedCloudHttps(
 ) {
     suspend fun post(endpoint: String, provider: CloudReviewProvider, apiKey: String, body: String,
         deadlineMillis: Long = CloudTranslationReviewer.REVIEW_DEADLINE_MILLIS,
-        allowedToSend: () -> Boolean = { true }): String? {
+        allowedToSend: () -> Boolean = { true }): String? =
+        postObserved(endpoint, provider, apiKey, body, deadlineMillis, allowedToSend)
+
+    suspend fun postObserved(endpoint: String, provider: CloudReviewProvider, apiKey: String, body: String,
+        deadlineMillis: Long = CloudTranslationReviewer.REVIEW_DEADLINE_MILLIS,
+        allowedToSend: () -> Boolean = { true },
+        observeTransport: (CloudTransportObservation) -> Unit = {}): String? {
         val url = URL(endpoint)
         if (!(endpointAllowed?.invoke(url, provider) ?: validEndpoint(url, provider)) || apiKey.any { it == '\r' || it == '\n' } || !allowedToSend()) return null
         val bytes = body.toByteArray(Charsets.UTF_8)
@@ -531,6 +541,7 @@ internal class BoundedCloudHttps(
                     val budget = deadlineMillis.coerceIn(500L, 8_000L)
                     val deadline = System.nanoTime() + budget * 1_000_000L
                     if (!continuation.isActive || !allowedToSend()) return@runCatching null
+                    runCatching { observeTransport(CloudTransportObservation(CloudTransportPhase.ATTEMPT)) }
                     val client = connectionFactory(url)
                     connection.set(client)
                     try {
@@ -552,8 +563,11 @@ internal class BoundedCloudHttps(
                             // can change during that wait, before any speech-derived body is sent.
                             if (!continuation.isActive || !allowedToSend()) return@runCatching null
                             output.write(bytes)
+                            runCatching { observeTransport(CloudTransportObservation(CloudTransportPhase.BODY_SENT)) }
                         }
-                        if (!continuation.isActive || !allowedToSend() || client.responseCode !in 200..299 || client.contentLengthLong > MAX_RESPONSE_BYTES) return@runCatching null
+                        val status = client.responseCode
+                        runCatching { observeTransport(CloudTransportObservation(CloudTransportPhase.RESPONSE, status)) }
+                        if (!continuation.isActive || !allowedToSend() || status !in 200..299 || client.contentLengthLong > MAX_RESPONSE_BYTES) return@runCatching null
                         client.inputStream.use { input ->
                             val out = ByteArrayOutputStream()
                             val buffer = ByteArray(4_096)

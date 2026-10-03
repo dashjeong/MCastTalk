@@ -125,11 +125,27 @@ class GuideCastApplication : Application() {
     val uiDisplaySettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { UiDisplaySettings(this) }
     val operatorSettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { OperatorSettings(this) }
     val developerLabSettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { DeveloperLabSettings(this) }
+    internal val geminiLiveMonitor = GeminiLiveMonitor()
     val translationApiSettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { TranslationApiSettings(this) }
-    val translationApiService by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { TranslationApiService(translationApiSettings) }
+    val translationApiService by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { TranslationApiService(translationApiSettings, shadowAllowed = { target ->
+        learningResourcesAvailable() && translationProvider.hasActivePreparedWorker(target)
+    }, comparisonResources = ::learningResourcesAvailable) }
     val sentenceTranslationMemory by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { SentenceTranslationMemory(this) }
+    val domainCorpus by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { DomainCorpusRepository(this) }
     val cloudTranslationReviewer by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        CloudTranslationReviewer(developerLabSettings, uiDisplaySettings, sentenceTranslationMemory)
+        CloudTranslationReviewer(developerLabSettings, uiDisplaySettings, sentenceTranslationMemory) {
+            // Paid comparison uses the selected TranslationApiService with its shared budget.
+            // Legacy reviewer credentials cannot create an unmetered second provider request.
+            false
+        }
+    }
+    private fun learningResourcesAvailable(): Boolean {
+        val power = getSystemService(android.os.PowerManager::class.java) ?: return false
+        if (power.currentThermalStatus >= android.os.PowerManager.THERMAL_STATUS_MODERATE) return false
+        val manager = getSystemService(android.app.ActivityManager::class.java) ?: return false
+        val info = android.app.ActivityManager.MemoryInfo()
+        manager.getMemoryInfo(info)
+        return !info.lowMemory && info.availMem > maxOf(info.threshold, 512L * 1024 * 1024)
     }
     val microphoneNoiseSettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { MicrophoneNoiseSettings(this) }
     val diagnosticExportState = kotlinx.coroutines.flow.MutableStateFlow(DiagnosticExportState())

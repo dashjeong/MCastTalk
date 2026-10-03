@@ -42,7 +42,16 @@ internal suspend fun <T> awaitAndroidTtsBinderCall(
                 }
             }) {
                 override fun done() {
-                    if (!isCancelled) continuation.resumeWith(runCatching { get() })
+                    if (!isCancelled) {
+                        val result = runCatching {
+                            try {
+                                get()
+                            } catch (execution: java.util.concurrent.ExecutionException) {
+                                throw execution.cause ?: execution
+                            }
+                        }
+                        continuation.resumeWith(result)
+                    }
                 }
             }
             continuation.invokeOnCancellation {

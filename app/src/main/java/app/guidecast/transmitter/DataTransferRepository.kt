@@ -227,6 +227,8 @@ internal object PortableSettings {
     fun capture(app: GuideCastApplication): JSONObject = JSONObject().apply {
         val options = app.developerLabSettings.portableOptions()
         put("type", "settings"); put("microphoneNoise", app.microphoneNoiseSettings.mode.value.name)
+        put("nearSpeakerFocus", app.microphoneNoiseSettings.nearSpeakerFocus.value)
+        put("microphoneProfiles", app.microphoneNoiseSettings.exportProfiles())
         put("developerInfo", app.getSharedPreferences("ui_display", Context.MODE_PRIVATE).getBoolean("developer_info", false))
         put("retentionPolicy", app.transcriptArchive.snapshot.value.retentionPolicy.name)
         put("correctionProfile", app.speechCorrections.activeProfile.value)
@@ -244,10 +246,21 @@ internal object PortableSettings {
     /** Unknown future fields are tolerated on input, but only these names may leave the app. */
     internal fun sanitized(row: JSONObject): JSONObject = JSONObject().apply {
         put("type", "settings")
-        listOf("microphoneNoise", "developerInfo", "retentionPolicy", "correctionProfile", "voices", "registeredPackages").forEach { key ->
+        listOf("microphoneNoise", "nearSpeakerFocus", "developerInfo", "retentionPolicy", "correctionProfile", "voices", "registeredPackages").forEach { key ->
             if (row.has(key)) put(key, row.get(key))
         }
         row.optJSONObject("operator")?.let { put("operator", OperatorOptions.fromJson(it).toJson()) }
+        row.optJSONObject("microphoneProfiles")?.let { profiles ->
+            put("microphoneProfiles", JSONObject().apply {
+                MicrophoneInputGroup.entries.forEach { group ->
+                    profiles.optJSONObject(group.name)?.let { profile ->
+                        put(group.name, JSONObject().apply {
+                            listOf("noiseMode", "nearSpeakerFocus").forEach { if (profile.has(it)) put(it, profile.get(it)) }
+                        })
+                    }
+                }
+            })
+        }
         row.optJSONObject("translationApi")?.let { put("translationApi", TranslationApiOptions.fromPortable(it).portable()) }
         row.optJSONObject("lab")?.let { lab -> put("lab", JSONObject().apply {
             listOf("expressiveTts", "paraphrase", "register", "provider", "model", "secondaryModel", "comparisonSituation").forEach { key -> if (lab.has(key)) put(key, lab.get(key)) }
@@ -255,6 +268,17 @@ internal object PortableSettings {
     }
     fun validate(row: JSONObject) {
         if (row.has("microphoneNoise")) MicrophoneNoiseMode.valueOf(row.getString("microphoneNoise"))
+        if (row.has("nearSpeakerFocus")) require(row.get("nearSpeakerFocus") is Boolean)
+        if (row.has("microphoneProfiles")) {
+            val profiles = row.getJSONObject("microphoneProfiles")
+            MicrophoneInputGroup.entries.forEach { group ->
+                if (profiles.has(group.name)) {
+                    val profile = profiles.getJSONObject(group.name)
+                    if (profile.has("noiseMode")) MicrophoneNoiseMode.valueOf(profile.getString("noiseMode"))
+                    if (profile.has("nearSpeakerFocus")) require(profile.get("nearSpeakerFocus") is Boolean)
+                }
+            }
+        }
         if (row.has("developerInfo")) require(row.get("developerInfo") is Boolean)
         if (row.has("retentionPolicy")) TranscriptRetentionPolicy.valueOf(row.getString("retentionPolicy"))
         if (row.has("correctionProfile")) SpeechCorrectionValidation.profile(row.getString("correctionProfile"))
@@ -287,6 +311,8 @@ internal object PortableSettings {
         app.translationApiSettings.setAllowOnline(false)
         row.optJSONObject("translationApi")?.let { app.translationApiSettings.configure(TranslationApiOptions.fromPortable(it)) }
         if (row.has("microphoneNoise")) app.microphoneNoiseSettings.select(MicrophoneNoiseMode.valueOf(row.getString("microphoneNoise")))
+        if (row.has("nearSpeakerFocus")) app.microphoneNoiseSettings.selectFocus(row.getBoolean("nearSpeakerFocus"))
+        row.optJSONObject("microphoneProfiles")?.let(app.microphoneNoiseSettings::importProfiles)
         if (row.has("developerInfo")) app.uiDisplaySettings.setDeveloperInfo(row.getBoolean("developerInfo"))
         if (row.has("retentionPolicy")) app.transcriptArchive.setRetentionPolicy(TranscriptRetentionPolicy.valueOf(row.getString("retentionPolicy")))
         if (row.has("correctionProfile")) app.speechCorrections.selectProfile(row.getString("correctionProfile"))

@@ -26,9 +26,12 @@ internal fun MicrophoneNoiseOptions(
     mode: MicrophoneNoiseMode,
     enabled: Boolean,
     onSelect: (MicrophoneNoiseMode) -> Unit,
+    nearSpeakerFocus: Boolean,
+    onFocus: (Boolean) -> Unit,
+    inputLabel: String,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("마이크 소음 감소", style = MaterialTheme.typography.titleMedium)
+        Text("$inputLabel · 음성 입력", style = MaterialTheme.typography.titleMedium)
         Row(Modifier.fillMaxWidth().selectableGroup(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             MicrophoneNoiseMode.entries.forEach { choice ->
                 FilterChip(
@@ -47,6 +50,20 @@ internal fun MicrophoneNoiseOptions(
             } + " 앱 재생음은 소음 감소 없이 전달합니다.",
             style = MaterialTheme.typography.bodySmall,
         )
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("가까운 화자 중심", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+            Switch(checked = nearSpeakerFocus, onCheckedChange = onFocus, enabled = enabled,
+                modifier = Modifier.semantics { contentDescription = "가까운 화자 중심 입력" })
+        }
+        if (nearSpeakerFocus) Text(
+            "내장 마이크는 화면을 화자 쪽으로 향하게 하고, 외부 마이크는 입 가까이에 두세요. " +
+                "지원 기기에 방향·집중 처리를 요청합니다. " +
+                "음량만으로 화자를 구분하지 않으며 TV와 동시에 말하면 다른 목소리가 섞일 수 있습니다. " +
+                "작은 목소리는 입력 레벨을 확인하고 마이크 가까이에서 말해 주세요.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+        Text("입력 종류별로 설정을 기억합니다. 마이크를 바꾸면 해당 입력의 설정을 사용합니다.",
+            style = MaterialTheme.typography.bodySmall)
     }
 }
 
