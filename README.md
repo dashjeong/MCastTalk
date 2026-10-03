@@ -1,5 +1,7 @@
 # MCastTalk
 
+**실시간 다국어 통역방송(feat. DMZ peace walk)**
+
 Android에서 음성을 통번역하고, 같은 Wi-Fi 또는 핫스팟의 청취자에게 음성과 자막을 전달하는 앱입니다. 청취자는 별도 앱 없이 웹브라우저로 접속합니다. 기기 단독 사용, 음성노트, 파일 변환·재생을 지원합니다.
 
 현재 공개 패키지: **0.2.46-beta-c** · versionCode **56** · 공개 시험판
@@ -31,7 +33,7 @@ Android에서 음성을 통번역하고, 같은 Wi-Fi 또는 핫스팟의 청취
 
 ## 소스와 라이선스
 
-공개 APK에 대응하는 소스는 `v0.2.46-beta-c` 태그입니다. 기본 브랜치의 소스와 버전이 다를 수 있습니다. 빌드에는 JDK 17, Android SDK API 36과 Gradle 설정의 도구가 필요합니다.
+공개 APK에 대응하는 소스는 `v0.2.46-beta-c` 태그입니다. 기본 브랜치 `main`의 소스는 `0.2.44-alpha` 기준으로, 현재 공개 APK와 버전이 다릅니다. 빌드에는 JDK 17, Android SDK API 36과 Gradle 설정의 도구가 필요합니다.
 
 ```sh
 git switch --detach v0.2.46-beta-c
