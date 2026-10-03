@@ -107,3 +107,4 @@ sequenceDiagram
 - **자체 작성 소스코드**: [Apache License 2.0](../LICENSE) (상업적 이용, 수정 및 재배포 자유 허용)
 - **상표 및 브랜드 정책**: [BRANDING.md](../BRANDING.md) (MCastTalk 명칭/로고 사용 및 공식 보증 표시는 별도 승인 필요, 공정 이용 및 호환성 표현은 자유 허용)
 - **제3자 오픈소스 고지**: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) (Moonshine MIT, Gemma Apache-2.0, RNNoise BSD-3 등)
+

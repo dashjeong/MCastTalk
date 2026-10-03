@@ -81,3 +81,4 @@ Diagnostic logs are designed to exclude audio, interpreted sentences, and PINs. 
 See the developer lab and sentence memory guide for review and data-transfer scope. Do not publish API keys, private source text/audio or file access addresses in issue reports. Diagnostic collection does not depend on enabling developer display.
 
 Eight-hour stability and physical Galaxy/One UI, outdoor or Android/iPhone behavior require tests in those exact environments. Automated and emulator checks do not establish those results or guarantee long-running operation. Consult the test report for the exact scope.
+

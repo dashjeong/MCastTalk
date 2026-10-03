@@ -122,7 +122,6 @@ License가 적용됩니다. 상업 목적 사용·배포에는 권리자 등록�
 표현 시험은 기존 [TextToSpeech.setPitch](https://developer.android.com/reference/android/speech/tts/TextToSpeech#setPitch(float))와
 [setSpeechRate](https://developer.android.com/reference/android/speech/tts/TextToSpeech#setSpeechRate(float))를
 사용합니다. Android framework API 사용 조건과 설치한 음성 제공자의 음성·서비스 조건이
-각각 적용됩니다. 이 기능은 사용자 문체·문장 부호에 따른 제한된 속도·높낮이 요청이며,
 원음의 감정 인식·음성 복제 또는 감정 재현 모델을 포함한다고 표시하지 않습니다.
 Moonshine 네이티브 합성에는 이 Android 설정을 적용하지 않습니다. Gemma 문체 지침은
 기존 선택 모델과 기존 라이선스를 사용하며 모델이나 원문 문장을 다시 허가하지 않습니다.
@@ -145,3 +144,4 @@ LICENSE/NOTICE 원문·변경분을 함께 기록합니다. 문서에 링크만 
 저장소에는 Gradle Wrapper `8.13`(Apache-2.0)이 포함됩니다. Android Gradle Plugin
 `8.13.2`와 Kotlin Android/JVM/Compose Compiler plugins `2.3.21`은 Apache-2.0,
 JUnit `4.13.2`는 EPL-1.0이며 개발·시험 시 별도로 내려받습니다.
+
