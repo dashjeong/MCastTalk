@@ -227,7 +227,7 @@ kotlin {
 dependencies {
     add(
         thirdPartyLicenseArtifacts.name,
-        "com.google.ai.edge.litertlm:litertlm-android:0.16.1",
+        "com.google.ai.edge.litertlm:litertlm-android:0.17.1",
     )
     add(thirdPartyLicenseArtifacts.name, "com.google.mlkit:translate:17.0.3")
 
