@@ -256,7 +256,7 @@ dependencies {
     implementation(libs.zxing.core)
     implementation(libs.ktor.client.cio)
     implementation(libs.ktor.client.websockets)
-    testImplementation("org.json:json:20240303")
+    testImplementation("org.json:json:20260814")
     debugImplementation(libs.androidx.compose.ui.tooling)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.moonshine.voice)
