@@ -23,6 +23,7 @@ internal enum class OnlineConnectionResult(val message: String) {
 internal class OnlineConnectionCheck(
     private val gemini: GeminiLiveTransport = GeminiLiveTransport(),
     private val openAi: RealtimeWire = KtorRealtimeWire(),
+    private val openAiAudio: OpenAiAudioTransport = OpenAiAudioTransport(),
 ) {
     private class SetupComplete : CancellationException()
     suspend fun run(options: TranslationApiOptions, key: String, allowed: () -> Boolean): OnlineConnectionResult {
@@ -43,7 +44,9 @@ internal class OnlineConnectionCheck(
                 when (options.provider) {
                     TranslationApiProvider.GEMINI_LIVE -> gemini.run(key, options.model, "en", flow { awaitCancellation() }, allowed,
                         onReady = { check(allowed()); throw SetupComplete() }, onEvent = {}, tone = options.tone)
-                    else -> openAi.exchange(key, allowed) { socket ->
+                    else -> if (options.realtimeAudio) openAiAudio.run(key, options.model, "ko", "en",
+                        flow { awaitCancellation() }, allowed, onReady = { check(allowed()); throw SetupComplete() }, onEvent = {})
+                    else openAi.exchangeModel(options.model, key, allowed) { socket ->
                         socket.send(JSONObject().put("type", "session.update").put("session", JSONObject()
                             .put("type", "realtime").put("model", options.model)
                             .put("output_modalities", org.json.JSONArray().put("text"))).toString())

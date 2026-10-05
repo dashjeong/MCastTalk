@@ -58,9 +58,11 @@ internal fun AdvancedTranslationApiPanel(settings: TranslationApiSettings, servi
     OutlinedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("통번역 운용 모드 · 문체", style = MaterialTheme.typography.titleLarge)
-            val learningSupported = serviceExperience(options).supportsLearningComparison
+            val learningCapability = serviceExperience(options)
+            val learningSupported = learningCapability.supportsLearningComparison
             ServiceExperienceToggle("학습 비교 (상시 설정 포함)",
                 if (learningSupported) "별도 동의 후 보조 엔진과 비교합니다. 주 방송 경로는 유지됩니다."
+                else if (learningCapability.supportsNativePairComparison) "직접 음성 비교는 통역 중계의 ‘오프라인 결과와 비교’에서 켜세요. 상시 문장 비교 설정은 이 경로에 적용되지 않습니다."
                 else "이 Live 음성 경로에서는 학습 비교를 지원하지 않습니다. 저장된 상시 학습 설정은 적용되지 않습니다.",
                 learningSupported && (sessionLearning || (options.provider != TranslationApiProvider.LOCAL && options.alwaysLearnOnline)),
                 enabled && learningSupported) { on ->
@@ -73,7 +75,7 @@ internal fun AdvancedTranslationApiPanel(settings: TranslationApiSettings, servi
                 TranslationApiProvider.entries.forEach { provider ->
                     FilterChip(selected = options.provider == provider, enabled = enabled, onClick = {
                         val next = when (provider) {
-                            TranslationApiProvider.OPENAI_REALTIME -> options.copy(provider = provider, model = "gpt-realtime-2.1-mini", baseUrl = "https://api.openai.com/v1", protocol = TranslationApiProtocol.RESPONSES)
+                            TranslationApiProvider.OPENAI_REALTIME -> options.copy(provider = provider, model = "gpt-realtime-2.1-mini", baseUrl = "https://api.openai.com/v1", protocol = TranslationApiProtocol.RESPONSES, realtimeAudio = false)
                             TranslationApiProvider.GEMINI_LIVE -> options.copy(provider = provider, model = if (options.interpretationMode == OnlineInterpretationMode.PROFESSIONAL) GEMINI_LIVE_AGENT else GEMINI_LIVE_TRANSLATE, baseUrl = "https://generativelanguage.googleapis.com/v1beta")
                             TranslationApiProvider.GEMINI -> options.copy(provider = provider, model = "gemini-3.5-flash-lite", baseUrl = "https://generativelanguage.googleapis.com/v1beta")
                             TranslationApiProvider.COMPATIBLE -> options.copy(provider = provider, model = "your-model", baseUrl = "https://your-provider.example/v1", protocol = TranslationApiProtocol.CHAT_COMPLETIONS)
@@ -100,7 +102,7 @@ internal fun AdvancedTranslationApiPanel(settings: TranslationApiSettings, servi
                     TextButton(enabled = enabled, onClick = {
                         message = if (settings.setDomainPrompt(domain)) "전문통역 지시 저장됨" else "300자 이내의 분야 지시를 확인하세요. 키·민감정보는 넣지 마세요."
                     }) { Text("분야 지시 저장") }
-                    Text("이 지시는 선택 API로 전송됩니다. 분야 지정은 정확도 보증이나 모델 학습이 아닙니다. 용어집·대본 RAG는 별도 기능이며 현재 Live 음성 경로에는 연결되지 않았습니다.")
+                    Text("이 지시는 선택 API로 전송됩니다. 분야 지정은 정확도 보증이나 모델 학습이 아닙니다. 통역 중계의 전문 자료·지침에서 지원 모델과 전달할 발췌를 확인하세요.")
                 }
             }
             if (options.provider != TranslationApiProvider.GEMINI_LIVE) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -139,13 +141,34 @@ internal fun AdvancedTranslationApiPanel(settings: TranslationApiSettings, servi
                         Text("마지막 서버 사용량 표본: 음성 입력 ${live.inputAudioTokens ?: "미확인"} / 출력 ${live.outputAudioTokens ?: "미확인"}, 텍스트 입력 ${live.inputTextTokens ?: "미확인"} / 출력 ${live.outputTextTokens ?: "미확인"}. 누적 청구 총액이 아닙니다.")
                     }
 
-                    Text("마이크 → Gemini Live → 번역 음성 · 별도 음성 전송 동의 필요. 원음/목소리가 Google로 전송됩니다. 언어별 연결로 비용이 늘며 같은 언어 청취자는 연결을 공유합니다.")
+                    Text("마이크 → Gemini Live → 통역 음성. 음성 전송에 동의하면 원음이 Google로 전달됩니다. 직접 음성 중계는 한 출력 언어를 지원하며, 같은 언어의 청취자는 한 연결을 공유합니다.")
                     Text("gemini-3.5-live-translate-preview: 연속 통역, RAG·텍스트·문체 지시 미지원. gemini-3.8-live: 일반 음성 모델, 통역 지시 사용. 두 모델의 실기기 품질 비교 전 자동 기본 경로로 사용하지 않습니다.")
                     Text(if (options.allowLiveAudio) "선택한 서비스로 음성을 전송하는 데 동의했습니다." else "음성 전송 동의는 연결 확인에서 진행합니다.")
                     Text("BYOK 개인 기기 시험용입니다. 배포 앱에 공용 장기 키를 넣지 마세요. 공용 서비스는 사용자 인증·한도·단기 토큰 발급 서버가 필요하며 아직 배포하지 않았습니다. 무료/유료 데이터 정책과 계정 한도를 확인하세요.")
-                    Text("연결은 최대 60초 단위 시험입니다. 단절·과부하·취소 후 녹음을 재전송하지 않습니다. 통역을 다시 시작해야 합니다. Live 음성 학습 비교·파일 입력·RAG 연결은 아직 검증되지 않아 사용하지 않습니다.")
+                    Text("중지할 때까지 중계합니다. 연결 끊김이나 과부하로 중단되면 다시 시작하세요. 이전 음성을 자동 재전송하지 않습니다. Gemini Live는 원문·통역의 대응 ID를 확인할 수 없어 비교를 보류합니다. 파일 입력은 지원하지 않으며, 참고 자료는 Gemini 3.8 Live에서 허용한 발췌만 전달합니다.")
                 }
-                if (options.provider == TranslationApiProvider.OPENAI_REALTIME) Text("Realtime 텍스트 통역 · ASR/TTS는 기기 내 엔진입니다. 발화마다 연결하며 실패한 발화는 자동 재전송하지 않습니다. 다음 발화에서 새로 연결합니다. 오디오 Realtime은 지원하지 않습니다.", style = MaterialTheme.typography.bodySmall)
+                if (options.provider == TranslationApiProvider.OPENAI_REALTIME) {
+                    ServiceExperienceChoices("Realtime 처리 방식", listOf(
+                        ExperienceChoice("audio", "직접 음성 통역", "마이크 음성 → OpenAI 통역 음성·원문/번역 자막. 한 출력 언어를 지원합니다."),
+                        ExperienceChoice("text", "문장 연결", "기기 음성 인식 → API 문장 번역 → 기기 음성 재생.")),
+                        if (options.realtimeAudio) "audio" else "text", enabled) {
+                        settings.configure(options.copy(realtimeAudio = it == "audio"))
+                    }
+                    Text(if (options.realtimeAudio)
+                        "음성 전송에 동의하면 중지할 때까지 직접 통역합니다. 한 출력 언어의 한 연결을 청취자들이 공유합니다. 중지·실패 후 이전 음성을 자동 재전송하지 않습니다."
+                        else "Realtime 문장 연결 · ASR/TTS는 기기 내 엔진입니다. 발화마다 연결하며 실패한 발화는 자동 재전송하지 않습니다.", style = MaterialTheme.typography.bodySmall)
+                    if (options.realtimeAudio) liveMonitor?.let { monitor ->
+                        val live by monitor.state.collectAsState()
+                        Text("${live.state} · 연결 ${live.connections} · 최종 사용량 미확인 ${live.unknownSessions}건")
+                        Text("마지막 사용량 표본: 음성 입력 ${live.inputAudioTokens ?: "미확인"} / 출력 ${live.outputAudioTokens ?: "미확인"}, 텍스트 입력 ${live.inputTextTokens ?: "미확인"} / 출력 ${live.outputTextTokens ?: "미확인"}. 실제 청구와 추가 자막 인식 사용량은 제공자 콘솔에서 확인하세요.")
+                        Text(live.transcriptionUsage?.durationSeconds?.let {
+                            "별도 자막 인식 사용량 표본: ${String.format(java.util.Locale.ROOT, "%.3f", it)}초. 응답 생성 토큰과 구분하며 최종 청구액이 아닙니다."
+                        } ?: "별도 자막 인식 사용량 표본: 입력 ${live.transcriptionUsage?.input ?: "미확인"} / 출력 ${live.transcriptionUsage?.output ?: "미확인"} / 합계 ${live.transcriptionUsage?.total ?: "미확인"}. 응답 생성 사용량과 구분하며 최종 청구액이 아닙니다.")
+                        live.lossesByLanguage.forEach { (language, reasons) -> reasons.forEach { (reason, total) ->
+                            Text("$language · ${reason.name}: ${total.frames} 프레임 / ${total.bytes} bytes")
+                        } }
+                    }
+                }
                 if (options.provider != TranslationApiProvider.GEMINI_LIVE) OutlinedTextField(model, { model = it.take(120) }, label = { Text("사용할 모델 ID") }, singleLine = true, enabled = enabled, modifier = Modifier.fillMaxWidth())
                 if (options.provider == TranslationApiProvider.COMPATIBLE) {
                     OutlinedTextField(base, { base = it.take(300) }, label = { Text("HTTPS API 기본 주소 · 예: https://host/v1") }, enabled = enabled, modifier = Modifier.fillMaxWidth())
@@ -163,7 +186,9 @@ internal fun AdvancedTranslationApiPanel(settings: TranslationApiSettings, servi
                     if (capability.supportsReferences) "기기에서 찾은 짧은 관련 근거만 전송합니다. 전체 자료 파일은 보내지 않습니다." else "이 음성 경로는 자료 참고를 지원하지 않습니다.",
                     capability.supportsReferences && options.allowDomainReferences, enabled && capability.supportsReferences, settings::setAllowDomainReferences)
                 ServiceExperienceToggle("온라인 사용 시 상시 학습",
-                    if (capability.supportsLearningComparison) "온라인 결과와 기기 내 결과를 비교합니다. 검토 전에는 자동 적용하지 않습니다." else "이 음성 경로에서는 저장된 학습 옵션을 적용하지 않습니다.",
+                    if (capability.supportsLearningComparison) "온라인 결과와 기기 내 결과를 비교합니다. 검토 전에는 자동 적용하지 않습니다."
+                    else if (capability.supportsNativePairComparison) "통역 중계의 ‘오프라인 결과와 비교’를 별도로 켜세요. 저장된 상시 문장 비교 설정은 적용하지 않습니다."
+                    else "이 음성 경로에서는 저장된 학습 옵션을 적용하지 않습니다.",
                     capability.supportsLearningComparison && options.alwaysLearnOnline, capability.supportsLearningComparison && (enabled || options.alwaysLearnOnline), settings::setAlwaysLearnOnline)
                 Text("기본 꺼짐. 설정한 API 전송 동의 범위에서 같은 원문을 준비된 로컬 엔진과 비교합니다. 검토 결과는 자동 적용하지 않습니다. 이 저장 옵션만으로 OFFLINE 전송이 켜지지 않습니다. OFFLINE 보조 비교에는 이번 학습의 별도 동의가 필요합니다.", style = MaterialTheme.typography.bodySmall)
                 Text(if (options.hasKey) "키 저장됨 · ${if (options.allowOnline) "전송 허용됨" else "전송 꺼짐"}" else "API 키 없음")

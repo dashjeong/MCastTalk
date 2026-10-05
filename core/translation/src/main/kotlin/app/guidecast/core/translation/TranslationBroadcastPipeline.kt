@@ -9,7 +9,7 @@ import app.guidecast.core.stream.StreamPublishStatus
 import app.guidecast.core.stream.StreamSession
 import app.guidecast.core.stream.StreamSessionSupersededException
 import java.io.Closeable
-import java.util.LinkedHashSet
+import java.util.TreeSet
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.abs
@@ -179,6 +179,8 @@ class TranslationBroadcastPipeline(
         val isolatedScope = CoroutineScope(scope.coroutineContext + isolationJob)
         val sharedBatch = SharedTranslationBatchContext(requestScope, targets.map { it.languageTag }, isolatedScope,
             isCurrent = { activeStreamSession.isActive() })
+        val deliveryTickets = TranslationDeliveryTickets(requestScope, sharedBatch.correlationId,
+            activeStreamSession.generation, isCurrent = { activeStreamSession.isActive() })
         val mutableHealth = MutableStateFlow(
             targets.map {
                 TranslationChannelHealth(
@@ -221,6 +223,7 @@ class TranslationBroadcastPipeline(
                 capacity = speechQueueCapacityPerLanguage,
                 onBufferOverflow = BufferOverflow.DROP_OLDEST,
                 onUndeliveredElement = { dropped ->
+                    deliveryTickets.finish(dropped.ticket, TranslationDeliveryStage.DROPPED)
                     if (acceptingSource.get()) {
                         mutableHealth.updateChannel(target.channelId) { health ->
                             health.copy(
@@ -255,6 +258,7 @@ class TranslationBroadcastPipeline(
                         // This immutable stream generation can never become current again.
                         // Drain obsolete work without loading translation/TTS engines.
                         if (!activeStreamSession.isActive()) continue
+                        val ticket = deliveryTickets.begin(utterance.sequence, target) ?: continue
                         try {
                             mutableHealth.updateChannel(target.channelId) {
                                 it.copy(translationState = TranslationWorkerState.ACTIVE)
@@ -286,7 +290,8 @@ class TranslationBroadcastPipeline(
                             // that has already committed its exact TTS input.
                             val terms = glossaryTerms(utterance.text, utterance.sourceLanguageTag, target.languageTag)
                             val sessionMemoryContext = activeSessionMemory.buildContext(utterance.sourceLanguageTag, target.languageTag)
-                            val translationContext = sharedBatch + TranslationRequestIdentity(requestScope, utterance.sequence) + TranslationGlossaryContext(GlossaryTerms.hints(terms)) +
+                            val translationContext = sharedBatch + TranslationRequestIdentity(requestScope, utterance.sequence) +
+                                TranslationDeliveryContext(deliveryTickets, ticket) + TranslationGlossaryContext(GlossaryTerms.hints(terms)) +
                                 (utterance.translationStyle?.let(::TranslationStyleContext) ?: kotlin.coroutines.EmptyCoroutineContext) +
                                 sessionMemoryContext
                             val rawTranslation = withContext(translationContext) {
@@ -314,6 +319,11 @@ class TranslationBroadcastPipeline(
                                 // healthy translator/TTS. Keep its complete translation and warn.
                                 onGlossaryWarning("${target.languageTag}: ${error.message} 해당 문장은 교정 전 번역으로 계속합니다.")
                                 rawTranslation
+                            }
+                            currentCoroutineContext().ensureActive()
+                            if (!deliveryTickets.translated(ticket)) {
+                                deliveryTickets.finish(ticket, TranslationDeliveryStage.CANCELLED)
+                                continue
                             }
                             if (utterance.isFinal && !utterance.isRetracted && activeStreamSession.isActive()) {
                                 activeSessionMemory.record(
@@ -348,9 +358,10 @@ class TranslationBroadcastPipeline(
                             // language falls farther behind than its small reserve, its oldest
                             // unspoken item is dropped explicitly to preserve live guidance.
                             requireNotNull(speechQueues[target]).send(
-                                TranslatedSpeechWork(utterance, translated),
+                                TranslatedSpeechWork(utterance, translated, ticket),
                             )
                         } catch (timeout: TimeoutCancellationException) {
+                            deliveryTickets.finish(ticket, TranslationDeliveryStage.TRANSLATION_FAILED)
                             mutableHealth.updateChannel(target.channelId) {
                                 it.copy(
                                     droppedUtterances = it.droppedUtterances + 1,
@@ -362,6 +373,7 @@ class TranslationBroadcastPipeline(
                                 )
                             }
                         } catch (cancelled: CancellationException) {
+                            deliveryTickets.finish(ticket, TranslationDeliveryStage.CANCELLED)
                             // Google Task and isolated provider workers can report their own
                             // cancellation while this broadcast/session is still active. Treat
                             // that as one language's recoverable item failure; only propagate a
@@ -380,6 +392,7 @@ class TranslationBroadcastPipeline(
                                 )
                             }
                         } catch (error: Throwable) {
+                            deliveryTickets.finish(ticket, TranslationDeliveryStage.TRANSLATION_FAILED)
                             val message = protectedTranslationReviewMessage(error.message) ?: error.message ?: error::class.simpleName
                             mutableHealth.updateChannel(target.channelId) {
                                 it.copy(
@@ -401,7 +414,10 @@ class TranslationBroadcastPipeline(
         val speechWorkers = targets.map { target ->
             isolatedScope.launch {
                 for (work in requireNotNull(speechQueues[target])) {
-                    if (!activeStreamSession.isActive()) continue
+                    if (!deliveryTickets.beginSpeech(work.ticket)) {
+                        deliveryTickets.finish(work.ticket, TranslationDeliveryStage.CANCELLED)
+                        continue
+                    }
                     val utterance = work.utterance
                     var publicationLease: Closeable? = null
                     try {
@@ -432,7 +448,10 @@ class TranslationBroadcastPipeline(
                             expression = utterance.speechExpression,
                         ) { frame ->
                             currentCoroutineContext().ensureActive()
-                            if (!activeStreamSession.isActive()) throw StreamSessionSupersededException()
+                            if (!deliveryTickets.accepts(work.ticket)) throw StreamSessionSupersededException()
+                            check(frame.utteranceSequence == null || frame.utteranceSequence == utterance.sequence) {
+                                "음성 응답이 현재 발화와 일치하지 않습니다."
+                            }
                             val frameIsAudible = pcmAccumulator.add(frame)
                             if (!firstAudibleFrameReported && frameIsAudible) {
                                 firstAudibleFrameReported = true
@@ -447,6 +466,7 @@ class TranslationBroadcastPipeline(
                                     it.copy(lastFirstAudioElapsedMillis = firstAudioElapsedMillis)
                                 }
                             }
+                            currentCoroutineContext().ensureActive()
                             if (shouldPublishAudio()) {
                                 val correlatedFrame = if (frame.utteranceSequence == null) {
                                     frame.copy(utteranceSequence = utterance.sequence)
@@ -454,12 +474,13 @@ class TranslationBroadcastPipeline(
                                     frame
                                 }
                                 when (
-                                    activeStreamSession.tryPublish(
-                                        target.channelId,
-                                        correlatedFrame,
-                                    ).status
+                                    (deliveryTickets.publishIfCurrent(work.ticket, correlatedFrame.bytes.size) {
+                                        activeStreamSession.tryPublish(target.channelId, correlatedFrame)
+                                    } ?: throw StreamSessionSupersededException()).status
                                 ) {
-                                    StreamPublishStatus.PUBLISHED -> publishedFramesForWork += 1
+                                    StreamPublishStatus.PUBLISHED -> {
+                                        publishedFramesForWork += 1
+                                    }
                                     StreamPublishStatus.STALE_SESSION ->
                                         throw StreamSessionSupersededException()
                                     StreamPublishStatus.UNKNOWN_CHANNEL -> error(
@@ -480,6 +501,7 @@ class TranslationBroadcastPipeline(
                             "번역문은 생성됐지만 TTS가 비무음 PCM을 만들지 못했습니다."
                         }
                         val synthesisElapsedMillis = synthesisMark.elapsedNow().inWholeMilliseconds
+                        if (!deliveryTickets.accepts(work.ticket)) throw StreamSessionSupersededException()
                         observer.onSynthesisAudioCompleted(
                             utterance = utterance,
                             target = target,
@@ -511,7 +533,9 @@ class TranslationBroadcastPipeline(
                                 lastSynthesisPcm = pcm,
                             )
                         }
+                        deliveryTickets.finish(work.ticket, TranslationDeliveryStage.SYNTHESIZED)
                     } catch (timeout: TimeoutCancellationException) {
+                        deliveryTickets.finish(work.ticket, TranslationDeliveryStage.SYNTHESIS_FAILED)
                         mutableHealth.updateChannel(target.channelId) {
                             it.copy(
                                 droppedUtterances = it.droppedUtterances + 1,
@@ -523,6 +547,7 @@ class TranslationBroadcastPipeline(
                             )
                         }
                     } catch (cancelled: CancellationException) {
+                        deliveryTickets.finish(work.ticket, TranslationDeliveryStage.CANCELLED)
                         // A synthesis provider may cancel only its current request (for example
                         // after an isolated worker reconnect). Keep this language FIFO alive for
                         // the next committed translation unless the owning session itself ended.
@@ -539,6 +564,7 @@ class TranslationBroadcastPipeline(
                             )
                         }
                     } catch (error: Throwable) {
+                        deliveryTickets.finish(work.ticket, TranslationDeliveryStage.SYNTHESIS_FAILED)
                         val message = error.message ?: error::class.simpleName
                         mutableHealth.updateChannel(target.channelId) {
                             it.copy(
@@ -558,18 +584,21 @@ class TranslationBroadcastPipeline(
         }
 
         val sourceJob = isolatedScope.launch {
-            val processedFinalSequences = LinkedHashSet<Long>()
+            val processedFinalSequences = TreeSet<Long>()
+            var retiredThrough: Long? = null
             try {
                 utterances.collect { utterance ->
                     // Once committed, the displayed source, translation and spoken text must
                     // remain the same snapshot. Late provider revisions/retractions cannot
                     // rewrite only the source side of an already translated meaning unit.
-                    if (utterance.sequence in processedFinalSequences) return@collect
+                    if (retiredThrough?.let { utterance.sequence <= it } == true ||
+                        utterance.sequence in processedFinalSequences) return@collect
                     observer.onSourceRecognized(utterance)
                     if (utterance.isRetracted || !utterance.isFinal) return@collect
                     if (!processedFinalSequences.add(utterance.sequence)) return@collect
                     while (processedFinalSequences.size > MAX_DEDUPLICATED_SEQUENCES) {
-                        processedFinalSequences.remove(processedFinalSequences.first())
+                        val retired = processedFinalSequences.pollFirst()!!
+                        retiredThrough = retiredThrough?.let { maxOf(it, retired) } ?: retired
                     }
                     if (hasExpiredFirstAudioDeadline(utterance)) {
                         targets.forEach { target ->
@@ -621,6 +650,7 @@ class TranslationBroadcastPipeline(
         val queues = sourceDispatchQueues.values + translationQueues.values + speechQueues.values
         isolationJob.invokeOnCompletion {
             acceptingSource.set(false)
+            deliveryTickets.close()
             activeSessionMemory.clear()
             queues.forEach { it.cancel() }
         }
@@ -634,6 +664,7 @@ class TranslationBroadcastPipeline(
             queues = queues,
             stopAcceptingSource = { acceptingSource.set(false) },
             sessionMemory = activeSessionMemory,
+            deliveryTickets = deliveryTickets,
         )
     }
 
@@ -659,6 +690,7 @@ class TranslationBroadcastPipeline(
 private data class TranslatedSpeechWork(
     val utterance: RecognizedUtterance,
     val translatedText: String,
+    val ticket: TranslationDeliveryTickets.Ticket,
 )
 
 private const val LATE_UTTERANCE_RECOVERY_MESSAGE =
@@ -1032,6 +1064,8 @@ class RunningTranslationPipeline internal constructor(
     private val queues: Collection<Channel<*>>,
     private val stopAcceptingSource: () -> Unit,
     val sessionMemory: BroadcastSessionBilingualMemory? = null,
+    val deliveryTickets: TranslationDeliveryTickets = TranslationDeliveryTickets(
+        "unobserved", "unobserved", streamSession.generation, { streamSession.isActive() }),
 ) : Closeable {
     private val closed = AtomicBoolean(false)
 
@@ -1040,6 +1074,7 @@ class RunningTranslationPipeline internal constructor(
         // Explicit stop discards pending work; normal source completion still drains it.
         // Mark intentional shutdown before cancel invokes onUndeliveredElement callbacks.
         stopAcceptingSource()
+        deliveryTickets.close()
         sessionMemory?.clear()
         if (ownsStreamSession) streamSession.close()
         sourceJob.cancel()

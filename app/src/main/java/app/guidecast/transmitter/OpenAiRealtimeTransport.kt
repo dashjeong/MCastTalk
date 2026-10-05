@@ -22,21 +22,35 @@ internal interface RealtimeSocket {
     suspend fun receive(): String
 }
 internal data class RealtimeTranslation(val text: String, val rawResponse: String)
+internal val OPENAI_REALTIME_MODELS = setOf("gpt-realtime-2.1-mini", "gpt-realtime-2")
+internal fun openAiRealtimeUrl(model: String): String {
+    require(model in OPENAI_REALTIME_MODELS) { "Unsupported Realtime model" }
+    return "wss://api.openai.com/v1/realtime?model=$model"
+}
 internal interface RealtimeWire {
     suspend fun exchange(key: String, authorized: () -> Boolean,
         conversation: suspend (RealtimeSocket) -> RealtimeTranslation): RealtimeTranslation
+    suspend fun exchangeModel(model: String, key: String, authorized: () -> Boolean,
+        conversation: suspend (RealtimeSocket) -> RealtimeTranslation): RealtimeTranslation {
+        require(model == "gpt-realtime-2.1-mini") { "Selected model transport unavailable" }
+        return exchange(key, authorized, conversation)
+    }
 }
 
 /** Fixed TLS destination; one bounded request per socket, no redirects, logging, or reconnect billing. */
 internal class KtorRealtimeWire : RealtimeWire {
     override suspend fun exchange(key: String, authorized: () -> Boolean,
+        conversation: suspend (RealtimeSocket) -> RealtimeTranslation): RealtimeTranslation =
+        exchangeModel("gpt-realtime-2.1-mini", key, authorized, conversation)
+    override suspend fun exchangeModel(model: String, key: String, authorized: () -> Boolean,
         conversation: suspend (RealtimeSocket) -> RealtimeTranslation): RealtimeTranslation {
+        val selectedUrl = openAiRealtimeUrl(model)
         check(authorized()) { "Realtime consent revoked" }
         val client = HttpClient(CIO) { install(WebSockets) { maxFrameSize = 65_536 }; followRedirects = false; expectSuccess = true }
         try {
             check(authorized()) { "Realtime consent revoked" }
             val session = try {
-                client.webSocketSession(urlString = URL) { header(HttpHeaders.Authorization, "Bearer $key") }
+                client.webSocketSession(urlString = selectedUrl) { header(HttpHeaders.Authorization, "Bearer $key") }
             } catch (failure: ResponseException) {
                 // Provider bodies may echo private data. Discard the body and original cause here.
                 throw OnlineProviderFailure(onlineHttpFailure(failure.response.status.value))
@@ -65,16 +79,20 @@ internal class KtorRealtimeWire : RealtimeWire {
 
 internal class OpenAiRealtimeTransport(private val wire: RealtimeWire = KtorRealtimeWire()) {
     suspend fun translate(key: String, instructions: String, input: String,
+        authorized: () -> Boolean): RealtimeTranslation =
+        translateModel("gpt-realtime-2.1-mini", key, instructions, input, authorized)
+    suspend fun translateModel(model: String, key: String, instructions: String, input: String,
         authorized: () -> Boolean): RealtimeTranslation = withTimeout(6_000L) {
+        require(model in OPENAI_REALTIME_MODELS) { "Unsupported Realtime model" }
         check(authorized()) { "Realtime consent revoked" }
-        wire.exchange(key, authorized) { socket ->
+        wire.exchangeModel(model, key, authorized) { socket ->
             suspend fun send(event: JSONObject) {
                 currentCoroutineContext().ensureActive()
                 check(authorized()) { "Realtime consent revoked" }
                 socket.send(event.toString())
             }
             send(JSONObject().put("type", "session.update").put("session", JSONObject()
-                .put("type", "realtime").put("model", "gpt-realtime-2.1-mini")
+                .put("type", "realtime").put("model", model)
                 .put("output_modalities", JSONArray().put("text"))
                 .put("instructions", instructions).put("tools", JSONArray())))
             var requested = false
@@ -119,7 +137,7 @@ internal class OpenAiRealtimeTransport(private val wire: RealtimeWire = KtorReal
                         check(content.length() == 1 && content.getJSONObject(0).getString("type") == "output_text")
                         val text = content.getJSONObject(0).getString("text").trim()
                         check(text.length in 1..8_000 && "```" !in text && text.none { c -> c.code < 32 && c !in "\n\r\t" })
-                        return@exchange RealtimeTranslation(text, response.toString())
+                        return@exchangeModel RealtimeTranslation(text, response.toString())
                     }
                 }
             }

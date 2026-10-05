@@ -124,7 +124,7 @@ internal fun BroadcastTranscriptArchivePanel(
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("방송 스크립트 보관함", fontWeight = FontWeight.Bold)
             Text(
-                "조회 조건에 맞는 ${page.totalMatchingLines}개 문장 · 1,000개씩 표시",
+                "전체 ${page.totalMatchingLines}개 문장 · 한 화면에 최대 1,000개씩 조회",
                 style = MaterialTheme.typography.labelSmall,
             )
             Text(
@@ -134,8 +134,8 @@ internal fun BroadcastTranscriptArchivePanel(
             )
             Text(
                 if (archive.retentionPolicy == TranscriptRetentionPolicy.DAILY_BACKUP)
-                    "기본 보관 500,000개 · 날짜별 백업 사용 · 기간 조회에 백업 포함"
-                else "최대 500,000개 · 초과 시 오래된 문장부터 덮어쓰기",
+                    "날짜별로 나누어 보관 · 전체 기간 조회에 백업 포함"
+                else "직접 삭제할 때까지 보관 · 화면 표시 수는 보관 개수 제한이 아닙니다",
                 style = MaterialTheme.typography.labelSmall,
             )
             Text(if (fromDate.isBlank() && throughDate.isBlank()) "전체 기간"
@@ -293,15 +293,15 @@ internal fun BroadcastTranscriptArchivePanel(
                         label = { Text("종료일 · YYYY-MM-DD") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     TextButton(onClick = { draftFromDate = ""; draftThroughDate = ""; dateError = null }) { Text("전체 기간으로") }
                     dateError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                    Text("기본 보관량을 넘을 때", fontWeight = FontWeight.SemiBold)
-                    FilterChip(selected = draftPolicy == TranscriptRetentionPolicy.OVERWRITE_OLDEST,
-                        onClick = { draftPolicy = TranscriptRetentionPolicy.OVERWRITE_OLDEST },
-                        label = { Text("오래된 문장부터 덮어쓰기") })
+                    Text("스크립트 보관 방법", fontWeight = FontWeight.SemiBold)
+                    FilterChip(selected = draftPolicy == TranscriptRetentionPolicy.KEEP_ALL,
+                        onClick = { draftPolicy = TranscriptRetentionPolicy.KEEP_ALL },
+                        label = { Text("직접 삭제할 때까지 보관") })
                     FilterChip(selected = draftPolicy == TranscriptRetentionPolicy.DAILY_BACKUP,
                         onClick = { draftPolicy = TranscriptRetentionPolicy.DAILY_BACKUP },
                         label = { Text("날짜별 백업으로 보관") })
                     Text("백업은 앱 전용 저장공간을 사용합니다. 저장공간이 부족하면 경고를 표시합니다. " +
-                        "이미 만들어진 백업은 덮어쓰기 모드로 바꿔도 기간 조회에 포함합니다.",
+                        "이미 만들어진 백업은 보관 방법을 바꿔도 전체 기간 조회에 포함합니다.",
                         style = MaterialTheme.typography.bodySmall)
                 }
             },

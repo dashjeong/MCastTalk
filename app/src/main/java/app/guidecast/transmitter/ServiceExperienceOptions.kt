@@ -9,6 +9,7 @@ internal data class ServiceExperience(
     val supportsReferences: Boolean,
     val supportsLearningComparison: Boolean,
     val limitation: String? = null,
+    val supportsNativePairComparison: Boolean = false,
 )
 
 internal fun serviceExperience(options: TranslationApiOptions): ServiceExperience = when (options.provider) {
@@ -24,13 +25,24 @@ internal fun serviceExperience(options: TranslationApiOptions): ServiceExperienc
         ServiceExperience(
             if (translate) "Gemini 연속 음성 통역" else if (agent && options.interpretationMode == OnlineInterpretationMode.PROFESSIONAL) "Gemini 분야별 음성 통역" else "Gemini 일반 음성 통역",
             "마이크 음성 → Gemini → 통역 음성 재생",
-            if (agent && options.interpretationMode == OnlineInterpretationMode.PROFESSIONAL) "마이크 음성과 입력한 분야·상황 설명을 Google로 보냅니다."
-            else "마이크 음성을 Google로 보냅니다.",
-            agent, false, false,
-            "현재 앱에서는 한 언어로 최대 60초씩 이용합니다. 여러 언어는 Gemini 다국어 통역을 선택하세요. 자료 참고 번역과 학습 비교는 이 음성 경로에서 지원하지 않습니다.",
+            if (agent) buildString {
+                append("마이크 음성을 Google로 보냅니다.")
+                if (options.interpretationMode == OnlineInterpretationMode.PROFESSIONAL && options.domainPrompt.isNotBlank()) append(" 저장한 분야·상황 설명도 보냅니다.")
+                if (options.interpreterInstructions.isNotBlank()) append(" 저장한 사용자 통역 지침도 보냅니다.")
+                if (options.allowDomainReferences) append(" 참고 자료를 허용했으며 준비된 짧은 발췌가 있을 때만 함께 보냅니다.")
+            } else "마이크 음성을 Google로 보냅니다.",
+            agent, agent, false,
+            if (agent) "선택 자료의 짧은 발췌를 연결할 때 전달합니다. 학습 비교는 별도 기능입니다. 현재 한 출력 언어로 이용합니다."
+            else "이 번역 전용 모델은 참고 자료·사용자 지침을 지원하지 않습니다. 현재 한 출력 언어로 이용합니다.",
         )
     }
-    else -> ServiceExperience(
+    else -> if (options.usesNativeLiveAudio) ServiceExperience(
+        "OpenAI 직접 음성 통역", "마이크 음성 → OpenAI → 통역 음성 · 원문/번역 자막",
+        "마이크 음성과 선택한 말투·분야 지시를 OpenAI로 보냅니다. 원문 자막 인식도 제공자가 처리합니다.",
+        true, true, false,
+        "현재 한 출력 언어로 이용합니다. 통역 중계에서 비교를 켜면 확정된 원문·통역 쌍을 준비된 Gemma와 비교하며 추가 API 요청은 없습니다. 직접 검수·저장한 예문만 재사용합니다. 실기기 품질 검증은 별도입니다.",
+        supportsNativePairComparison = true,
+    ) else ServiceExperience(
         when (options.provider) {
             TranslationApiProvider.GEMINI -> "Gemini 다국어 통역"
             TranslationApiProvider.COMPATIBLE -> "사용자 지정 API 문장 번역"
@@ -41,7 +53,7 @@ internal fun serviceExperience(options: TranslationApiOptions): ServiceExperienc
         "인식된 문장과 필요한 문맥을 선택한 API로 보냅니다. 자료 참고를 허용하면 짧은 관련 근거도 보냅니다.",
         true, true, true,
         if (options.provider == TranslationApiProvider.OPENAI_REALTIME)
-            "현재 앱의 OpenAI Realtime 연결은 문장 번역입니다. 음성을 API로 보내는 직접 음성 통역은 아직 지원하지 않습니다."
+            "현재 선택은 문장 연결입니다. 마이크 음성을 직접 보내려면 Realtime 음성 통역을 선택하세요."
         else null,
     )
 }
@@ -55,10 +67,26 @@ internal data class ServiceModelChoice(
 
 /** Only models already admitted by the installed route are offered as presets. */
 internal fun serviceModelChoices(options: TranslationApiOptions): List<ServiceModelChoice> =
-    if (options.provider == TranslationApiProvider.GEMINI_LIVE) listOf(
-        ServiceModelChoice(GEMINI_LIVE_TRANSLATE, "연속 음성 통역", "말하는 내용을 이어서 통역합니다. 분야 지시와 자료 참고는 지원하지 않습니다.", OnlineInterpretationMode.CONTINUOUS),
-        ServiceModelChoice(GEMINI_LIVE_AGENT, "분야별 음성 통역", "분야·상황 설명을 통역 지시에 추가합니다. 정확도 보증이나 자료 학습은 아닙니다.", OnlineInterpretationMode.PROFESSIONAL),
-    ) else emptyList()
+    when (options.provider) {
+        TranslationApiProvider.GEMINI_LIVE -> listOf(
+            ServiceModelChoice(GEMINI_LIVE_TRANSLATE, "Gemini 3.5 Live Translate (미리보기)", "음성 → 통역 음성. 연속 통역용이며 분야·말투 지시는 지원하지 않습니다. 사용량에 따라 과금됩니다.", OnlineInterpretationMode.CONTINUOUS),
+            ServiceModelChoice(GEMINI_LIVE_AGENT, "Gemini 3.8 Live", "음성 → 통역 음성. 분야·말투 지시를 사용할 수 있습니다. 사용량에 따라 과금됩니다.", OnlineInterpretationMode.PROFESSIONAL),
+        )
+        TranslationApiProvider.GEMINI -> listOf(
+            ServiceModelChoice("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", "빠르고 경제적인 문장 번역. 다국어 요청 한 번 뒤 기기 음성으로 재생합니다.", options.interpretationMode),
+            ServiceModelChoice("gemini-3.5-flash", "Gemini 3.5 Flash", "일반 문장 번역. Flash-Lite보다 높은 토큰 단가이며 기기 음성으로 재생합니다.", options.interpretationMode),
+            ServiceModelChoice("gemini-3.8-flash", "Gemini 3.8 Flash", "복잡한 문맥을 다루는 문장 모델. 응답 시간은 달라질 수 있으며 기기 음성으로 재생합니다.", options.interpretationMode),
+        )
+        TranslationApiProvider.OPENAI_REALTIME -> listOf(
+            ServiceModelChoice("gpt-realtime-2.1-mini", if (options.realtimeAudio) "GPT Realtime 2.1 Mini · 음성" else "GPT Realtime 2.1 Mini · 문장 연결", if (options.realtimeAudio) "마이크 음성 → 통역 음성·자막. 사용량에 따라 과금됩니다." else "인식한 문장을 보내고 기기 음성으로 재생합니다.", options.interpretationMode),
+            ServiceModelChoice("gpt-realtime-2", if (options.realtimeAudio) "GPT Realtime 2 · 음성" else "GPT Realtime 2 · 문장 연결", if (options.realtimeAudio) "마이크 음성 → 통역 음성·자막. Mini보다 높은 토큰 단가입니다." else "더 높은 토큰 단가의 문장 연결이며 기기 음성으로 재생합니다.", options.interpretationMode),
+        )
+        TranslationApiProvider.OPENAI -> listOf(
+            ServiceModelChoice("gpt-5.4-mini", "GPT 5.4 Mini", "경제적인 문장 번역. 인식한 문장을 보내고 기기 음성으로 재생합니다.", options.interpretationMode),
+            ServiceModelChoice("gpt-5.4", "GPT 5.4", "복잡한 문맥을 다루는 문장 모델. Mini보다 높은 토큰 단가이며 기기 음성으로 재생합니다.", options.interpretationMode),
+        )
+        else -> emptyList()
+    }
 
 /** A preset never changes a key, grants consent or enables a learning network request. */
 internal fun applyServiceModelChoice(current: TranslationApiOptions, choice: ServiceModelChoice): TranslationApiOptions {

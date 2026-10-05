@@ -30,6 +30,30 @@ internal const val MOONSHINE_REQUIRED_ATTRIBUTION = "Powered by Moonshine AI"
 
 internal val GUIDECAST_LICENSE_CATALOG: List<ThirdPartyLicenseEntry> = listOf(
     ThirdPartyLicenseEntry(
+        id = "lame-mp3", name = "LAME MP3 인코더", packageName = "libmp3lame.so",
+        version = "4.0", licenseName = "GNU Library GPL v2 or later (LGPL-2.0-or-later)",
+        category = LicenseCategory.APP_LIBRARY,
+        notice = "저장한 음성을 기기 안에서 MP3로 변환합니다. LAME은 별도 공유 라이브러리로 제공됩니다. 라이선스 전문은 아래에서 확인하고, 소스·재빌드 안내는 목록의 ‘LAME 소스·재빌드 안내’에서 확인하세요.",
+        sourceUrl = "https://lame.sourceforge.io/",
+        offlineDocumentAsset = "licenses/LAME-4.0-COPYING.txt",
+    ),
+    ThirdPartyLicenseEntry(
+        id = "lame-source-notice", name = "LAME 소스·재빌드 안내", packageName = "third_party/lame · scripts/build-lame.sh",
+        version = "4.0", licenseName = "GNU Library GPL v2 or later (LGPL-2.0-or-later)",
+        category = LicenseCategory.APP_LIBRARY,
+        notice = "공개 제품 소스에 원본 소스 압축파일, Android 빌드 설정과 재빌드 스크립트가 포함됩니다. 아래 오프라인 고지에서 소스 해시·구성·공식 주소를 확인할 수 있습니다.",
+        sourceUrl = "https://github.com/dashjeong/MCastTalk",
+        offlineDocumentAsset = "licenses/LAME-4.0-NOTICE.txt",
+    ),
+    ThirdPartyLicenseEntry(
+        id = "lame-copyright", name = "LAME 저작권·라이선스 안내", packageName = "LAME upstream LICENSE",
+        version = "4.0", licenseName = "GNU Library GPL v2 or later (LGPL-2.0-or-later)",
+        category = LicenseCategory.APP_LIBRARY,
+        notice = "LAME 원본 배포의 저작권·라이선스 안내입니다. 라이선스 전문은 ‘LAME MP3 인코더’ 항목에 별도로 포함됩니다.",
+        sourceUrl = "https://lame.sourceforge.io/",
+        offlineDocumentAsset = "licenses/LAME-4.0-LICENSE.txt",
+    ),
+    ThirdPartyLicenseEntry(
         id = "rnnoise", name = "RNNoise AI 마이크 소음 감소", packageName = "libguidecast_rnnoise.so",
         version = "0.2 · model 0b50c45", licenseName = "BSD 3-Clause", category = LicenseCategory.AI_RUNTIME,
         notice = "오프라인 CPU 신경망 소음 감소. 마이크 입력에만 선택 적용하며 번역·TTS·앱 재생음은 가공하지 않습니다.",

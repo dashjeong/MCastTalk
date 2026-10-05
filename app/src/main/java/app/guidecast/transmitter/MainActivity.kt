@@ -16,6 +16,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
@@ -148,7 +149,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.DKGRAY),
+            navigationBarStyle = SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.DKGRAY),
+        )
         setContent {
             GuideCastTheme {
                 val displaySettings = remember { (application as GuideCastApplication).uiDisplaySettings }
@@ -278,6 +282,7 @@ class MainActivity : ComponentActivity() {
                     onDeleteArchivedTranscripts = viewModel::deleteArchivedTranscripts,
                     onDeleteArchivedTranscriptSession = viewModel::deleteArchivedTranscriptSession,
                     onStartBroadcast = viewModel::startBroadcast,
+                    onStartRelay = viewModel::startInterpreterRelay,
                     onPauseBroadcast = viewModel::pauseBroadcast,
                     onResumeBroadcast = viewModel::resumeBroadcast,
                     onStopBroadcast = viewModel::stopBroadcast,
@@ -358,6 +363,7 @@ private fun GuideCastScreen(
     onResumeLocalMonitor: () -> Unit,
     onStopLocalMonitor: () -> Unit,
     onLocalMonitorVolume: (Float) -> Unit,
+    onStartRelay: () -> Unit = {},
 ) {
     var section by rememberSaveable { mutableStateOf(GuideCastSection.BROADCAST) }
     var service by rememberSaveable { mutableStateOf<MCastService?>(null) }
@@ -408,7 +414,7 @@ private fun GuideCastScreen(
         broadcast.phase == BroadcastPhase.PAUSED
     val app = LocalContext.current.applicationContext as GuideCastApplication
     DisposableEffect(app, service, section, showFileTranslation) {
-        app.translationWorkspaceActive.value = !showFileTranslation &&
+        app.translationWorkspaceActive.value = service !in setOf(MCastService.RELAY, MCastService.HISTORY) && !broadcast.isInterpreterRelay && !showFileTranslation &&
             (service in setOf(MCastService.VOICE, MCastService.MULTILINGUAL) || section != GuideCastSection.BROADCAST)
         onDispose { app.translationWorkspaceActive.value = false }
     }
@@ -423,7 +429,7 @@ private fun GuideCastScreen(
         !fileState.isConverting && !fileState.isLoading && filePlayback?.isPlaying != true && filePlayback?.isTranslating != true
     val activeService = when {
         inputActive || broadcastActive || broadcast.translationTestActive ->
-            MCastService.MULTILINGUAL
+            if (broadcast.isInterpreterRelay) MCastService.RELAY else MCastService.MULTILINGUAL
         voiceNoteState.recording || voiceNoteState.busy || voiceNoteState.playback.isPlaying -> MCastService.NOTES
         fileState.isConverting || fileState.isLoading || filePlayback?.isPlaying == true || filePlayback?.isTranslating == true -> MCastService.FILES
         else -> null
@@ -443,8 +449,14 @@ private fun GuideCastScreen(
         else -> null
     }
     val selectService: (MCastService) -> Unit = { selected ->
-        // Opening a workspace is navigation, never a change to the operator's saved audio mode.
+        // Explicit workspace selection restores its service profile; it never starts transmission.
         val destination = if (selected == MCastService.VOICE) MCastService.MULTILINGUAL else selected
+        if (!inputActive && !broadcastActive && !broadcast.translationTestActive) {
+            if (destination == MCastService.RELAY && service != destination)
+                app.interpreterRelaySettings.enterRelay(app.translationApiSettings)
+            else if (destination == MCastService.MULTILINGUAL)
+                app.interpreterRelaySettings.enterStreaming(app.translationApiSettings)
+        }
         section = GuideCastSection.BROADCAST
         showLicenses = false; showGlossary = false; showSpeechCorrections = false; showDomainCorpus = false
         showAssistant = false; showDataTransfer = false; showSentenceMemory = false
@@ -502,7 +514,7 @@ private fun GuideCastScreen(
                 Text("← 운영 메뉴")
               }
             }
-            if ((!showDomainCorpus && (section != GuideCastSection.BROADCAST || service in setOf(MCastService.VOICE, MCastService.MULTILINGUAL))) || broadcastActive || inputActive) OperatorHeader(
+            if (service != MCastService.RELAY && ((!showDomainCorpus && (section != GuideCastSection.BROADCAST || service in setOf(MCastService.VOICE, MCastService.MULTILINGUAL))) || broadcastActive || inputActive)) OperatorHeader(
                 broadcast = broadcast,
                 onOpenBroadcast = {
                     showLicenses = false
@@ -510,7 +522,7 @@ private fun GuideCastScreen(
                     showSpeechCorrections = false
                     showDomainCorpus = false
                     showAssistant = false; showDataTransfer = false; showSentenceMemory = false; showDeveloperLab = false; showFileTranslation = false
-                    service = MCastService.MULTILINGUAL
+                    service = if (broadcast.isInterpreterRelay) MCastService.RELAY else MCastService.MULTILINGUAL
                     section = GuideCastSection.BROADCAST
                     sectionTopRequest += 1
                 },
@@ -569,6 +581,15 @@ private fun GuideCastScreen(
                     showDeveloperLab -> DeveloperLabPanel(app.developerLabSettings, previewAllowed = speechPreviewAllowed, onBack = { showDeveloperLab = false })
                     showFileTranslation -> serviceScreens.SaveableStateProvider("files") {
                         FileTranslationRoute(fileViewModel, onBack = { showFileTranslation = false })
+                    }
+                    service == MCastService.RELAY -> serviceScreens.SaveableStateProvider("relay") {
+                        InterpreterRelayScreen(app, broadcast, permissions.recordAudioGranted,
+                            onRequestMicrophone = { onRequestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO)) },
+                            onStart = onStartRelay, onPause = onPauseBroadcast, onResume = onResumeBroadcast,
+                            onStop = onStopBroadcast, onBack = { service = null })
+                    }
+                    service == MCastService.HISTORY -> serviceScreens.SaveableStateProvider("broadcast-history") {
+                        BroadcastHistoryScreen(app, onBack = { service = null })
                     }
                     service == MCastService.NOTES -> serviceScreens.SaveableStateProvider("notes") {
                         VoiceNoteRoute(voiceNoteViewModel, onBack = { service = null })
@@ -1146,6 +1167,7 @@ private fun OperatorHeader(
 ) {
     val active = broadcast.phase == BroadcastPhase.LIVE || broadcast.phase == BroadcastPhase.PAUSED
     val serverLabel = when {
+        broadcast.isInterpreterRelay -> broadcast.relayPhase.shortLabel
         broadcast.phase == BroadcastPhase.LIVE -> if (broadcast.runMode == BroadcastRunMode.STANDALONE) "단독 사용 중" else "방송 중"
         broadcast.phase == BroadcastPhase.PAUSED -> "일시정지"
         broadcast.phase == BroadcastPhase.STARTING -> "방송 준비 중"
@@ -1233,6 +1255,7 @@ private fun OperatorHeader(
                         Text(serverLabel, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                         Text(
                             when {
+                                broadcast.isInterpreterRelay -> if (broadcast.runMode == BroadcastRunMode.STANDALONE) "· Live API · 기기 재생" else "· Live API · LAN 방송"
                                 active && broadcast.runMode == BroadcastRunMode.STANDALONE -> "· 기기 내 처리"
                                 broadcast.translationTestActive && !active -> "· 단말 점검"
                                 else -> "· 청취자 ${broadcast.listenerCount}명"
@@ -1246,7 +1269,7 @@ private fun OperatorHeader(
                     TextButton(
                         modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
                         onClick = onOpenBroadcast,
-                    ) { Text(if (broadcast.runMode == BroadcastRunMode.STANDALONE) "단독 사용 보기" else "방송 보기") }
+                    ) { Text(if (broadcast.isInterpreterRelay) "통역 중계 보기" else if (broadcast.runMode == BroadcastRunMode.STANDALONE) "단독 사용 보기" else "방송 보기") }
                 } else if (broadcast.translationTestActive) {
                     Button(
                         modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
@@ -1510,6 +1533,12 @@ internal fun operatorStageStatuses(
     broadcast: BroadcastSnapshot,
     models: TranslationModelUiState,
 ): List<OperatorStageStatus> {
+    if (broadcast.isInterpreterRelay) return listOf(
+        OperatorStageStatus("마이크", if (broadcast.inputPhase == InputPhase.ACTIVE) "입력 중" else "입력 대기", OperatorStatusTone.NEUTRAL),
+        OperatorStageStatus("Live API", broadcast.relayPhase.shortLabel, OperatorStatusTone.NEUTRAL),
+        OperatorStageStatus("출력", if (broadcast.runMode == BroadcastRunMode.STANDALONE) "기기 재생" else "LAN 방송", OperatorStatusTone.NEUTRAL),
+    )
+
     val input = when (broadcast.inputPhase) {
         InputPhase.ACTIVE -> OperatorStageStatus("입력", "동작 중", OperatorStatusTone.READY)
         InputPhase.PAUSED -> OperatorStageStatus("입력", "일시정지", OperatorStatusTone.WARNING)
@@ -4723,7 +4752,7 @@ private fun LiveBroadcastCard(
 }
 
 @Composable
-private fun QrCode(
+internal fun QrCode(
     content: String,
     description: String = "청취 페이지 QR 코드",
 ) {
@@ -4738,7 +4767,7 @@ private fun QrCode(
     )
 }
 
-private fun createQrBitmap(content: String, size: Int): Bitmap {
+internal fun createQrBitmap(content: String, size: Int): Bitmap {
     val matrix = MultiFormatWriter().encode(
         content,
         BarcodeFormat.QR_CODE,

@@ -23,6 +23,17 @@ import kotlin.system.measureNanoTime
 import kotlin.system.measureTimeMillis
 
 class DomainCorpusTranslationEngineTest {
+    @Test fun oversizedTopExampleDoesNotHideAWholeSmallerRelevantExample() = runBlocking {
+        val repo = DomainCorpusRepository(null)
+        val profile = DomainCorpusProfile(1, "회의", "", "ko", "en", TranslationStyle.AUTO, 2, true)
+        repo.seedActiveProfileForTest(profile, listOf(
+            ("회의 예산 확인 " + "구간".repeat(220)) to "Long reference ".repeat(30),
+            "회의 예산" to "The meeting budget."))
+        val result = repo.match("회의 예산 확인", "ko", "en", TranslationStyle.AUTO)
+        assertTrue(result.hints.length <= 600)
+        assertTrue(result.hints.contains("The meeting budget."))
+        assertTrue(!result.hints.contains("Long reference"))
+    }
     @Test fun generatedResultsAreCheckedWithDomainOffAndOnAndNextRequestCanContinue() = runBlocking {
         for (hints in listOf("", "{\"domain\":\"업무\"}")) {
             val repo = TestCorpusRepository(DomainCorpusMatch(null, hints))
@@ -37,13 +48,27 @@ class DomainCorpusTranslationEngineTest {
         }
     }
 
-    @Test fun exactApprovedTranslationIsNeverChangedOrRejectedByGeneratedOutputChecks() = runBlocking {
-        val exact = "经理不是说自己会发送吗？"
+    @Test fun safeExactReviewedTranslationIsReusedWithoutModelCall() = runBlocking {
+        val exact = "经理让员工发送，并不是说自己会发送。"
         val repo = TestCorpusRepository(DomainCorpusMatch(exact, "reference"))
         val delegate = RecordingDelegateEngine()
         assertEquals(exact, DomainCorpusTranslationEngine(delegate, repo).translate(
             "직원이 보내라고 하셨지 본인이 보내겠다는 뜻은 아니에요.", "ko", "zh"))
         assertEquals(0, delegate.callCount)
+    }
+
+    @Test fun unsafeLegacyExactPairCannotBypassMeaningProtection() = runBlocking {
+        val repo = TestCorpusRepository(DomainCorpusMatch("经理不是说自己会发送吗？", "reference"))
+        val safe = "经理让员工发送，并不是说自己会发送。"
+        var calls = 0
+        var answer = safe
+        val delegate = app.guidecast.core.translation.TextTranslationEngine { _, _, _ -> calls++; answer }
+        val engine = DomainCorpusTranslationEngine(delegate, repo)
+        val source = "직원이 보내라고 하셨지 본인이 보내겠다는 뜻은 아니에요."
+        assertEquals(safe, engine.translate(source, "ko", "zh")); assertEquals(1, calls)
+        answer = "经理不是说自己会发送吗？"
+        try { engine.translate(source, "ko", "zh"); fail("Unsafe fallback must not bypass the guard") }
+        catch (_: IllegalStateException) { }
     }
 
     @Test fun actualFailoverContractPreservesInputAndValidatesTheFallbackBeforeReturning() = runBlocking {
@@ -417,7 +442,7 @@ class DomainCorpusTranslationEngineTest {
     }
 
     @Test
-    fun concurrentMatchesUnderMutexAreThreadSafe(): Unit = runBlocking {
+    fun concurrentMatchesUseThePublishedImmutableRevision(): Unit = runBlocking {
         val repo = DomainCorpusRepository(null)
         val profile = DomainCorpusProfile(
             id = 50L,

@@ -8,11 +8,24 @@ import app.guidecast.core.translation.TranslationStyle
 import app.guidecast.core.translation.TranslationStyleContext
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+
+internal class DomainInputSnapshot(
+    val revision: Long,
+    val reference: String,
+    matches: Map<String, DomainCorpusMatch>,
+    exactReferencesIncluded: Set<String>,
+) {
+    val matches: Map<String, DomainCorpusMatch> = java.util.Collections.unmodifiableMap(matches.toMap())
+    val exactReferencesIncluded: Set<String> = java.util.Collections.unmodifiableSet(exactReferencesIncluded.toSet())
+}
 
 /**
  * Decorates a [TextTranslationEngine] with local domain corpus exact substitutions
  * and reference hints. Ephemeral domain hints are passed via [DomainTranslationContext]
- * only to local Gemma runtimes, never transmitted to external APIs.
+ * to local Gemma runtimes. A shared input snapshot can also supply bounded references
+ * to the online adapter only when its explicit reference-transmission setting is allowed.
  */
 class DomainCorpusTranslationEngine(
     private val delegate: TextTranslationEngine,
@@ -22,6 +35,7 @@ class DomainCorpusTranslationEngine(
 ) : BoundedQueuedTranslationEngine {
 
     internal val capturedRevision: Long? get() = matchSnapshot?.revision
+    internal val capturedExactMatch: Boolean get() = matchSnapshot?.exactTranslation != null
     internal val capturedHints: String get() = boundedDomainReferenceHints(matchSnapshot?.hints.orEmpty(), 600)
     internal suspend fun capture(text: String, source: String, target: String, style: TranslationStyle): DomainCorpusTranslationEngine {
         val match = repository.match(text, source, target, style)
@@ -29,15 +43,38 @@ class DomainCorpusTranslationEngine(
         return DomainCorpusTranslationEngine(delegate, repository, match) { budget }
     }
 
-    internal suspend fun captureBatchReference(text: String, source: String, targets: List<String>, style: TranslationStyle): Pair<Long, String> {
+    internal suspend fun captureInputSnapshot(text: String, source: String, targets: List<String>, style: TranslationStyle): DomainInputSnapshot {
         val version = repository.revision.value
         val matches = targets.associateWith { repository.match(text, source, it, style) }
         check(repository.revision.value == version && matches.values.all { it.revision == version }) {
             "Domain references changed during input capture"
         }
-        val hints = matches.entries.filter { it.value.hints.isNotBlank() }
-            .joinToString("\n") { "${it.key}: ${it.value.hints}" }
-        return version to boundedDomainReferenceHints(hints, 600)
+        val budget = referenceHintBudget().coerceIn(0, 600)
+        val includedExact = linkedSetOf<String>()
+        val references = JSONArray()
+        for ((target, match) in matches) {
+            val evidence = if (match.exactTranslation != null)
+                JSONObject().put("examples", JSONArray().put(JSONObject()
+                    .put("source", text).put("translation", match.exactTranslation)))
+            else match.hints.takeIf(String::isNotBlank)?.let { runCatching { JSONObject(it) }.getOrNull() }
+            if (evidence == null) continue
+            val entry = JSONObject().put("target_language", target).put("reference", evidence)
+            val candidate = JSONObject().put("references", JSONArray(references.toString()).put(entry)).toString()
+            // Preserve whole evidence objects; never truncate a pair or one target's language label.
+            if (candidate.length <= budget) {
+                references.put(entry)
+                if (match.exactTranslation != null) includedExact += target
+            }
+        }
+        val reference = if (references.length() == 0) "" else JSONObject().put("references", references).toString()
+        return DomainInputSnapshot(version, reference, matches, includedExact)
+    }
+
+    internal fun fromInputSnapshot(snapshot: DomainInputSnapshot, target: String): DomainCorpusTranslationEngine {
+        val match = requireNotNull(snapshot.matches[target])
+        // Every local comparison sees the exact same bounded evidence string as the shared API.
+        return DomainCorpusTranslationEngine(delegate, repository,
+            match.copy(hints = snapshot.reference, revision = snapshot.revision)) { snapshot.reference.length }
     }
 
     override val maximumCallDurationMillis: Long
@@ -65,7 +102,15 @@ class DomainCorpusTranslationEngine(
 
         // Exact substitution only active matching domain/language+style and NFC+trim exact whole source
         if (match.exactTranslation != null) {
-            return match.exactTranslation
+            val safe = runCatching {
+                app.guidecast.core.translation.requireProtectedTranslationMeaning(text, match.exactTranslation,
+                    sourceLanguageTag, targetLanguageTag)
+            }.isSuccess
+            if (safe) return match.exactTranslation
+            RuntimeDiagnosticLog.record("domain_corpus", "exact_meaning_rejected")
+            val fallback = delegateTranslate(text, contextBefore, sourceLanguageTag, targetLanguageTag)
+            app.guidecast.core.translation.requireProtectedTranslationMeaning(text, fallback, sourceLanguageTag, targetLanguageTag)
+            return fallback
         }
 
         // Ephemeral domain hints passed only when present

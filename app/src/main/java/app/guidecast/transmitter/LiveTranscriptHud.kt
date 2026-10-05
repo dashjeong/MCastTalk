@@ -99,6 +99,7 @@ internal fun LiveTranscriptHud(
                 items(rows, key = { it.sequence }) { row ->
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         row.liveSegmentLanguage?.let { tag ->
+                            row.liveStatusLabel?.let { Text(it, color = Color.LightGray) }
                             Text("Live $tag 독립 구간 · 다른 언어와 발화 정렬 미확인", color = Color.LightGray, style = MaterialTheme.typography.labelLarge)
                             if (row.sourceText.isBlank()) Text("원문 미확인 · 음성 출력만으로 번역 정확도를 확인할 수 없습니다", color = Color.LightGray)
                         }

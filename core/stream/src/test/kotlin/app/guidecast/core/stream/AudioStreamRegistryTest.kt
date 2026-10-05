@@ -441,6 +441,37 @@ class AudioStreamRegistryTest {
     }
 
     @Test
+    fun `delivery timing observer follows actual send and ignores retired generations`() {
+        val registry = AudioStreamRegistry()
+        val session = registry.configure(listOf(english))
+        val listener = session.subscribe("en")
+        var observed = 0
+        val lease = session.observeWebSocketDelivery { channel, frame ->
+            assertEquals("en", channel.id); assertEquals(42L, frame.nativeAudioSessionId); observed++
+        }
+        session.publish("en", PcmAudioFrame(byteArrayOf(0, 2), 1, nativeAudioSessionId = 42))
+        assertEquals(0, observed)
+        val frame = listener.frames.tryReceive().getOrThrow()
+        listener.recordWebSocketDelivery(frame); assertEquals(1, observed)
+        registry.configure(listOf(english))
+        listener.recordWebSocketDelivery(frame); assertEquals(1, observed)
+        lease.close()
+    }
+
+    @Test
+    fun `diagnostic observer failure cannot fail socket delivery and detach releases observer`() {
+        val session = AudioStreamRegistry().configure(listOf(english))
+        val listener = session.subscribe("en")
+        val lease = session.observeWebSocketDelivery { _, _ -> error("Diagnostic failure") }
+        session.publish("en", PcmAudioFrame(byteArrayOf(0, 2), 1))
+        listener.recordWebSocketDelivery(listener.frames.tryReceive().getOrThrow())
+        assertEquals(1L, session.observabilitySnapshot().webSocketDeliveredFrames)
+        lease.close()
+        val replacement = session.observeWebSocketDelivery { _, _ -> }
+        replacement.close(); listener.close(); session.close()
+    }
+
+    @Test
     fun `frame telemetry is coalesced until an exact snapshot refresh`() = runBlocking {
         val registry = AudioStreamRegistry(listenerBufferFrames = 1)
         val session = registry.configure(listOf(english))
@@ -549,6 +580,70 @@ class AudioStreamRegistryTest {
 
         monitor.close()
         session.close()
+    }
+
+    @Test fun `native ten second burst retains all PCM and dequeue conservation`() = runBlocking {
+        val session = AudioStreamRegistry().configure(listOf(english.copy(sampleRateHz = 24_000)))
+        val monitor = session.subscribeLocalMonitor("en", preserveNativeAudio = true)
+        val pcm = ByteArray(488_640) { (it % 127).toByte() }
+        session.publish("en", PcmAudioFrame(pcm, 1, 7, 42))
+        val initial = monitor.bufferSnapshot()
+        assertEquals(488_640L, initial.offeredBytes); assertEquals(initial.offeredBytes, initial.admittedBytes)
+        assertEquals(0L, initial.overwrittenBytes); assertEquals(0L, initial.rejectedBytes)
+        val received = java.io.ByteArrayOutputStream()
+        repeat(initial.pendingFrames) {
+            val frame = requireNotNull(monitor.receiveNext())
+            assertTrue(frame.bytes.size <= 4800); assertEquals(7L, frame.utteranceSequence)
+            assertEquals(42L, frame.nativeAudioSessionId); received.write(frame.bytes)
+        }
+        assertTrue(pcm.contentEquals(received.toByteArray()))
+        val final = monitor.bufferSnapshot()
+        assertEquals(final.admittedBytes, final.dequeuedBytes); assertEquals(0L, final.pendingBytes)
+        monitor.close(); session.close()
+    }
+
+    @Test fun `native forty second bound rejects new PCM without overwriting accepted audio`() = runBlocking {
+        val session = AudioStreamRegistry().configure(listOf(english.copy(sampleRateHz = 24_000)))
+        val monitor = session.subscribeLocalMonitor("en", preserveNativeAudio = true)
+        session.publish("en", PcmAudioFrame(ByteArray(40 * 48_000) { 1 }, 1, 7, 42))
+        session.publish("en", PcmAudioFrame(ByteArray(96_000) { 2 }, 2, 8, 42))
+        val state = monitor.bufferSnapshot()
+        assertEquals(400, state.pendingFrames); assertEquals(1_920_000L, state.pendingBytes)
+        assertEquals(96_000L, state.rejectedBytes); assertEquals(0L, state.overwrittenBytes)
+        assertEquals(state.offeredBytes, state.admittedBytes + state.rejectedBytes)
+        assertTrue(requireNotNull(monitor.receiveNext()).bytes.all { it == 1.toByte() })
+        monitor.close()
+        val closed = monitor.bufferSnapshot()
+        assertEquals(0L, closed.pendingBytes)
+        assertEquals(closed.admittedBytes, closed.dequeuedBytes + closed.canceledBytes)
+        assertEquals(0L, session.observabilitySnapshot().droppedFrames)
+        session.close()
+    }
+
+    @Test fun `native cancellation counts only removed queued PCM`() = runBlocking {
+        val session = AudioStreamRegistry().configure(listOf(english.copy(sampleRateHz = 24_000)))
+        val monitor = session.subscribeLocalMonitor("en", preserveNativeAudio = true)
+        session.publish("en", PcmAudioFrame(ByteArray(9600), 1, 7, 42))
+        session.publish("en", PcmAudioFrame(ByteArray(4800), 2, 8, 42))
+        session.discardQueuedAudio("en", 7)
+        assertEquals(9600L, monitor.bufferSnapshot().canceledBytes)
+        assertEquals(8L, requireNotNull(monitor.receiveNext()).utteranceSequence)
+        val final = monitor.bufferSnapshot()
+        assertEquals(final.admittedBytes, final.dequeuedBytes + final.canceledBytes)
+        monitor.close(); session.close()
+    }
+
+    @Test fun `tracked legacy monitor exposes overwritten byte difference`() = runBlocking {
+        val session = AudioStreamRegistry(listenerBufferFrames = 1).configure(listOf(english))
+        val monitor = session.subscribeLocalMonitor("en")
+        session.publish("en", PcmAudioFrame(ByteArray(10), 1))
+        session.publish("en", PcmAudioFrame(ByteArray(12), 2))
+        assertEquals(12, requireNotNull(monitor.receiveNext()).bytes.size)
+        val state = monitor.bufferSnapshot()
+        assertEquals(22L, state.offeredBytes); assertEquals(10L, state.overwrittenBytes)
+        assertEquals(state.admittedBytes, state.dequeuedBytes + state.overwrittenBytes)
+        assertEquals(0L, state.pendingBytes); assertEquals(0L, session.observabilitySnapshot().droppedFrames)
+        monitor.close(); session.close()
     }
 
     @Test

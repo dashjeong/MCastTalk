@@ -26,6 +26,8 @@ const pinInput = document.querySelector("#pin");
 const pinError = document.querySelector("#pin-error");
 const playbackRateSelect = document.querySelector("#playback-rate");
 const liveEdgeButton = document.querySelector("#live-edge");
+const defaultPlayButtonText = playButton.textContent;
+const defaultLiveEdgeButtonText = liveEdgeButton.textContent;
 const tabPlayer = document.querySelector("#tab-player");
 const tabTranscript = document.querySelector("#tab-transcript");
 const panelPlayer = document.querySelector("#panel-player");
@@ -80,7 +82,12 @@ const languageLabels = {
   ko: "한국어",
 };
 const activeChannelLabels = new Map();
-const MAX_BUFFERED_AUDIO_SECONDS = 4;
+const BUFFER_WARNING_SECONDS = 4;
+const MAX_BUFFERED_AUDIO_SECONDS = 20;
+// Bound decoding/resampling allocations before converting a binary frame. The wire buffer
+// itself is allocated by the browser; the server must also enforce a WebSocket message limit.
+const MAX_PCM_FRAME_BYTES = 1024 * 1024;
+const MAX_PCM_FRAME_SECONDS = 10;
 const MAX_CACHED_TRANSCRIPT_CHARS = 512 * 1024;
 const RECONNECT_BASE_DELAY_MS = 250;
 const RECONNECT_MAX_DELAY_MS = 5000;
@@ -98,6 +105,11 @@ let lastPeak = 0;
 let activeSources = new Set();
 let playbackRate = 1;
 let automaticLiveEdgeDrops = 0;
+let rejectedAudioSeconds = 0;
+let skippedAudioSeconds = 0;
+let outputOverloaded = false;
+// These loss counters describe this page session and survive pause/reconnect/channel changes.
+let unreceivedAudioUnknown = false;
 let reconnectTimer = null;
 let reconnectAttempt = 0;
 let transcriptPollHandle = null;
@@ -143,8 +155,17 @@ function channelLabel(channelId) {
 }
 
 function setStatus(text, kind = "idle") {
-  statusLabel.textContent = uiText(text);
+  const losses = playbackLossSummary();
+  statusLabel.textContent = uiText(text) + (losses ? ` · ${losses}` : "");
   statusDot.className = `dot ${kind}`;
+}
+
+function playbackLossSummary() {
+  const parts = [];
+  if (skippedAudioSeconds > 0) parts.push(uiText(`받은 음성 건너뛰기 누적 ${skippedAudioSeconds.toFixed(2)}초`));
+  if (rejectedAudioSeconds > 0) parts.push(uiText(`거절된 음성 누적 ${rejectedAudioSeconds.toFixed(3)}초`));
+  if (unreceivedAudioUnknown) parts.push(uiText("수신 중단 이후 미수신 음성량 UNKNOWN"));
+  return parts.join(" · ");
 }
 
 function switchTabs(nextPanel) {
@@ -224,12 +245,11 @@ function setDiagnostics() {
   levelMeter.value = Math.min(100, Math.round(lastRms * 500));
   const audioState = audioContext ? audioContext.state : "closed";
   const bufferedSeconds = audioContext ? Math.max(0, nextPlayTime - audioContext.currentTime) : 0;
-  const recovery = automaticLiveEdgeDrops > 0
-    ? ` · 자동 실시간 복귀 ${automaticLiveEdgeDrops}회`
-    : "";
+  const losses = playbackLossSummary();
+  const recovery = losses ? ` · ${losses}` : "";
   diagnosticsLabel.hidden = !developerInformationEnabled;
   diagnosticsLabel.textContent = developerInformationEnabled
-    ? uiText(`오디오 ${audioState} · ${receivedFrames} 프레임 · 지연 ${bufferedSeconds.toFixed(1)}초 · ${playbackRate.toFixed(2)}×${recovery}`)
+    ? uiText(`오디오 ${audioState} · ${receivedFrames} 프레임 · 재생 대기 ${bufferedSeconds.toFixed(1)}초 · ${playbackRate.toFixed(2)}×${recovery}`)
     : "";
   liveEdgeButton.disabled = desiredState !== "playing" || bufferedSeconds < 0.35;
 }
@@ -290,6 +310,11 @@ function renderTranscripts(responseText) {
   }
 
   const selectedLanguage = transcriptSelect.value;
+  const caption = document.querySelector("#current-caption");
+  const latest = lines[lines.length - 1];
+  if (caption && document.querySelector("#listening-mode")?.value !== "replay" && document.querySelector("#transcript-scope")?.value !== "archive") {
+    caption.textContent = [latest?.sourceText, latest?.translations?.[channelSelect.value]].filter(value => typeof value === "string" && value.trim()).join("\n");
+  }
   const fragment = document.createDocumentFragment();
   for (const line of lines) {
     if (!line || typeof line !== "object") continue;
@@ -308,12 +333,7 @@ function renderTranscripts(responseText) {
     sourceBlock.textContent = `${uiText("원문")}: ${source}`;
     row.append(sourceBlock);
 
-    if (selectedLanguage === "source") {
-      const translatedText = document.createElement("p");
-      translatedText.className = "translated-text";
-      translatedText.textContent = uiText(`선택 표시: ${isFinal ? "확정" : "진행 중"}`);
-      row.append(translatedText);
-    } else if (selectedLanguage === "all") {
+    if (selectedLanguage === "all") {
       const translationBlock = document.createElement("div");
       translationBlock.className = "translation-block";
       const keys = Object.keys(translations);
@@ -339,7 +359,7 @@ function renderTranscripts(responseText) {
         }
       }
       row.append(translationBlock);
-    } else {
+    } else if (selectedLanguage !== "source") {
       const translated = document.createElement("p");
       translated.className = "translated-text";
       const translatedText = translations[selectedLanguage];
@@ -407,6 +427,7 @@ function clearTranscriptSnapshot() {
 }
 
 function loadTranscripts(forceRefresh = false) {
+  if (document.querySelector("#transcript-scope")?.value === "archive") return globalThis.GuideCastReplay?.loadCaptions(forceRefresh);
   const scope = currentTranscriptScope();
 
   if (transcriptBackoffScope && !isSameTranscriptScope(transcriptBackoffScope, scope)) {
@@ -451,7 +472,7 @@ function loadTranscripts(forceRefresh = false) {
         cache: "no-cache",
         headers,
       });
-      if (!isSameTranscriptScope(currentTranscriptScope(), scope)) return;
+      if (!isSameTranscriptScope(currentTranscriptScope(), scope) || document.querySelector("#transcript-scope")?.value === "archive") return;
       if (response.status === 401 || response.status === 403) {
         transcriptBackoffUntil = 0;
         transcriptBackoffScope = null;
@@ -494,7 +515,7 @@ function loadTranscripts(forceRefresh = false) {
         return;
       }
       const payload = await response.text();
-      if (!isSameTranscriptScope(currentTranscriptScope(), scope)) return;
+      if (!isSameTranscriptScope(currentTranscriptScope(), scope) || document.querySelector("#transcript-scope")?.value === "archive") return;
       if (renderTranscripts(payload) && payload.length <= MAX_CACHED_TRANSCRIPT_CHARS) {
         cachedTranscript = { payload, scope };
         transcriptEtag = response.headers?.get("ETag") || "";
@@ -508,7 +529,7 @@ function loadTranscripts(forceRefresh = false) {
         clearTranscriptSnapshot();
       }
     } catch (error) {
-      if (!isSameTranscriptScope(currentTranscriptScope(), scope)) return;
+      if (!isSameTranscriptScope(currentTranscriptScope(), scope) || document.querySelector("#transcript-scope")?.value === "archive") return;
       transientTranscriptFailureCount += 1;
       const backoffMs = Math.min(10_000, 1000 * (2 ** Math.min(transientTranscriptFailureCount - 1, 3)));
       transcriptBackoffUntil = Date.now() + backoffMs;
@@ -679,21 +700,35 @@ pinForm.addEventListener("submit", async (event) => {
   }
 });
 
-playButton.addEventListener("click", startPlayback);
-pauseButton.addEventListener("click", () => stopPlayback("paused"));
-stopButton.addEventListener("click", () => stopPlayback("stopped"));
+playButton.addEventListener("click", () => {
+  if (document.querySelector("#listening-mode")?.value === "replay") return globalThis.GuideCastReplay?.start();
+  return startPlayback();
+});
+pauseButton.addEventListener("click", () => { globalThis.GuideCastReplay?.pause(); stopPlayback("paused"); });
+stopButton.addEventListener("click", () => { globalThis.GuideCastReplay?.stop(); stopPlayback("stopped"); });
 playbackRateSelect.addEventListener("change", () => {
   const requested = Number(playbackRateSelect.value);
   playbackRate = Number.isFinite(requested) ? Math.min(1.5, Math.max(0.75, requested)) : 1;
+  if (document.querySelector("#listening-mode")?.value !== "replay" && playbackRate < 1) {
+    playbackRate = 1;
+    playbackRateSelect.value = "1";
+    setStatus("실시간 듣기는 1배속 이상 · 느리게 듣기는 돌려보기에서 선택하세요", "warning");
+  }
   setDiagnostics();
 });
-liveEdgeButton.addEventListener("click", jumpToLiveEdge);
+liveEdgeButton.addEventListener("click", () => {
+  if (document.querySelector("#listening-mode")?.value === "replay") { globalThis.GuideCastReplay?.returnLive(); } else jumpToLiveEdge();
+});
 channelSelect.addEventListener("change", () => {
-  if (desiredState === "playing") startPlayback();
+  globalThis.GuideCastReplay?.channelChanged();
+  if (desiredState === "playing" && document.querySelector("#listening-mode")?.value !== "replay") startPlayback();
 });
 
 async function startPlayback() {
+  const previousSkippedAudioSeconds = skippedAudioSeconds;
   stopRuntime();
+  const newlySkippedAudioSeconds = skippedAudioSeconds - previousSkippedAudioSeconds;
+  if (playbackRate < 1) { playbackRate = 1; playbackRateSelect.value = "1"; }
   desiredState = "playing";
   const generation = ++playbackGeneration;
   const requestedChannel = channelSelect.value;
@@ -701,7 +736,9 @@ async function startPlayback() {
   playButton.disabled = true;
   pauseButton.disabled = false;
   stopButton.disabled = false;
-  setStatus("방송 연결 중");
+  setStatus(newlySkippedAudioSeconds > 0
+    ? `받은 대기 음성 ${newlySkippedAudioSeconds.toFixed(2)}초를 건너뛰고 방송 연결 중`
+    : "방송 연결 중");
 
   let playbackRequest = null;
   let requestAudioContext = null;
@@ -767,6 +804,7 @@ async function startPlayback() {
 }
 
 function connectPlaybackSocket(request) {
+  if (request.overloaded) return;
   if (!isCurrentPlaybackRequest(
     request.generation,
     request.channelId,
@@ -839,6 +877,7 @@ function connectPlaybackSocket(request) {
 }
 
 function schedulePlaybackReconnect(request) {
+  if (request.overloaded) return;
   if (reconnectTimer !== null || !isCurrentPlaybackRequest(
     request.generation,
     request.channelId,
@@ -931,8 +970,19 @@ function handleAudioMessage(event, request) {
     return;
   }
 
+  if (!(event.data instanceof ArrayBuffer) || event.data.byteLength === 0 || event.data.byteLength % 2 !== 0) return;
+  const frameSamples = event.data.byteLength / 2;
+  const maximumFrameSamples = request.sourceSampleRate * MAX_PCM_FRAME_SECONDS;
+  if (event.data.byteLength > MAX_PCM_FRAME_BYTES || frameSamples > maximumFrameSamples) {
+    receivedFrames += 1;
+    receivedBytes += event.data.byteLength;
+    rejectedAudioSeconds += frameSamples / request.sourceSampleRate;
+    haltPlaybackIntake(request);
+    setStatus("한 번에 받은 음성이 너무 커 새 음성 수신을 멈췄습니다 · 받은 음성은 계속 재생됩니다. 다시 연결하면 대기 음성을 건너뜁니다.", "warning");
+    setDiagnostics();
+    return;
+  }
   const view = new DataView(event.data);
-  if (view.byteLength === 0 || view.byteLength % 2 !== 0) return;
   reconnectAttempt = 0;
 
   const samples = new Float32Array(view.byteLength / 2);
@@ -955,13 +1005,15 @@ function handleAudioMessage(event, request) {
     request.audioContext.sampleRate,
     request,
   );
-  const returnedToLive = scheduleSamples(playableSamples, request);
+  const overloaded = scheduleSamples(playableSamples, request);
 
-  if (returnedToLive) {
+  if (overloaded) {
     setStatus(
-      `누적 지연 ${MAX_BUFFERED_AUDIO_SECONDS}초 상한 · 현재 방송으로 자동 복귀`,
+      "수신량이 많아 새 음성 수신을 멈췄습니다 · 받은 음성은 계속 재생됩니다. 다시 연결하거나 현재 방송으로 이동하면 대기 음성을 건너뜁니다. 누락 구간은 돌려보기에서 확인하세요.",
       "warning",
     );
+  } else if (nextPlayTime - request.audioContext.currentTime > BUFFER_WARNING_SECONDS) {
+    setStatus("음성을 순서대로 재생 중 · 재생 대기가 늘었습니다", "warning");
   } else if (lastRms >= 0.002 || lastPeak >= 0.01) {
     setStatus("음성 수신·재생 중", "live");
   } else if (receivedFrames >= 8) {
@@ -978,54 +1030,40 @@ function scheduleSamples(samples, request) {
     request.gainNode,
     request.socket,
   )) return false;
-  let now = request.audioContext.currentTime;
-
-  // TTS returns a completed phrase as a fast burst of 20 ms PCM frames. Every frame must remain
-  // behind the previous frame. When the explicit queue bound is crossed, every scheduled source
-  // is stopped before the clock moves to the live edge; resetting the clock without stopping them
-  // would overlap PCM and recreate the fast, high-pitched chirp defect.
+  const now = request.audioContext.currentTime;
+  for (const source of activeSources) if (source.guideCastEndsAt <= now) {
+    activeSources.delete(source);
+    runSafely(() => source.disconnect());
+  }
+  // Burst PCM keeps its complete content and ordering. Stop intake at the memory budget;
+  // never silently trim a phrase or cancel audio already accepted for playback.
   const deviceLead = Number.isFinite(request.audioContext.baseLatency)
     ? request.audioContext.baseLatency + 0.02
     : 0.06;
   const minimumLead = Math.max(0.06, deviceLead);
-  const maxFrameSamples = Math.max(
-    1,
-    Math.floor(
-      (MAX_BUFFERED_AUDIO_SECONDS - minimumLead) *
-      request.audioContext.sampleRate * playbackRate,
-    ),
-  );
-  let boundedSamples = samples;
-  let returnedToLive = false;
-  if (boundedSamples.length > maxFrameSamples) {
-    boundedSamples = boundedSamples.subarray(boundedSamples.length - maxFrameSamples);
-    discardScheduledAudio(request.audioContext);
-    automaticLiveEdgeDrops += 1;
-    returnedToLive = true;
-    now = request.audioContext.currentTime;
-  }
-
   const isContinuous = nextPlayTime > now + 0.005;
   let startAt = Math.max(nextPlayTime, isContinuous ? nextPlayTime : now + minimumLead);
-  const playbackDuration = boundedSamples.length /
+  const playbackDuration = samples.length /
     request.audioContext.sampleRate / playbackRate;
-  if (startAt + playbackDuration - now > MAX_BUFFERED_AUDIO_SECONDS) {
-    discardScheduledAudio(request.audioContext);
-    automaticLiveEdgeDrops += 1;
-    returnedToLive = true;
-    now = request.audioContext.currentTime;
-    startAt = now + minimumLead;
+  if (startAt + playbackDuration - now > MAX_BUFFERED_AUDIO_SECONDS || activeSources.size >= 2048) {
+    rejectedAudioSeconds += samples.length / request.audioContext.sampleRate;
+    haltPlaybackIntake(request);
+    return true;
   }
 
   const buffer = request.audioContext.createBuffer(
     1,
-    boundedSamples.length,
+    samples.length,
     request.audioContext.sampleRate,
   );
-  buffer.copyToChannel(boundedSamples, 0);
+  buffer.copyToChannel(samples, 0);
   const source = request.audioContext.createBufferSource();
   source.buffer = buffer;
   source.playbackRate.value = playbackRate;
+  source.guideCastReceivedAt = now;
+  source.guideCastStartsAt = startAt;
+  source.guideCastEndsAt = startAt + playbackDuration;
+  source.guideCastRate = playbackRate;
   source.connect(request.gainNode);
   activeSources.add(source);
   source.onended = () => {
@@ -1034,18 +1072,35 @@ function scheduleSamples(samples, request) {
   };
   source.start(startAt);
   nextPlayTime = startAt + (buffer.duration / playbackRate);
-  return returnedToLive;
+  return false;
+}
+
+function haltPlaybackIntake(request) {
+  outputOverloaded = request.overloaded = true;
+  unreceivedAudioUnknown = true;
+  const blockedSocket = request.socket;
+  request.socket = null;
+  socket = null;
+  cancelPlaybackReconnect();
+  if (blockedSocket) { detachSocketHandlers(blockedSocket); runSafely(() => blockedSocket.close()); }
+  playButton.disabled = false;
+  playButton.textContent = uiText("대기 음성 건너뛰고 다시 연결");
+  liveEdgeButton.textContent = uiText("대기 음성 건너뛰고 현재 방송");
 }
 
 function jumpToLiveEdge() {
   if (!audioContext || desiredState !== "playing") return;
   discardScheduledAudio(audioContext);
+  if (outputOverloaded) { startPlayback(); return; }
   nextPlayTime = audioContext.currentTime + 0.04;
-  setStatus("현재 방송으로 이동했습니다", "live");
+  setStatus("대기 중인 음성을 건너뛰고 현재 방송으로 이동했습니다", "live");
   setDiagnostics();
 }
 
 function discardScheduledAudio(targetAudioContext) {
+  for (const source of activeSources) {
+    skippedAudioSeconds += Math.max(0, source.guideCastEndsAt - Math.max(targetAudioContext.currentTime, source.guideCastStartsAt)) * source.guideCastRate;
+  }
   activeSources.forEach((source) => runSafely(() => source.stop()));
   activeSources.clear();
   nextPlayTime = targetAudioContext.currentTime;
@@ -1102,8 +1157,11 @@ function stopRuntime() {
     detachSocketHandlers(socketToClose);
     runSafely(() => socketToClose.close());
   }
-  activeSources.forEach((source) => runSafely(() => source.stop()));
-  activeSources.clear();
+  if (audioContext) discardScheduledAudio(audioContext);
+  else {
+    activeSources.forEach((source) => runSafely(() => source.stop()));
+    activeSources.clear();
+  }
   const gainToDisconnect = gainNode;
   gainNode = null;
   if (gainToDisconnect) {
@@ -1120,6 +1178,9 @@ function stopRuntime() {
   lastRms = 0;
   lastPeak = 0;
   automaticLiveEdgeDrops = 0;
+  outputOverloaded = false;
+  playButton.textContent = defaultPlayButtonText;
+  liveEdgeButton.textContent = defaultLiveEdgeButtonText;
 }
 
 function runSafely(block) {
@@ -1137,6 +1198,16 @@ window.__guideCastDiagnostics = () => ({
   playbackRate,
   bufferedSeconds: audioContext ? Math.max(0, nextPlayTime - audioContext.currentTime) : 0,
   automaticLiveEdgeDrops,
+  rejectedAudioSeconds,
+  skippedAudioSeconds,
+  outputOverloaded,
+  unreceivedAudioUnknown,
+  lossTrackingScope: "page-session",
+  maxPcmFrameBytes: MAX_PCM_FRAME_BYTES,
+  maxPcmFrameSeconds: MAX_PCM_FRAME_SECONDS,
+  oldestPendingReceiptAgeSeconds: audioContext ? Math.max(0, ...Array.from(activeSources)
+    .filter(source => source.guideCastStartsAt > audioContext.currentTime)
+    .map(source => audioContext.currentTime - source.guideCastReceivedAt)) : 0,
   maxBufferedAudioSeconds: MAX_BUFFERED_AUDIO_SECONDS,
   reconnectAttempt,
   reconnectPending: reconnectTimer !== null,

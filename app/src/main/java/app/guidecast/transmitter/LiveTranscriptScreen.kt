@@ -115,9 +115,10 @@ internal fun LiveTranscriptScreen(
                             shape = MaterialTheme.shapes.medium) {
                             Column(Modifier.fillMaxWidth().padding(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                line.liveStatusLabel?.let { Text(it, style = MaterialTheme.typography.labelMedium) }
                                 Text(
                                     "원문 · ${line.sourceLanguageTag ?: sourceLanguageTag}" +
-                                        if (line.isFinal) " · 확정" else " · 인식 중",
+                                        " · ${line.sourceStatusLabel}",
                                     style = MaterialTheme.typography.labelMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )

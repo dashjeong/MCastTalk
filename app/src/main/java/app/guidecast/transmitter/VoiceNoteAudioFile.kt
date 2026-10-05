@@ -34,12 +34,13 @@ internal class VoiceNoteWav(file: File) : AutoCloseable {
     override fun close() { try { checkpoint() } finally { output.close() } }
 }
 
-internal fun voiceNoteWavHeader(byteCount: Long): ByteArray {
+internal fun voiceNoteWavHeader(byteCount: Long, sampleRateHz: Int = VOICE_NOTE_SAMPLE_RATE): ByteArray {
+    require(sampleRateHz in 8_000..48_000)
     require(byteCount in 0..VOICE_NOTE_MAX_BYTES && byteCount % 2 == 0L)
     return ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN).apply {
         put("RIFF".toByteArray(Charsets.US_ASCII)); putInt((36 + byteCount).toInt())
         put("WAVEfmt ".toByteArray(Charsets.US_ASCII)); putInt(16); putShort(1); putShort(1)
-        putInt(VOICE_NOTE_SAMPLE_RATE); putInt(VOICE_NOTE_SAMPLE_RATE * 2); putShort(2); putShort(16)
+        putInt(sampleRateHz); putInt(sampleRateHz * 2); putShort(2); putShort(16)
         put("data".toByteArray(Charsets.US_ASCII)); putInt(byteCount.toInt())
     }.array()
 }

@@ -103,7 +103,7 @@ internal fun destructiveOutlinedButtonColors() = ButtonDefaults.outlinedButtonCo
 
 @Composable
 internal fun GuideCastTheme(content: @Composable () -> Unit) {
-    // A single daylight palette keeps field status colors predictable on Note9 through S23.
+    // A single daylight palette keeps operating status colors predictable.
     // Every Material role is specified so components never fall back to the default purple set.
     val colorScheme = lightColorScheme(
         primary = Color(0xFF146B52),

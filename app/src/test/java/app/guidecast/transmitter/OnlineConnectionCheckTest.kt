@@ -10,6 +10,14 @@ import org.junit.Test
 class OnlineConnectionCheckTest {
     private val options = TranslationApiOptions(provider = TranslationApiProvider.OPENAI_REALTIME,
         model = "gpt-realtime-2.1-mini", domainPrompt = "private fixture never sent")
+    @Test fun largerSelectedRealtimeModelChecksTheSameDestinationAndSession() = runTest {
+        val selected = options.copy(model = "gpt-realtime-2")
+        val wire = FixtureRealtimeWire(realtimeFixture())
+        assertEquals(OnlineConnectionResult.READY, OnlineConnectionCheck(openAi = wire).run(selected, "synthetic") { true })
+        assertEquals(selected.model, wire.selectedModel)
+        assertEquals(selected.model, JSONObject(wire.sent.single()).getJSONObject("session").getString("model"))
+        assertFalse(wire.sent.single().contains("response.create"))
+    }
     @Test fun emptyKeyOpensNoConnection() = runTest {
         val wire = FixtureRealtimeWire(emptyList())
         assertEquals(OnlineConnectionResult.KEY_REQUIRED, OnlineConnectionCheck(openAi = wire).run(options, " ") { true })

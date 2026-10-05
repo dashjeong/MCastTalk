@@ -24,7 +24,8 @@ PATTERNS = [re.compile(p) for p in (
     rb'sk-(?:proj-|svcacct-)?[A-Za-z0-9_-]{40,}',
 )]
 FORBIDDEN_PARTS = {'.git', '.codex', '.agents', '.signing', '.gradle', '.kotlin',
-                   'build', 'evidence', 'diagnostics', 'node_modules', '__pycache__'}
+                   'build', 'evidence', 'diagnostics', 'node_modules', '__pycache__',
+                   'project-context', 'collaboration', 'co-work'}
 FORBIDDEN_SUFFIXES = {'.apk', '.aab', '.log', '.logcat', '.jsonl', '.jks', '.keystore',
                       '.p12', '.pfx', '.hprof', '.jfr', '.dmp', '.sqlite', '.sqlite3',
                       '.db', '.xls', '.xlsx'}
@@ -33,6 +34,8 @@ FORBIDDEN_NAMES = {'local.properties', 'keystore.properties', 'google-services.j
 
 def check_path(name):
     p = pathlib.PurePosixPath(name)
+    if p.parts[:2] in {('docs', 'project-context'), ('docs', 'collaboration')} or name == 'docs/HANDOVER_DOMAIN_CORPUS.md':
+        raise ValueError('private development record')
     if p.is_absolute() or '..' in p.parts or any(x in FORBIDDEN_PARTS for x in p.parts):
         raise ValueError('forbidden path')
     if p.suffix.lower() in FORBIDDEN_SUFFIXES or p.name in FORBIDDEN_NAMES:

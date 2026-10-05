@@ -56,6 +56,12 @@ Third-Party Software and Model Attributions
    and download notices. Provider terms remain applicable; MCastTalk's code license
    does not relicense the data. See docs/TERMINOLOGY_DATA.md.
 
+5. LAME MP3 Encoding Library
+   Copyright The LAME Project and contributing authors.
+   Licensed under the GNU Library General Public License, version 2 or later.
+   Exact source archive, notices, build recipe and binary hashes are provided in
+   third_party/lame and scripts/build-lame.sh. See third_party/lame/COPYING and LICENSE.
+
 Complete third-party licenses, notices, and offline legal documents are accessible
 directly within the application under: Settings -> Licenses (앱 라이선스 고지).
 

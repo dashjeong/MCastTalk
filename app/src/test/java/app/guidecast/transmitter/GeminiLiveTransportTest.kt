@@ -11,6 +11,61 @@ import java.util.Base64
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class GeminiLiveTransportTest {
+    @Test fun storedProfessionalContextOnDedicatedModelReachesReadyWithoutAnyTextPayload() = runTest {
+        val options = TranslationApiOptions(provider = TranslationApiProvider.GEMINI_LIVE, model = GEMINI_LIVE_TRANSLATE,
+            baseUrl = "https://generativelanguage.googleapis.com/v1beta", interpretationMode = OnlineInterpretationMode.PROFESSIONAL,
+            domainPrompt = "Stored lecture", interpreterInstructions = "Stored preferences", allowDomainReferences = true)
+        assertTrue(validTranslationApiOptions(options))
+        val payload = nativeReferencePayload(listOf(NativeReferenceEntry("Terms", "TERMS", "Stored reference")))
+        val context = geminiSessionContext(options, NativeReferenceSnapshot(payload.first, payload.second))
+        val wire = Wire(); wire.events.send("{\"setupComplete\":{}}")
+        var ready = false
+        val task = launch { GeminiLiveTransport(wire).run("synthetic", options.model, "en", flow { awaitCancellation() },
+            { true }, { ready = true }, {}, domainPrompt = context.domain, interpreterInstructions = context.instructions,
+            references = context.references) }
+        runCurrent()
+        assertTrue(ready); assertEquals(1, wire.opens)
+        assertFalse(wire.messages.single().contains("Stored"))
+        assertFalse(JSONObject(wire.messages.single()).getJSONObject("setup").has("systemInstruction"))
+        assertEquals("Stored lecture", options.domainPrompt)
+        task.cancelAndJoin(); assertTrue(wire.closed)
+    }
+    @Test fun tailNeverSentOnStopRevocationOrNormalInputEnd() = runTest {
+        for (end in listOf(GeminiInputEnd.STOP, GeminiInputEnd.CONSENT_REVOKED, GeminiInputEnd.NORMAL_EOS)) {
+            val wire = Wire(); var allowed = true
+            val diagnostics = GeminiWireDiagnostics { testScheduler.currentTime * 1_000_000 }
+            wire.events.send("{\"setupComplete\":{}}")
+            val task = launch { runCatching {
+                GeminiLiveTransport(wire).run("synthetic", GEMINI_LIVE_TRANSLATE, "en", flow {
+                    emit(ByteArray(640)); if (end != GeminiInputEnd.NORMAL_EOS) awaitCancellation()
+                }, { allowed }, {}, {}, diagnostics = diagnostics)
+            } }
+            runCurrent()
+            if (end == GeminiInputEnd.STOP) task.cancelAndJoin()
+            if (end == GeminiInputEnd.CONSENT_REVOKED) { allowed = false; advanceTimeBy(26); runCurrent() }
+            task.join()
+            assertEquals(1, wire.messages.size); assertTrue(wire.closed)
+            val value = diagnostics.snapshot()
+            assertEquals(640, value.getInt("discarded_tail_bytes")); assertEquals(end.name, value.getString("input_end"))
+            assertEquals(0L, value.getLong("sent_bytes")); assertTrue(value.isNull("sent_rms"))
+            assertEquals(1L, value.getJSONObject("setup_complete").getLong("count"))
+            assertEquals(1L, value.getJSONObject("closed").getLong("count"))
+        }
+    }
+    @Test fun providerFailureIsStaticCategoryWithoutPayloadAndDropsPendingTail() = runTest {
+        val wire = Wire(); val diagnostics = GeminiWireDiagnostics()
+        wire.events.send("{\"setupComplete\":{}}")
+        val task = launch { runCatching { GeminiLiveTransport(wire).run("synthetic", GEMINI_LIVE_TRANSLATE, "en",
+            flow { emit(ByteArray(640)); awaitCancellation() }, { true }, {}, {}, diagnostics = diagnostics) } }
+        runCurrent(); wire.events.send("""{"error":{"status":"RESOURCE_EXHAUSTED","message":"private-payload"}}""")
+        runCurrent(); task.join()
+        val value = diagnostics.snapshot()
+        assertEquals("LIMIT_REACHED", value.getString("safe_failure"))
+        assertFalse(value.toString().contains("private-payload"))
+        assertEquals("FAILURE", value.getString("input_end"))
+        assertEquals(1L, value.getJSONObject("error").getLong("count"))
+        assertEquals(1, wire.messages.size)
+    }
     private class Wire : GeminiLiveWire {
         var opens = 0
         var closed = false
@@ -60,7 +115,7 @@ class GeminiLiveTransportTest {
     }
     @Test fun trialDeadlineClosesSocketWithoutAutomaticReplay() = runTest {
         val wire = Wire(); wire.events.send("{\"setupComplete\":{}}")
-        val task = launch { runCatching { GeminiLiveTransport(wire).run("synthetic", GEMINI_LIVE_AGENT, "en", flow { awaitCancellation() }, { true }, {}, {}) } }
+        val task = launch { runCatching { GeminiLiveTransport(wire).run("synthetic", GEMINI_LIVE_AGENT, "en", flow { awaitCancellation() }, { true }, {}, {}, durationLimitMillis = 60_000) } }
         runCurrent(); advanceTimeBy(60_001); runCurrent()
         assertTrue(task.isCompleted); assertTrue(wire.closed); assertEquals(1, wire.opens)
     }
@@ -69,6 +124,21 @@ class GeminiLiveTransportTest {
         try { GeminiLiveTransport(wire).run("synthetic", GEMINI_LIVE_AGENT, "en", flow { awaitCancellation() }, { false }, {}, {}); fail() }
         catch (_: IllegalStateException) { }
         assertEquals(0, wire.opens)
+    }
+    @Test fun normalConnectionContinuesPastOneMinuteAndSixHundredChunksWithoutReplay() = runTest {
+        val wire = Wire()
+        var sentBytes = 0L
+        wire.events.send("{\"setupComplete\":{}}")
+        val task = launch { GeminiLiveTransport(wire).run("synthetic", GEMINI_LIVE_TRANSLATE, "en",
+            flow { repeat(601) { emit(ByteArray(3_200)); delay(100) }; awaitCancellation() },
+            { true }, {}, {}, onAudioSent = { sentBytes += it }) }
+        runCurrent(); advanceTimeBy(61_000); runCurrent()
+        assertTrue(task.isActive)
+        assertEquals(602, wire.messages.size)
+        assertEquals(601L * 3_200, sentBytes)
+        assertEquals(1, wire.opens)
+        task.cancelAndJoin()
+        assertTrue(wire.closed)
     }
     @Test fun microphoneWaitsForAckThenSends100msChunksAndClosesOnCancel() = runTest {
         val wire = Wire()
@@ -85,6 +155,26 @@ class GeminiLiveTransportTest {
         task.cancelAndJoin()
         assertTrue(wire.closed)
         assertFalse(wire.messages.any { "synthetic" in it })
+    }
+    @Test fun firstWireAudioIsTimedBeforeSlowOutputCallbackAndInputKeepsSending() = runTest {
+        val wire = Wire(); wire.events.send("{\"setupComplete\":{}}")
+        val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        val timing = NativeLiveTiming(1) { testScheduler.currentTime * 1_000_000 }
+        val task = launch {
+            GeminiLiveTransport(wire) { testScheduler.currentTime * 1_000_000 }.run("synthetic", GEMINI_LIVE_AGENT, "en",
+                flow { repeat(20) { emit(ByteArray(3200)); delay(100) }; awaitCancellation() }, { true }, {},
+                { entered.complete(Unit); release.await() }, timing = timing)
+        }
+        runCurrent()
+        val audio = Base64.getEncoder().encodeToString(byteArrayOf(0, 2))
+        wire.events.send("""{"serverContent":{"modelTurn":{"parts":[{"inlineData":{"mimeType":"audio/pcm;rate=24000","data":"$audio"}}]}}}""")
+        runCurrent(); entered.await(); assertEquals(2L, timing.snapshot().getLong("provider_audio_bytes"))
+        advanceTimeBy(1500); runCurrent()
+        assertTrue(wire.messages.count { "realtimeInput" in it } >= 15)
+        assertEquals(0L, timing.snapshot().getLong("first_provider_audio_ns"))
+        release.complete(Unit); runCurrent()
+        assertEquals(1_500_000_000L, timing.snapshot().getLong("max_callback_ns"))
+        assertEquals(1, wire.opens); task.cancelAndJoin()
     }
     @Test fun allPartsAndTranscriptsAreProcessedButInterruptedPcmIsNotPublished() {
         val data = Base64.getEncoder().encodeToString(byteArrayOf(1, 2, 3, 4))

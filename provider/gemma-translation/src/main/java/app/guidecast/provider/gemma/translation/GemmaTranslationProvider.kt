@@ -60,6 +60,10 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
     override fun engineFor(targetLanguageTag: String): ContextualTextTranslationEngine =
         translationEngineFor(targetLanguageTag, offlineEvaluation = false)
 
+    /** Optional comparisons may reuse a prepared worker, but cannot start or rebind one. */
+    fun preparedEngineFor(targetLanguageTag: String): ContextualTextTranslationEngine =
+        translationEngineFor(targetLanguageTag, offlineEvaluation = false, preparedOnly = true)
+
     /** Explicit controlled-text evaluation only; never selected by live translation callers. */
     fun offlineEvaluationEngineFor(
         targetLanguageTag: String,
@@ -71,6 +75,7 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
         targetLanguageTag: String,
         offlineEvaluation: Boolean,
         jsonResponseFormat: Boolean = false,
+        preparedOnly: Boolean = false,
     ): ContextualTextTranslationEngine {
         require(!jsonResponseFormat || offlineEvaluation) { "JSON response format is evaluation-only" }
         val configuredTarget = targetLanguageTag.normalizedGemmaLanguage()
@@ -94,6 +99,7 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
                     timeoutMillis = if (offlineEvaluation) GEMMA_OFFLINE_EVALUATION_TIMEOUT_MILLIS
                         else REALTIME_TRANSLATION_TIMEOUT_MILLIS,
                     jsonResponseFormat = jsonResponseFormat,
+                    preparedOnly = preparedOnly,
                 )
                 return if (offlineEvaluation) withGemmaOfflineEvaluationDeadline { request() }
                     else request()
@@ -155,6 +161,7 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
         timeoutMillis: Long,
         explicitVerification: Boolean = false,
         jsonResponseFormat: Boolean = false,
+        preparedOnly: Boolean = false,
     ): String {
         require(text.isNotBlank() && text.length <= MAX_SOURCE_CHARACTERS)
         val source = sourceLanguageTag.normalizedGemmaLanguage()
@@ -182,7 +189,12 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
                 val translated = withTimeoutOrNull(timeoutMillis) {
                     // Binding is part of the realtime deadline. A service process that never connects
                     // must not leave self-test or the first broadcast sentence suspended indefinitely.
-                    val service = connectionMutex.withLock { remote() }
+                    val service = connectionMutex.withLock {
+                        if (preparedOnly) {
+                            check(hasActivePreparedWorker()) { "Prepared comparison worker is unavailable" }
+                            requireNotNull(bindingState.snapshot().service)
+                        } else remote()
+                    }
                     awaitTranslation(
                         requestId = requestId,
                         service = service,

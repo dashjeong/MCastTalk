@@ -50,6 +50,11 @@
         android:usesCleartextTraffic="false">
 
         <!-- Optional vendor libraries for LiteRT-LM GPU acceleration; CPU remains the fallback. -->
+        <provider android:name=".RecordedBroadcastFileProvider"
+            android:authorities="${applicationId}.broadcastfiles" android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/broadcast_share_paths" />
+        </provider>
         <uses-native-library
             android:name="libvndksupport.so"
             android:required="false" />

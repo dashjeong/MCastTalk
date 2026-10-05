@@ -39,6 +39,31 @@ class GeminiTranslationBatchTest {
         override fun getServerCertificates(): Array<Certificate> = emptyArray()
     }
 
+    @Test fun everyFlashPresetSendsOneSelectedModelRequestForFourTargetsEvenWithoutKnownPrice() = runBlocking {
+        for (choice in serviceModelChoices(options)) {
+            val selected = options.copy(model = choice.id)
+            val endpoints = mutableListOf<String>()
+            val service = TranslationApiService({ selected }, { it == selected }, { "synthetic-key" }, {
+                BoundedCloudHttps(connectionFactory = { url -> endpoints += url.toString(); Connection(url, response()) })
+            })
+            val parent = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+            val batch = SharedTranslationBatchContext("selected-model", targets, parent, { true })
+            try {
+                val results = targets.map { target -> async {
+                    withContext(batch + TranslationRequestIdentity("selected-model", 1)) {
+                        service.engine(TextTranslationEngine { _, _, _ -> error("No fallback") })
+                            .translate("안녕하세요.", "ko", target)
+                    }
+                } }.awaitAll()
+                assertEquals(values.values.toList(), results)
+                assertEquals(listOf(selected.endpoint), endpoints)
+                assertEquals(choice.id, service.usage.value.lastModel)
+                assertEquals(1L, service.usage.value.requests)
+                assertEquals(145L, service.usage.value.reportedTotalTokens)
+            } finally { parent.cancel() }
+        }
+    }
+
     @Test fun fourIndependentWorkersSendInputOnceAndCountReportedUsageOnce() = runBlocking {
         val calls = AtomicInteger()
         val connection = Connection(URL(options.endpoint), response())

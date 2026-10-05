@@ -14,6 +14,12 @@ internal class FixtureRealtimeWire(private val events: List<String>) : RealtimeW
     var closed = false
     val sent = mutableListOf<String>()
     var afterReceive: (() -> Unit)? = null
+    var selectedModel: String? = null
+    override suspend fun exchangeModel(model: String, key: String, authorized: () -> Boolean,
+        conversation: suspend (RealtimeSocket) -> RealtimeTranslation): RealtimeTranslation {
+        selectedModel = model
+        return exchange(key, authorized, conversation)
+    }
     override suspend fun exchange(key: String, authorized: () -> Boolean,
         conversation: suspend (RealtimeSocket) -> RealtimeTranslation): RealtimeTranslation {
         opens++
@@ -36,6 +42,23 @@ internal fun realtimeFixture(id: String = "r1", status: String = "completed") = 
 )
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class OpenAiRealtimeTransportTest {
+    @Test fun selectedModelMatchesSocketDestinationAndSessionWithoutAudioClaims() = runTest {
+        for (model in OPENAI_REALTIME_MODELS) {
+            val wire = FixtureRealtimeWire(realtimeFixture())
+            assertEquals("Hello", OpenAiRealtimeTransport(wire).translateModel(model, "synthetic-key", "Translate only", "fixture") { true }.text)
+            assertEquals(model, wire.selectedModel)
+            assertEquals("wss://api.openai.com/v1/realtime?model=$model", openAiRealtimeUrl(model))
+            val session = JSONObject(wire.sent.first()).getJSONObject("session")
+            assertEquals(model, session.getString("model"))
+            assertEquals("text", session.getJSONArray("output_modalities").getString(0))
+        }
+    }
+    @Test fun unsupportedModelFailsBeforeOpeningSocket() = runTest {
+        val wire = FixtureRealtimeWire(realtimeFixture())
+        try { OpenAiRealtimeTransport(wire).translateModel("gpt-5.4", "synthetic-key", "", "fixture") { true }; fail() }
+        catch (_: IllegalArgumentException) { }
+        assertEquals(0, wire.opens)
+    }
     @Test fun completedProtocolReturnsOnlyFinalTextAndCloses() = runTest {
         val wire = FixtureRealtimeWire(realtimeFixture())
         val result = OpenAiRealtimeTransport(wire).translate("synthetic-key", "Translate only", "fixture") { true }

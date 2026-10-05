@@ -1,0 +1,69 @@
+{
+  "upstream": "https://sourceforge.net/projects/lame/files/lame/4.0/lame-4.0.tar.gz/download",
+  "version": "4.0",
+  "license": "LGPL-2.0-or-later; upstream COPYING is Library GPL v2",
+  "ndk": "28.2.13676358",
+  "minAndroidApi": 30,
+  "encoderOnly": true,
+  "dynamicLibrary": "libmp3lame.so",
+  "codec": "mono MPEG Layer III 64kbps; sample rate preserved per artifact; finalized Info/Xing frame",
+  "inputs": [
+    {
+      "path": "third_party/lame/lame-4.0.tar.gz",
+      "sha256": "3df5124d5ad3a98312ffd7ba6a9b36230e4f8a3e66d3ce0f425e336c32d216eb",
+      "bytes": 1496810
+    },
+    {
+      "path": "third_party/lame/android/config.h",
+      "sha256": "2448dabc157c0450bc5cda666478a094831267d3ca2db4fd1af731f707f43dc0",
+      "bytes": 11861
+    },
+    {
+      "path": "third_party/lame/android/mp3_jni.c",
+      "sha256": "3c45f3ff0d049c5e56a24d11c88fe7be10d46e9a9169a909a705e34113a609c6",
+      "bytes": 4789
+    },
+    {
+      "path": "scripts/build-lame.sh",
+      "sha256": "43f8f7f6442cd1dc191e3b17e2213acc2256370732b15f0958bc2de07974163e",
+      "bytes": 2156
+    },
+    {
+      "path": "third_party/lame/COPYING",
+      "sha256": "e64f9c5a18f56828c10a575df13ade641aa3af4512a7afe6c411256943b57aaf",
+      "bytes": 25281
+    },
+    {
+      "path": "third_party/lame/LICENSE",
+      "sha256": "5c1f8d44f1eacbea3e1c31ff6ee11a4e1690ccbed4ee4af16de3b6eb61dc69a8",
+      "bytes": 503
+    },
+    {
+      "path": "third_party/lame/README",
+      "sha256": "e47a4cf08fc823fda8337bd80fcf494a5bfc2b98a26f8c94d5787017afcac044",
+      "bytes": 1621
+    }
+  ],
+  "libraries": [
+    {
+      "path": "app/src/main/jniLibs/arm64-v8a/libmp3lame.so",
+      "sha256": "4f2ad0dc47fb80588b88784a234dc962b2d96885efbbcd235182d4f153173d35",
+      "bytes": 251784
+    },
+    {
+      "path": "app/src/main/jniLibs/arm64-v8a/libguidecast_mp3.so",
+      "sha256": "cddccf11ceedb0933171d3a92823e53f2062582c04fd7463d0b4589db9d82eba",
+      "bytes": 9240
+    },
+    {
+      "path": "app/src/main/jniLibs/x86_64/libmp3lame.so",
+      "sha256": "2b09758559a0c069be80bf073dc669bedbe2a590c864002d7f867b2aed4fb311",
+      "bytes": 276536
+    },
+    {
+      "path": "app/src/main/jniLibs/x86_64/libguidecast_mp3.so",
+      "sha256": "2d915495f595a74b82c01c7b85af21ff5f5e7c952b8d0757dd9fc8e6a51b631a",
+      "bytes": 8968
+    }
+  ]
+}

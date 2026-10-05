@@ -20,7 +20,7 @@ class ThirdPartyLicenseCatalogTest {
 
     @Test
     fun catalogHasUniqueCompleteOfflineMetadata() {
-        assertEquals(49, GUIDECAST_LICENSE_CATALOG.size)
+        assertEquals(52, GUIDECAST_LICENSE_CATALOG.size)
         assertEquals(
             GUIDECAST_LICENSE_CATALOG.size,
             GUIDECAST_LICENSE_CATALOG.map { it.id }.distinct().size,
@@ -76,6 +76,19 @@ class ThirdPartyLicenseCatalogTest {
             },
         )
         assertTrue(filteredLicenseCatalog("없는 패키지", null).isEmpty())
+    }
+
+    @Test
+    fun lameLicenseSourceInstructionsAndCopyrightAreDiscoverableOffline() {
+        val entries = filteredLicenseCatalog("LAME", LicenseCategory.APP_LIBRARY)
+        assertEquals(setOf("lame-mp3", "lame-source-notice", "lame-copyright"), entries.map { it.id }.toSet())
+        assertTrue(entries.all { it.version == "4.0" && it.licenseName.contains("LGPL-2.0-or-later") })
+        assertEquals(setOf("licenses/LAME-4.0-COPYING.txt", "licenses/LAME-4.0-NOTICE.txt", "licenses/LAME-4.0-LICENSE.txt"),
+            entries.map { it.offlineDocumentAsset }.toSet())
+        val notice = File("src/main/assets/licenses/LAME-4.0-NOTICE.txt").readText()
+        assertTrue(notice.contains("third_party/lame/lame-4.0.tar.gz"))
+        assertTrue(notice.contains("scripts/build-lame.sh"))
+        assertTrue(notice.contains("libmp3lame.so"))
     }
 
     @Test

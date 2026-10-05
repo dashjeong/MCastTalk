@@ -134,6 +134,8 @@ class AudioCaptureEngine(
     val processingStatus: StateFlow<AudioProcessingStatus> = mutableProcessingStatus.asStateFlow()
     private val mutableClientSilenced = MutableStateFlow(false)
     val clientSilenced: StateFlow<Boolean> = mutableClientSilenced.asStateFlow()
+    private val mutableDiagnostics = MutableStateFlow(AudioCaptureDiagnosticSnapshot())
+    val diagnostics: StateFlow<AudioCaptureDiagnosticSnapshot> = mutableDiagnostics.asStateFlow()
 
     @SuppressLint("MissingPermission")
     fun frames(
@@ -214,6 +216,18 @@ class AudioCaptureEngine(
         }
 
         val processingSession = processingGeneration.incrementAndGet()
+        val readAssembler = Pcm16ReadAssembler()
+        val captureDiagnostics = AudioCaptureDiagnosticTracker(AudioCaptureDiagnosticSnapshot(
+            session = processingSession, state = "RECORDING", requestedSampleRateHz = captureRate,
+            recorderSampleRateHz = recorder.sampleRate, recorderChannels = recorder.channelCount,
+            recorderEncoding = recorder.audioFormat, recordingState = recorder.recordingState,
+            routedDeviceType = recorder.routedDevice?.type,
+            systemMicrophoneMuted = runCatching { audioManager.isMicrophoneMute }.getOrNull(),
+            clientSilenced = runCatching { recorder.activeRecordingConfiguration?.isClientSilenced }.getOrNull()))
+        fun publishDiagnostics() {
+            if (processingGeneration.get() == processingSession) mutableDiagnostics.value = captureDiagnostics.snapshot()
+        }
+        publishDiagnostics()
         fun focusForCurrentRoute(): MicrophoneFocusStatus = requestNearSpeakerFocus(
             enabled = config.nearSpeakerFocus,
             builtInMicrophone = recorder.routedDevice?.let { it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC },
@@ -226,6 +240,8 @@ class AudioCaptureEngine(
         val routingListener = AudioRecord.OnRoutingChangedListener { record ->
             try {
                 routeController.verifyRoutedDevice(routeLease.requestedInput, record.routedDevice)
+                captureDiagnostics.route(record.routedDevice?.type)
+                publishDiagnostics()
                 focusStatus.set(focusForCurrentRoute())
                 if (processingGeneration.get() == processingSession) {
                     mutableProcessingStatus.value = mutableProcessingStatus.value.copy(
@@ -272,6 +288,8 @@ class AudioCaptureEngine(
         fun publishSilencing(silenced: Boolean) {
             if (processingGeneration.get() != processingSession) return
             mutableClientSilenced.value = silenced
+            captureDiagnostics.policy(runCatching { audioManager.isMicrophoneMute }.getOrNull(), silenced)
+            publishDiagnostics()
             publishProcessing()
         }
         val recordingCallback = object : AudioManager.AudioRecordingCallback() {
@@ -290,10 +308,25 @@ class AudioCaptureEngine(
 
         val readJob = launch(Dispatchers.IO) {
             val buffer = ByteArray(minBufferBytes)
+            var lastDiagnosticNanos = 0L
             while (true) {
+                captureDiagnostics.beginRead(SystemClock.elapsedRealtimeNanos())
                 val count = recorder.read(buffer, 0, buffer.size, AudioRecord.READ_BLOCKING)
+                val now = SystemClock.elapsedRealtimeNanos()
+                fun heartbeat() {
+                    if (now - lastDiagnosticNanos >= 1_000_000_000L) {
+                        captureDiagnostics.policy(runCatching { audioManager.isMicrophoneMute }.getOrNull(),
+                            runCatching { recorder.activeRecordingConfiguration?.isClientSilenced }.getOrNull())
+                        publishDiagnostics(); lastDiagnosticNanos = now
+                    }
+                }
                 if (count > 0) {
-                    val bytes = denoiser?.process(buffer.copyOf(count)) ?: buffer.copyOf(count)
+                    val raw = buffer.copyOf(count)
+                    captureDiagnostics.read(raw, buffer.size, now)
+                    val aligned = readAssembler.accept(raw, raw.size)
+                    val bytes = denoiser?.process(aligned) ?: aligned
+                    captureDiagnostics.emitted(bytes)
+                    heartbeat()
                     if (bytes.isEmpty()) continue
                     send(
                         PcmFrame(
@@ -303,8 +336,13 @@ class AudioCaptureEngine(
                         ),
                     )
                 } else if (count < 0) {
+                    captureDiagnostics.emptyRead(error = true, now = now)
+                    publishDiagnostics()
                     close(IllegalStateException("AudioRecord read failed: $count"))
                     break
+                } else {
+                    captureDiagnostics.emptyRead(error = false, now = now)
+                    heartbeat()
                 }
             }
         }
@@ -314,6 +352,8 @@ class AudioCaptureEngine(
             recorder.removeOnRoutingChangedListener(routingListener)
             readJob.cancel()
             runCatching { recorder.stop() }
+            captureDiagnostics.close(readAssembler.pendingBytes, denoiser?.pendingInputBytes() ?: 0)
+            publishDiagnostics()
             denoiser?.close()
             effects.close()
             recorder.release()

@@ -174,7 +174,7 @@ fun DomainCorpusScreen(
 
         item {
             Text(
-                text = "도메인 학습·코퍼스",
+                text = "전문 용어·참고 문장",
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
             )
@@ -194,10 +194,13 @@ fun DomainCorpusScreen(
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = "동일 언어쌍당 1개의 프로필만 활성화되며, 서로 다른 언어쌍은 동시에 활성화할 수 있습니다. 등록된 데이터는 외부로 전송되지 않습니다.",
+                        text = "같은 원문·번역 언어에는 자료 모음 하나를 적용합니다. 다른 언어 조합에는 각각 적용할 수 있습니다. 자료는 기기에 보관합니다. 온라인 설정에서 참고 자료 전송을 허용하면 관련 예시만 API로 전달합니다.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("통번역 스트리밍의 문장 번역에 적용됩니다. 통역 중계에는 이 자료가 자동 적용되지 않습니다. 중계 설정의 분야 안내는 별도로 입력하세요.",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -209,13 +212,13 @@ fun DomainCorpusScreen(
                     .fillMaxWidth()
                     .sizeIn(minHeight = 50.dp),
             ) {
-                Text("신규 코퍼스 파일 가져오기 (.txt)")
+                Text("새 참고 자료 가져오기 (.txt)")
             }
         }
 
         item {
             Text(
-                text = "등록된 도메인 코퍼스 프로필 (${profiles.size}개)",
+                text = "내 참고 자료 (${profiles.size}개) · 켜서 적용, 꺼서 사용 중지",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
             )

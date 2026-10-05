@@ -35,6 +35,12 @@ data class PcmAudioFrame(
     val capturedAtElapsedRealtimeNanos: Long,
     /** Finalized utterance that produced this frame, when the producer can correlate it. */
     val utteranceSequence: Long? = null,
+    /** Local native-audio generation; never included in the raw PCM wire format. */
+    val nativeAudioSessionId: Long? = null,
+    /** Connection-local output turn; no implied mapping to a microphone utterance. */
+    val nativeTimingTurn: Long? = null,
+    /** Local monotonic queue admission only; never serialized in PCM or archival format. */
+    val localEnqueuedAtNanos: Long? = null,
 ) {
     init {
         require(bytes.isNotEmpty()) { "PCM frame must not be empty" }
@@ -110,6 +116,20 @@ class StreamSession internal constructor(
     val channels: List<AudioChannelDescriptor> = state.descriptors
     val maxListeners: Int = registry.maxListeners
 
+    /** A bounded, nonblocking archival observer. Never performs disk I/O on this callback. */
+    fun observePublishedPcm(observer: (AudioChannelDescriptor, PcmAudioFrame) -> Unit): Closeable {
+        check(isActive()) { "Inactive stream" }
+        check(state.recordingObserver.compareAndSet(null, observer)) { "Recording already attached" }
+        return Closeable { state.recordingObserver.compareAndSet(observer, null) }
+    }
+
+    /** Diagnostic notification after a successful socket send, outside the registry lock. No I/O. */
+    fun observeWebSocketDelivery(observer: (AudioChannelDescriptor, PcmAudioFrame) -> Unit): Closeable {
+        check(isActive()) { "Inactive stream" }
+        check(state.webSocketObserver.compareAndSet(null, observer)) { "Delivery observer already attached" }
+        return Closeable { state.webSocketObserver.compareAndSet(observer, null) }
+    }
+
     /** Descriptor lookup and listener admission happen at one registry linearization point. */
     fun subscribe(channelId: String): AudioListenerSubscription =
         registry.subscribe(this, channelId)
@@ -118,12 +138,16 @@ class StreamSession internal constructor(
      * In-process operator monitoring of already-published PCM. This is intentionally outside
      * remote listener admission and WebSocket delivery telemetry.
      */
-    fun subscribeLocalMonitor(channelId: String): LocalAudioMonitorSubscription =
-        registry.subscribeLocalMonitor(this, channelId)
+    fun subscribeLocalMonitor(channelId: String, preserveNativeAudio: Boolean = false): LocalAudioMonitorSubscription =
+        registry.subscribeLocalMonitor(this, channelId, preserveNativeAudio)
 
     /** A stale generation is rejected and can never publish into a newer same-ID channel. */
     fun tryPublish(channelId: String, frame: PcmAudioFrame): StreamPublishResult =
         registry.tryPublish(this, channelId, frame)
+
+    /** Discards local pending PCM, not audio already sent to a browser or played by a listener. */
+    fun discardQueuedAudio(channelId: String, utteranceSequence: Long? = null): Int =
+        registry.discardQueuedAudio(this, channelId, utteranceSequence)
 
     fun publish(channelId: String, frame: PcmAudioFrame): StreamPublishResult {
         val result = tryPublish(channelId, frame)
@@ -178,6 +202,8 @@ internal class StreamSessionState(
             this@StreamSessionState.descriptors.forEach { descriptor -> put(descriptor.id, null) }
         }
     var active: Boolean = true
+    val recordingObserver = java.util.concurrent.atomic.AtomicReference<((AudioChannelDescriptor, PcmAudioFrame) -> Unit)?>(null)
+    val webSocketObserver = java.util.concurrent.atomic.AtomicReference<((AudioChannelDescriptor, PcmAudioFrame) -> Unit)?>(null)
 }
 
 class AudioStreamRegistry(
@@ -279,17 +305,22 @@ class AudioStreamRegistry(
     internal fun subscribeLocalMonitor(
         session: StreamSession,
         channelId: String,
+        preserveNativeAudio: Boolean,
     ): LocalAudioMonitorSubscription = synchronized(lock) {
         val state = session.state
         if (!state.active || state !== activeState) throw StreamSessionSupersededException()
         val descriptor = state.descriptorById[channelId] ?: error("Unknown stream channel")
         val id = nextSubscriptionId.incrementAndGet()
-        val mailbox = ListenerMailbox(listenerBufferFrames)
+        require(!preserveNativeAudio || descriptor.sampleRateHz == 24_000)
+        val mailbox = ListenerMailbox(listenerBufferFrames, monitorAccounting = true, preserveNativeAudio = preserveNativeAudio)
         state.monitorSubscribersByChannel.getOrPut(channelId, ::mutableMapOf)[id] = mailbox
         state.refreshMonitorPublishTargets(channelId)
         LocalAudioMonitorSubscription(
             descriptor = descriptor,
-            frames = mailbox.frames,
+            rawFrames = mailbox.frames,
+            nextFrame = mailbox::receiveMonitorFrame,
+            snapshot = mailbox::monitorSnapshot,
+            preserveNativeAudio = preserveNativeAudio,
             onClose = { removeLocalMonitorSubscription(state, channelId, id, mailbox) },
         )
     }
@@ -308,6 +339,13 @@ class AudioStreamRegistry(
         channelId: String,
         frame: PcmAudioFrame,
     ): StreamPublishResult = publishFromState(session.state, channelId, frame)
+
+    internal fun discardQueuedAudio(session: StreamSession, channelId: String, utteranceSequence: Long?): Int = synchronized(lock) {
+        val state = session.state
+        if (!state.active || state !== activeState) return@synchronized 0
+        (state.subscribersByChannel[channelId].orEmpty().values +
+            state.monitorSubscribersByChannel[channelId].orEmpty().values).sumOf { it.discardPending(utteranceSequence) }
+    }
 
     /** Compatibility publisher. New broadcast producers should use [StreamSession.tryPublish]. */
     fun tryPublish(channelId: String, frame: PcmAudioFrame): Boolean {
@@ -338,6 +376,7 @@ class AudioStreamRegistry(
             val state = session.state
             if (!state.active || state !== activeState) return
             state.active = false
+            state.webSocketObserver.set(null)
             state.subscribersByChannel.values
                 .flatMap { it.values }
                 .forEach { mailbox -> mailbox.cancelForReplacement() }
@@ -377,6 +416,11 @@ class AudioStreamRegistry(
         // Local monitor backpressure is deliberately isolated from listener/drop telemetry.
         // A slow phone speaker must not make the operator believe a hotspot listener is dropping.
         targets.localMonitors.forEach { target -> target.offer(frame) }
+        // Recording includes frames published before the first listener joins. Its own finite
+        // queue reports gaps independently; no archival failure may stop live audio delivery.
+        state.recordingObserver.get()?.let { observer ->
+            runCatching { observer(state.descriptorById.getValue(channelId), frame) }
+        }
         if (dropped > 0) {
             synchronized(lock) {
                 state.droppedFramesByChannel[channelId] =
@@ -409,6 +453,9 @@ class AudioStreamRegistry(
                     state.lastWebSocketDeliveredSequenceByChannel[channelId] = sequence
                 }
             }
+        }
+        state.webSocketObserver.get()?.let { observer ->
+            runCatching { observer(state.descriptorById.getValue(channelId), frame) }
         }
     }
 
@@ -467,7 +514,7 @@ class AudioStreamRegistry(
             if (didRemove) state.refreshMonitorPublishTargets(channelId)
             didRemove
         }
-        if (removed) mailbox.close()
+        if (removed) mailbox.cancelForReplacement()
     }
 
     private fun validateDescriptors(descriptors: List<AudioChannelDescriptor>) {
@@ -562,21 +609,96 @@ internal data class MailboxOfferResult(
     val dropped: Boolean,
 )
 
-internal class ListenerMailbox(capacity: Int) {
-    private val queue = Channel<PcmAudioFrame>(capacity = capacity)
+data class LocalAudioBufferSnapshot(
+    val offeredBytes: Long, val admittedBytes: Long, val dequeuedBytes: Long,
+    val pendingBytes: Long, val pendingFrames: Int, val rejectedBytes: Long,
+    val overwrittenBytes: Long, val canceledBytes: Long,
+)
+
+internal class ListenerMailbox(capacity: Int, private val monitorAccounting: Boolean = false,
+    private val preserveNativeAudio: Boolean = false) {
+    private var offeredBytes = 0L
+    private var admittedBytes = 0L
+    private var dequeuedBytes = 0L
+    private var pendingBytes = 0L
+    private var pendingFrames = 0
+    private var rejectedBytes = 0L
+    private var overwrittenBytes = 0L
+    private var canceledBytes = 0L
+    // Native PCM is 24kHz mono S16LE: 400 packets of at most100ms bound queued data to40s/1.92MB.
+    private val queue = Channel<PcmAudioFrame>(capacity = if (preserveNativeAudio) 400 else capacity,
+        onUndeliveredElement = { frame -> removed(frame, cancelled = true) })
     val frames: ReceiveChannel<PcmAudioFrame> = queue
+
+    @Synchronized private fun admitted(frame: PcmAudioFrame) {
+        if (!monitorAccounting) return
+        admittedBytes += frame.bytes.size; pendingBytes += frame.bytes.size; pendingFrames++
+    }
+    @Synchronized private fun removed(frame: PcmAudioFrame, cancelled: Boolean = false, overwritten: Boolean = false) {
+        if (!monitorAccounting) return
+        pendingBytes -= frame.bytes.size; pendingFrames--
+        when { cancelled -> canceledBytes += frame.bytes.size
+            overwritten -> overwrittenBytes += frame.bytes.size
+            else -> dequeuedBytes += frame.bytes.size }
+    }
+    suspend fun receiveMonitorFrame(): PcmAudioFrame? {
+        check(monitorAccounting)
+        val result = queue.receiveCatching()
+        result.exceptionOrNull()?.let { throw it }
+        return result.getOrNull()?.also { removed(it) }
+    }
+    @Synchronized fun monitorSnapshot() = LocalAudioBufferSnapshot(offeredBytes, admittedBytes,
+        dequeuedBytes, pendingBytes, pendingFrames, rejectedBytes, overwrittenBytes, canceledBytes)
+
+    @Synchronized
+    fun discardPending(utteranceSequence: Long? = null): Int {
+        var count = 0
+        val retained = mutableListOf<PcmAudioFrame>()
+        while (true) {
+            val frame = queue.tryReceive().getOrNull() ?: break
+            if (utteranceSequence == null || frame.utteranceSequence == utteranceSequence) {
+                count++; removed(frame, cancelled = true)
+            } else retained += frame
+        }
+        retained.forEach { val result = queue.trySend(it); check(result.isSuccess || result.isClosed) }
+        return count
+    }
 
     @Synchronized
     fun offer(frame: PcmAudioFrame): MailboxOfferResult {
+        if (monitorAccounting) offeredBytes += frame.bytes.size
+        if (preserveNativeAudio) {
+            if (frame.bytes.size > 40 * 48_000) {
+                rejectedBytes += frame.bytes.size
+                return MailboxOfferResult(delivered = false, dropped = true)
+            }
+            var offset = 0
+            while (offset < frame.bytes.size) {
+                val count = minOf(4800, frame.bytes.size - offset)
+                val packet = frame.copy(bytes = frame.bytes.copyOfRange(offset, offset + count),
+                    localEnqueuedAtNanos = System.nanoTime())
+                if (!queue.trySend(packet).isSuccess) {
+                    rejectedBytes += frame.bytes.size - offset
+                    return MailboxOfferResult(delivered = offset > 0, dropped = true)
+                }
+                admitted(packet); offset += count
+            }
+            return MailboxOfferResult(delivered = true, dropped = false)
+        }
         val initial = queue.trySend(frame)
-        if (initial.isSuccess) return MailboxOfferResult(delivered = true, dropped = false)
-        if (initial.isClosed) return MailboxOfferResult(delivered = false, dropped = false)
+        if (initial.isSuccess) { admitted(frame); return MailboxOfferResult(delivered = true, dropped = false) }
+        if (initial.isClosed) {
+            if (monitorAccounting) rejectedBytes += frame.bytes.size
+            return MailboxOfferResult(delivered = false, dropped = false)
+        }
 
-        val discarded = queue.tryReceive().isSuccess
+        val discarded = queue.tryReceive().getOrNull()?.also { removed(it, overwritten = true) }
         val replacement = queue.trySend(frame)
+        if (replacement.isSuccess) admitted(frame)
+        else if (monitorAccounting) rejectedBytes += frame.bytes.size
         return MailboxOfferResult(
             delivered = replacement.isSuccess,
-            dropped = discarded,
+            dropped = discarded != null,
         )
     }
 
@@ -612,10 +734,18 @@ class AudioListenerSubscription internal constructor(
 
 class LocalAudioMonitorSubscription internal constructor(
     val descriptor: AudioChannelDescriptor,
-    val frames: ReceiveChannel<PcmAudioFrame>,
+    private val rawFrames: ReceiveChannel<PcmAudioFrame>,
+    private val nextFrame: suspend () -> PcmAudioFrame?,
+    private val snapshot: () -> LocalAudioBufferSnapshot,
+    private val preserveNativeAudio: Boolean,
     private val onClose: () -> Unit,
 ) : Closeable {
     private val closed = AtomicBoolean(false)
+
+    /** Legacy access; native audio uses receiveNext so conservation is counted at dequeue. */
+    val frames: ReceiveChannel<PcmAudioFrame> get() { check(!preserveNativeAudio); return rawFrames }
+    suspend fun receiveNext(): PcmAudioFrame? = nextFrame()
+    fun bufferSnapshot(): LocalAudioBufferSnapshot = snapshot()
 
     override fun close() {
         if (closed.compareAndSet(false, true)) onClose()

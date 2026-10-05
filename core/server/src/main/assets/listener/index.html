@@ -32,6 +32,16 @@
       </div>
 
       <section id="panel-player" class="tab-panel" role="tabpanel" aria-labelledby="tab-player" tabindex="0">
+        <label for="listening-mode">듣기 방식</label>
+        <select id="listening-mode"><option value="live">실시간 듣기</option><option value="replay">돌려보기 · 저장 음성 재생</option></select>
+        <div id="replay-controls" hidden>
+          <label for="replay-position">방송 시작 이후 저장된 음성</label>
+          <input id="replay-position" type="range" min="0" max="0" value="0" step="0.1" aria-label="저장 음성 재생 위치">
+          <p id="replay-clock">0:00 / 0:00</p>
+          <p id="replay-warning" role="status"></p>
+          <p class="hint">재생 위치는 저장된 음성 길이 기준입니다. 무음·방송 일시정지 시간은 제외됩니다. 방송이 계속되면 새로 저장된 구간도 재생할 수 있습니다.</p>
+        </div>
+        <div id="current-caption" aria-label="현재 통역 자막"></div>
         <label id="channel-label" for="channel">청취 언어</label>
         <select id="channel" disabled></select>
         <div class="status-row" role="status" aria-live="polite">
@@ -57,15 +67,20 @@
         </div>
 
         <div class="controls">
-          <button id="play" class="primary" type="button">재생</button>
+          <button id="play" class="primary" type="button">듣기 시작</button>
           <button id="pause" type="button" disabled>일시정지</button>
           <button id="stop" type="button" disabled>중지</button>
         </div>
-        <p class="hint">느린 배속의 누적 지연은 최대 4초입니다. 상한을 넘으면 현재 방송으로 자동 복귀하며, ‘실시간 복귀’로 바로 이동할 수도 있습니다.</p>
+        <p class="hint">실시간 듣기는 1배속 이상으로 재생합니다. 느리게 듣기는 ‘돌려보기’를 선택하세요. ‘실시간 복귀’는 대기 중인 음성을 건너뜁니다. 수신량이 너무 많으면 안내 후 새 수신을 멈추며, 누락 구간은 저장 상태에 따라 돌려보기에서 확인할 수 있습니다.</p>
       </section>
 
       <section id="panel-transcript" class="tab-panel" role="tabpanel" aria-labelledby="tab-transcript" tabindex="0" hidden>
         <div class="transcript-toolbar">
+          <label for="transcript-scope">스크립트 범위</label>
+          <select id="transcript-scope"><option value="live">최근 실시간</option><option value="archive">방송 처음부터</option></select>
+          <button id="archive-first" type="button">처음 문장</button>
+          <button id="archive-prev" type="button">이전 문장</button>
+          <button id="archive-next" type="button">다음 문장</button>
           <label for="transcript-language">번역본 보기</label>
           <select id="transcript-language">
             <option value="source">원문</option>
@@ -78,7 +93,7 @@
         </div>
         <p id="transcript-status" class="transcript-status" role="status" aria-live="polite" hidden></p>
         <div id="transcript-list" class="transcript-scroll" aria-live="polite" aria-label="통역 스크립트"></div>
-        <p class="hint">최신 100개 이내를 표시합니다. 이전 내용을 읽을 때 자동 따라가기를 끄면 스크롤 위치가 유지됩니다.</p>
+        <p class="hint">최근 실시간은 최신 100개, 방송 처음부터는 100개씩 표시합니다. 이전 내용을 읽을 때 자동 따라가기를 끄면 스크롤 위치가 유지됩니다.</p>
       </section>
 
       <label class="follow-latest developer-information-toggle" for="developer-information">

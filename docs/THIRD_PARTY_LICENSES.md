@@ -1,19 +1,8 @@
 # 제3자 소프트웨어·모델 라이선스
 
-이 문서는 MCastTalk `0.2.43-alpha` 보수 작업본 (`versionCode 49`)에 포함되거나 앱에서 별도로
-다운로드하는 제3자 구성요소의 라이선스와 고지 위치를 안내합니다. MCastTalk가 작성한
-자체 코드는 저장소 루트의 Apache License 2.0에 따라 상업적 이용을 포함한
-사용·수정·재배포가 허용됩니다. 저작권·라이선스·필요한 고지 및 변경 표시 의무를 준수하세요.
-이미 Apache License 2.0으로 적법하게 제공된 사본·버전의 기존 권리는 철회되지 않습니다.
-제3자 소프트웨어·모델·음성·데이터에는 아래의 별도 조건이 적용되며, 자체 코드
-라이선스로 다시 허가되지 않습니다.
+이 문서는 앱에 포함되거나 별도로 다운로드하는 제3자 구성요소의 라이선스와 고지 위치를 안내합니다. 자체 작성 코드는 저장소 루트의 Apache License 2.0을 따르며, 제3자 소프트웨어·모델·음성·데이터에는 각각의 조건이 적용됩니다.
 
-공개 유지 버전은 `0.2.42`이며, 이 보수 작업본의 의존성 고지는 재배포 승인을 의미하지 않습니다.
-현재 앱의 라이선스 화면에는 48개 항목이 등록되어 있습니다. APK에는 정적 고지 37개와
-LiteRT-LM·ML Kit AAR에서 추출한 고지 4개, 총 41개 원문·고지 파일이 들어 있습니다.
-앱의 `라이선스` 화면 또는 APK의 `assets/licenses/`에서 해당 문서를 오프라인으로 볼 수
-있습니다. 공식 약관처럼 변경될 수 있는 문서는 복제본 대신 아래 공식 링크를 기준으로 합니다.
-각 원문에 포함된 저작권자명·저작권문·필수 연락처는 요약 과정에서 삭제하거나 바꾸지 않습니다.
+앱의 라이선스 화면과 APK의 `assets/licenses/`에서 포함된 원문을 확인할 수 있습니다. 공식 약관처럼 변경될 수 있는 문서는 아래 공식 링크를 확인하세요. 각 원문의 저작권자·저작권문·필수 고지는 보존합니다.
 
 이 목록과 고지 제공은 상업 사용, 상표 사용, 모델·음성·데이터 재배포에 대한 별도 허가를
 의미하지 않습니다.
@@ -32,6 +21,7 @@ LiteRT-LM·ML Kit AAR에서 추출한 고지 4개, 총 41개 원문·고지 파�
 | Google | ML Kit Translate `17.0.3`, ML Kit Common `18.11.0`, Play services Base `18.5.0`, Basement `18.4.0`, Tasks `18.2.0` | [ML Kit Terms](https://developers.google.com/ml-kit/terms), [Google APIs Terms](https://developers.google.com/terms), [Android SDK License Agreement](https://developer.android.com/studio/terms.html) 및 AAR 제3자 조건 | `assets/licenses/upstream/third_party_licenses.txt`, `third_party_licenses.json` |
 | Useful Sensors, Inc. (Moonshine AI) | `app.guidecast.thirdparty:moonshine-voice:0.1.5-mcasttalk1` (upstream `ai.moonshine:moonshine-voice:0.1.5`) | SDK 코드는 기본적으로 MIT. 앱 전용 ARM64 수정이며 공식 upstream 배포본과 구분. 모델·TTS·G2P 데이터 조건은 아래에서 별도 구분 | `assets/licenses/MOONSHINE-0.1.5-LICENSE.txt`, `MOONSHINE-MCASTTALK-PATCH.txt`, `MOONSHINE-NOTICE.txt`, `MODEL-AND-VOICE-NOTICES.txt` |
 | Microsoft 및 ONNX Runtime 제3자 저작권자 | ONNX Runtime Android `1.23.2` ARM64 | MIT 및 포함 제3자 조건 | `assets/licenses/MOONSHINE-ONNXRUNTIME-MIT.txt`, `ONNXRUNTIME-1.23.2-THIRD-PARTY-NOTICES.txt` |
+| The LAME Project | MP3 encoder; exact source and binary hashes in [provenance](../third_party/lame/provenance.json) | LGPL-2.0-or-later | [COPYING](../third_party/lame/COPYING), [LICENSE](../third_party/lame/LICENSE), [source archive](../third_party/lame/lame-4.0.tar.gz), [build script](../scripts/build-lame.sh); APK `assets/licenses/LAME-4.0-COPYING.txt` |
 | Xiph.Org Foundation·Jean-Marc Valin | RNNoise `0.2`, model `0b50c45` | BSD-3-Clause | `assets/licenses/RNNOISE-BSD-3-CLAUSE.txt` |
 | OpenCC 저작권자 | OpenCC 사전 데이터, revision `26753884f1984add422f3b0249ccee8613deaff6` | Apache-2.0 | `assets/licenses/OPENCC-APACHE-2.0.txt`, `OPENCC-README.txt` |
 

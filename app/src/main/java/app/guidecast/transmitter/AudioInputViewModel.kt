@@ -946,6 +946,10 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
         runMode: BroadcastRunMode = BroadcastRunMode.NETWORK,
     ) {
         if (voiceNoteBusy()) return
+        if (guideCastApplication.translationApiSettings.state.value.usesNativeLiveAudio) {
+            modelMessage.value = "직접 음성 API는 통역 중계 메뉴에서 시작하세요. 다국어 스트리밍은 문장 번역 서비스를 선택하세요."
+            return
+        }
         val translationLanguages = if (translationBroadcastEnabled.value) {
             selectedLanguageTags.value.toTypedArray()
         } else {
@@ -962,6 +966,15 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
             selectiveTranslationRefinement = selectiveTranslationRefinement.value,
             runMode = runMode,
         )
+    }
+
+    fun startInterpreterRelay() {
+        if (voiceNoteBusy()) return
+        val relay = guideCastApplication.interpreterRelaySettings.state.value
+        BroadcastService.start(getApplication(), OperatorAccessMode.QR_TOKEN,
+            translationLanguages = arrayOf(relay.target), sourceLanguageTag = relay.source,
+            runMode = if (relay.networkBroadcast) BroadcastRunMode.NETWORK else BroadcastRunMode.STANDALONE,
+            interpreterRelay = true)
     }
 
     fun pauseBroadcast() = BroadcastService.pauseBroadcast(getApplication())

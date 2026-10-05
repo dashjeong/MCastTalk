@@ -54,8 +54,6 @@ diagnostics/
 *.dmp
 *.litertlm
 guidecast-diagnostics-*.zip
-docs/ANTIGRAVITY_*
-docs/CODEX_*
 docs/INCIDENT_*
 docs/HANDOFF_*
 docs/PUBLIC_RELEASE_AUDIT_*
@@ -65,3 +63,6 @@ artifacts/*.xml
 # Local Python tooling bytecode is never a source or release artifact.
 __pycache__/
 *.py[cod]
+
+validation/
+docs/*REVIEW*

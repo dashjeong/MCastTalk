@@ -58,4 +58,8 @@ data class TranslationUsageSummary(
     val reportedCandidateTokens: Long? = null,
     val reportedThoughtTokens: Long? = null,
     val reportedTotalTokens: Long? = null,
+    val reportedInputTokens: Long? = null,
+    val reportedOutputTokens: Long? = null,
+    val reportedReasoningTokens: Long? = null,
+    val reportedTotalsMatch: Boolean? = null,
 )

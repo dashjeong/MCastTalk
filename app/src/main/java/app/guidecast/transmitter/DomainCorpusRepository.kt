@@ -11,7 +11,14 @@ import java.io.OutputStream
 import java.nio.charset.StandardCharsets
 import java.text.Normalizer
 import java.util.Locale
+import java.util.UUID
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -20,6 +27,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.Executors
 
 data class DomainCorpusProfile(
     val id: Long,
@@ -36,6 +44,7 @@ data class DomainCorpusMatch(
     val exactTranslation: String?,
     val hints: String,
     val revision: Long = 0,
+    val candidatesVisited: Int = 0,
 )
 
 sealed interface DomainImportResult {
@@ -43,18 +52,147 @@ sealed interface DomainImportResult {
     data class Failure(val lineNumber: Int?, val reason: String) : DomainImportResult
 }
 
+internal class ReferenceDocumentWasRemovedException : IllegalStateException()
+
 open class DomainCorpusRepository internal constructor(
     private val dbHelper: SQLiteOpenHelper?,
+    private val beforeIndexLoad: () -> Unit = {},
 ) {
     constructor(context: Context) : this(DomainCorpusDatabase(context.applicationContext))
     internal constructor(context: Context, databaseName: String) :
         this(DomainCorpusDatabase(context.applicationContext, databaseName))
+    internal constructor(context: Context, databaseName: String, beforeIndexLoad: () -> Unit) :
+        this(DomainCorpusDatabase(context.applicationContext, databaseName), beforeIndexLoad)
 
-    internal fun close() { dbHelper?.close() }
+    private val indexDispatcherDelegate = lazy {
+        Executors.newSingleThreadExecutor { task -> Thread({
+            runCatching { android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND) }
+            task.run()
+        }, "domain-index-builder").apply { isDaemon = true } }.asCoroutineDispatcher()
+    }
+    private val indexDispatcher by indexDispatcherDelegate
+    private val indexScopeDelegate = lazy { CoroutineScope(SupervisorJob() + indexDispatcher) }
+    private val indexScope by indexScopeDelegate
+    internal fun close() {
+        if (indexScopeDelegate.isInitialized()) indexScope.cancel()
+        if (indexDispatcherDelegate.isInitialized()) indexDispatcher.close()
+        dbHelper?.close()
+    }
 
     private val mutex = Mutex()
     private val _revision = MutableStateFlow(0L)
     open val revision: StateFlow<Long> = _revision.asStateFlow()
+    private val mutableReferenceRevision = MutableStateFlow(0L)
+    internal val referenceRevision = mutableReferenceRevision.asStateFlow()
+
+    internal suspend fun referenceDocuments(beforeId: Long? = null): List<DomainReferenceDocument> = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            requireNotNull(dbHelper).readableDatabase.rawQuery(
+                "SELECT id,title,kind,enabled,length(body) FROM domain_reference_documents" +
+                    (if (beforeId == null) "" else " WHERE id < ?") + " ORDER BY id DESC LIMIT 50",
+                beforeId?.let { arrayOf(it.toString()) },
+            ).use { rows -> buildList {
+                while (rows.moveToNext()) add(DomainReferenceDocument(rows.getLong(0), rows.getString(1),
+                    ReferenceDocumentKind.valueOf(rows.getString(2)), rows.getInt(3) != 0, rows.getInt(4)))
+            } }
+        }
+    }
+
+    internal suspend fun referenceDocumentText(id: Long): String = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            requireNotNull(dbHelper).readableDatabase.rawQuery(
+                "SELECT body FROM domain_reference_documents WHERE id=?", arrayOf(id.toString()),
+            ).use { rows -> require(rows.moveToFirst()); rows.getString(0) }
+        }
+    }
+
+    internal suspend fun saveReferenceDocument(id: Long?, title: String, kind: ReferenceDocumentKind,
+        body: String, creationRequestId: String? = null): Long = withContext(Dispatchers.IO) {
+        val name = title.trim(); val text = body.trim()
+        require(id == null || id > 0)
+        require(id == null || creationRequestId == null)
+        creationRequestId?.let { require(UUID.fromString(it).toString() == it) }
+        require(name.isNotBlank() && name.length <= 80 && name.none { it.code < 32 } &&
+            validContextUnicode(name) && !containsNativeContextCredentialLikeText(name))
+        require(text.isNotBlank() && text.length <= MAX_REFERENCE_DOCUMENT_CHARS)
+        require(!containsNativeContextCredentialLikeText(text) && validContextUnicode(text) && text.none { (it.code < 32 && it !in "\n\r\t") || it.code == 127 })
+        mutex.withLock {
+            val values = ContentValues().apply {
+                put("title", name); put("kind", kind.name); put("body", text)
+            }
+            val db = requireNotNull(dbHelper).writableDatabase
+            var savedId = 0L
+            db.beginTransaction()
+            try {
+                val mappedId = if (creationRequestId != null) {
+                    db.execSQL("CREATE TABLE IF NOT EXISTS domain_reference_save_requests (request_id TEXT PRIMARY KEY NOT NULL,document_id INTEGER NOT NULL UNIQUE)")
+                    db.rawQuery("SELECT document_id FROM domain_reference_save_requests WHERE request_id=?",
+                        arrayOf(creationRequestId)).use { rows -> if (rows.moveToFirst()) rows.getLong(0) else null }
+                } else null
+                val existingId = id ?: mappedId
+                if (existingId != null) {
+                    if (db.update("domain_reference_documents", values, "id=?", arrayOf(existingId.toString())) != 1)
+                        throw ReferenceDocumentWasRemovedException()
+                    savedId = existingId
+                } else {
+                    values.put("enabled", 0)
+                    savedId = db.insertOrThrow("domain_reference_documents", null, values)
+                    check(savedId > 0)
+                    if (creationRequestId != null) {
+                        val request = ContentValues().apply {
+                            put("request_id", creationRequestId); put("document_id", savedId)
+                        }
+                        check(db.insertOrThrow("domain_reference_save_requests", null, request) > 0)
+                    }
+                }
+                db.setTransactionSuccessful()
+            } finally { db.endTransaction() }
+            mutableReferenceRevision.value++
+            savedId
+        }
+    }
+
+    internal suspend fun enableReferenceDocument(id: Long, enabled: Boolean): Unit = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val values = ContentValues().apply { put("enabled", if (enabled) 1 else 0) }
+            require(requireNotNull(dbHelper).writableDatabase.update("domain_reference_documents", values,
+                "id=?", arrayOf(id.toString())) == 1)
+            mutableReferenceRevision.value++
+        }
+    }
+
+    internal suspend fun removeReferenceDocument(id: Long): Unit = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            requireNotNull(dbHelper).writableDatabase.delete("domain_reference_documents", "id=?", arrayOf(id.toString()))
+            mutableReferenceRevision.value++
+        }
+    }
+
+    /** Read once before connecting; neither capture nor native audio output waits on this database. */
+    internal suspend fun prepareNativeReferences(source: String, target: String, style: TranslationStyle): NativeReferenceSnapshot =
+        withContext(Dispatchers.IO) {
+            // Await the initial/cached index before taking the reference snapshot. Never
+            // acquire the mutex first: prepareActiveIndex owns it on the index dispatcher.
+            prepareActiveIndex()
+            mutex.withLock {
+                val db = requireNotNull(dbHelper).readableDatabase
+                val documents = db.rawQuery("SELECT count(*) FROM domain_reference_documents WHERE enabled=1", null)
+                    .use { it.moveToFirst(); it.getInt(0) }
+                val entries = mutableListOf<NativeReferenceEntry>()
+                for (kind in ReferenceDocumentKind.entries) {
+                    db.rawQuery("SELECT title,kind,body FROM domain_reference_documents WHERE enabled=1 AND kind=? AND length(body)<=64000 ORDER BY id DESC LIMIT 5", arrayOf(kind.name))
+                        .use { rows -> while (rows.moveToNext()) entries += NativeReferenceEntry(rows.getString(0), rows.getString(1), rows.getString(2)) }
+                }
+                val snapshot = publishedIndex
+                val active = snapshot.profiles[normalizeSourceLanguageTag(source) to normalizeTargetLanguageTag(target)]
+                    ?.takeIf { style == TranslationStyle.AUTO || it.profile.style == TranslationStyle.AUTO || it.profile.style == style }
+                active?.pairs?.take(3)?.forEach { pair -> entries += NativeReferenceEntry(active.profile.name,
+                    "TRANSLATION_EXAMPLE", "원문: ${pair.sourceText}\n번역: ${pair.targetText}") }
+                val prepared = prepareNativeReferencePayload(entries)
+                NativeReferenceSnapshot(prepared.payload, prepared.includedEntries, documents + (active?.pairs?.size ?: 0),
+                    mutableReferenceRevision.value, snapshot.revision, prepared.omittedTermLines)
+            }
+        }
 
     // In-memory cache for active profiles to optimize lookup performance
     private data class CachedPair(
@@ -68,9 +206,19 @@ open class DomainCorpusRepository internal constructor(
         val profile: DomainCorpusProfile,
         val pairs: List<CachedPair>,
         val exactMap: Map<String, String>,
+        val lexicalIndex: BoundedDomainLexicalIndex,
     )
 
     private var activeProfilesCache: Map<Pair<String, String>, CachedActiveProfile>? = null
+    private data class PublishedIndex(val profiles: Map<Pair<String, String>, CachedActiveProfile>, val revision: Long)
+    @Volatile private var publishedIndex = PublishedIndex(emptyMap(), 0)
+    init {
+        if (dbHelper != null) indexScope.launch {
+            runCatching { prepareActiveIndex() }.onFailure {
+                RuntimeDiagnosticLog.record("domain_corpus", "index_prepare_failed:${it.javaClass.simpleName}")
+            }
+        }
+    }
 
     open suspend fun profiles(): List<DomainCorpusProfile> = withContext(Dispatchers.IO) {
         mutex.withLock {
@@ -107,7 +255,7 @@ open class DomainCorpusRepository internal constructor(
         sourceLanguageTag: String,
         targetLanguageTag: String,
         style: TranslationStyle,
-    ): DomainImportResult = withContext(Dispatchers.IO) {
+    ): DomainImportResult = withContext(indexDispatcher) {
         val metaError = DomainCorpusFormat.validateMetadata(name, description)
         if (metaError != null) {
             return@withContext DomainImportResult.Failure(null, metaError)
@@ -135,7 +283,7 @@ open class DomainCorpusRepository internal constructor(
         mutex.withLock {
             val db = requireNotNull(dbHelper).writableDatabase
             db.beginTransaction()
-            try {
+            val imported = try {
                 val profileValues = ContentValues().apply {
                     put("name", trimmedName)
                     put("description", trimmedDesc)
@@ -165,8 +313,6 @@ open class DomainCorpusRepository internal constructor(
                 }
 
                 db.setTransactionSuccessful()
-                activeProfilesCache = null
-                _revision.value += 1
                 DomainImportResult.Success(
                     DomainCorpusProfile(
                         id = profileId,
@@ -182,13 +328,16 @@ open class DomainCorpusRepository internal constructor(
             } finally {
                 db.endTransaction()
             }
+            publishActiveIndexLocked()
+            imported
         }
     }
 
-    /** PoC review workflow: copy the active profile; never overwrite its original rows. */
+    /** Copy the active profile for review; preserve its original rows. */
     suspend fun applyReviewedComparison(comparison: ShadowComparison, corrected: String,
-        humanReviewed: Boolean): DomainLearningRevision = withContext(Dispatchers.IO) {
-        val pair = reviewedDomainPair(comparison.original, corrected, comparison.target, humanReviewed)
+        humanReviewed: Boolean, nativeAdmission: NativeComparisonCommitAdmission? = null): DomainLearningRevision = withContext(indexDispatcher) {
+        require(comparison.nativeIdentity == null || nativeAdmission != null) { "중계 예문의 현재 검수 권한을 확인하세요." }
+        val pair = reviewedDomainComparisonPair(comparison, corrected, humanReviewed)
         mutex.withLock {
             check(_revision.value == comparison.corpusRevision) { "비교 이후 자료가 변경됐습니다. 새 비교로 다시 검수하세요." }
             val source = normalizeSourceLanguageTag(comparison.source)
@@ -208,6 +357,7 @@ open class DomainCorpusRepository internal constructor(
             val db = requireNotNull(dbHelper).writableDatabase
             var newId = 0L
             db.beginTransaction()
+            var transactionOpen = true
             try {
                 newId = db.insertOrThrow("domain_profiles", null, ContentValues().apply {
                     put("name", active.profile.name.take(70) + " · 검수")
@@ -225,12 +375,18 @@ open class DomainCorpusRepository internal constructor(
                 db.insertOrThrow("domain_learning_revisions", null, ContentValues().apply {
                     put("profile_id", newId); put("parent_profile_id", active.profile.id); put("created_at", System.currentTimeMillis())
                 })
-                db.execSQL("UPDATE domain_profiles SET active = 0 WHERE source_lang = ? AND target_lang = ?", arrayOf(source, target))
-                db.execSQL("UPDATE domain_profiles SET active = 1 WHERE id = ?", arrayOf(newId))
-                db.setTransactionSuccessful()
-            } finally { db.endTransaction() }
-            activeProfilesCache = null
-            _revision.value += 1
+                val coroutine = kotlinx.coroutines.currentCoroutineContext()
+                val activate = {
+                    coroutine.ensureActive()
+                    db.execSQL("UPDATE domain_profiles SET active = 0 WHERE source_lang = ? AND target_lang = ?", arrayOf(source, target))
+                    db.execSQL("UPDATE domain_profiles SET active = 1 WHERE id = ?", arrayOf(newId))
+                    db.setTransactionSuccessful()
+                    transactionOpen = false
+                    db.endTransaction()
+                }
+                if (nativeAdmission == null) activate() else nativeAdmission.commit(activate)
+            } finally { if (transactionOpen) db.endTransaction() }
+            publishActiveIndexLocked(excludeLanguagePair = source to target)
             DomainLearningRevision(newId, active.profile.id, _revision.value)
         }
     }
@@ -244,7 +400,7 @@ open class DomainCorpusRepository internal constructor(
         }
     }
 
-    suspend fun rollbackLearning(change: DomainLearningRevision): Unit = withContext(Dispatchers.IO) {
+    suspend fun rollbackLearning(change: DomainLearningRevision): Unit = withContext(indexDispatcher) {
         mutex.withLock {
             check(change.revision == _revision.value) { "자료가 변경됐습니다. 되돌릴 버전을 다시 확인하세요." }
             val db = requireNotNull(dbHelper).writableDatabase
@@ -257,14 +413,14 @@ open class DomainCorpusRepository internal constructor(
                 }
                 db.setTransactionSuccessful()
             } finally { db.endTransaction() }
-            activeProfilesCache = null
-            _revision.value += 1
+            publishActiveIndexLocked(excludeProfileId = change.profileId)
         }
     }
 
-    open suspend fun activate(id: Long): Unit = withContext(Dispatchers.IO) {
+    open suspend fun activate(id: Long): Unit = withContext(indexDispatcher) {
         mutex.withLock {
             val db = requireNotNull(dbHelper).writableDatabase
+            var activatedPair: Pair<String, String>? = null
             db.beginTransaction()
             try {
                 var sourceLang = ""
@@ -282,26 +438,25 @@ open class DomainCorpusRepository internal constructor(
                         arrayOf(sourceLang, targetLang),
                     )
                     db.execSQL("UPDATE domain_profiles SET active = 1 WHERE id = ?", arrayOf(id.toString()))
+                    activatedPair = sourceLang to targetLang
                 }
                 db.setTransactionSuccessful()
             } finally {
                 db.endTransaction()
             }
-            activeProfilesCache = null
-            _revision.value += 1
+            publishActiveIndexLocked(excludeLanguagePair = activatedPair)
         }
     }
 
-    open suspend fun deactivate(id: Long): Unit = withContext(Dispatchers.IO) {
+    open suspend fun deactivate(id: Long): Unit = withContext(indexDispatcher) {
         mutex.withLock {
             val db = requireNotNull(dbHelper).writableDatabase
             db.execSQL("UPDATE domain_profiles SET active = 0 WHERE id = ?", arrayOf(id.toString()))
-            activeProfilesCache = null
-            _revision.value += 1
+            publishActiveIndexLocked(excludeProfileId = id)
         }
     }
 
-    open suspend fun remove(id: Long): Unit = withContext(Dispatchers.IO) {
+    open suspend fun remove(id: Long): Unit = withContext(indexDispatcher) {
         mutex.withLock {
             val db = requireNotNull(dbHelper).writableDatabase
             db.beginTransaction()
@@ -312,8 +467,7 @@ open class DomainCorpusRepository internal constructor(
             } finally {
                 db.endTransaction()
             }
-            activeProfilesCache = null
-            _revision.value += 1
+            publishActiveIndexLocked(excludeProfileId = id)
         }
     }
 
@@ -344,8 +498,11 @@ open class DomainCorpusRepository internal constructor(
     }
 
     /** Build the active lexical index before input capture, outside the realtime request path. */
-    open suspend fun prepareActiveIndex(): Long = withContext(Dispatchers.IO) {
-        mutex.withLock { getOrLoadActiveProfilesCacheLocked(); _revision.value }
+    open suspend fun prepareActiveIndex(): Long = withContext(indexDispatcher) {
+        mutex.withLock {
+            publishedIndex = PublishedIndex(getOrLoadActiveProfilesCacheLocked(), _revision.value)
+            publishedIndex.revision
+        }
     }
 
     open suspend fun match(
@@ -353,29 +510,29 @@ open class DomainCorpusRepository internal constructor(
         source: String,
         target: String,
         style: TranslationStyle,
-    ): DomainCorpusMatch = withContext(Dispatchers.IO) {
-        if (text.isBlank()) return@withContext DomainCorpusMatch(null, "", _revision.value)
+    ): DomainCorpusMatch = withContext(Dispatchers.Default) {
+        val snapshot = publishedIndex
+        if (text.isBlank()) return@withContext DomainCorpusMatch(null, "", snapshot.revision)
 
         val normalized = Normalizer.normalize(text, Normalizer.Form.NFC).trim()
         val normSource = normalizeSourceLanguageTag(source)
         val normTarget = normalizeTargetLanguageTag(target)
 
-        mutex.withLock {
-            val cachedMap = getOrLoadActiveProfilesCacheLocked()
-            val active = cachedMap[normSource to normTarget] ?: return@withContext DomainCorpusMatch(null, "", _revision.value)
+        run {
+            val active = snapshot.profiles[normSource to normTarget] ?: return@withContext DomainCorpusMatch(null, "", snapshot.revision)
 
             // 1. Exact substitution: only active matching domain/language + style and NFC+trim exact whole source
             // Current request style authoritative; exact only same style or request AUTO. Never fuzzy or ASR correction.
             if (style == TranslationStyle.AUTO || style == active.profile.style) {
                 val exact = active.exactMap[normalized]
                 if (exact != null) {
-                    return@withContext DomainCorpusMatch(exactTranslation = exact, hints = "", revision = _revision.value)
+                    return@withContext DomainCorpusMatch(exactTranslation = exact, hints = "", revision = snapshot.revision)
                 }
             }
 
             // If request style is specific and conflicts with profile style, do not provide mismatched style hints
             if (style != TranslationStyle.AUTO && active.profile.style != TranslationStyle.AUTO && active.profile.style != style) {
-                return@withContext DomainCorpusMatch(null, "", _revision.value)
+                return@withContext DomainCorpusMatch(null, "", snapshot.revision)
             }
 
             val hintsObj = JSONObject().apply {
@@ -386,10 +543,12 @@ open class DomainCorpusRepository internal constructor(
             }
 
             // 2. Hints retrieval: up to 3 relevant full pairs, token/CJK overlap threshold avoids unrelated examples
-            val inputTokens = extractMeaningfulTokens(normalized)
+            val inputTokens = extractMeaningfulTokens(normalized.take(4096)).take(64).toSet()
+            val candidateIds = active.lexicalIndex.candidates(inputTokens)
             val scoredCandidates = ArrayList<Pair<CachedPair, Double>>()
             if (inputTokens.isNotEmpty()) {
-                for (cand in active.pairs) {
+                for (id in candidateIds) {
+                    val cand = active.pairs[id]
                     val intersectionSize = cand.tokens.count { it in inputTokens }
                     if (intersectionSize == 0) continue
 
@@ -406,9 +565,9 @@ open class DomainCorpusRepository internal constructor(
             scoredCandidates.sortByDescending { it.second }
             val topCandidates = scoredCandidates.take(3)
             // No retrieved evidence means no unrelated profile description in the model prompt.
-            if (topCandidates.isEmpty()) return@withContext DomainCorpusMatch(null, "", _revision.value)
+            if (topCandidates.isEmpty()) return@withContext DomainCorpusMatch(null, "", snapshot.revision, candidateIds.size)
 
-            // Format as JSON quoted example data, total hints <= 1200 chars, no partial pair cutting
+            // Include whole examples within the fixed realtime reference budget.
             val examplesArray = JSONArray()
             for ((cand, _) in topCandidates) {
                 val obj = JSONObject().apply {
@@ -418,10 +577,10 @@ open class DomainCorpusRepository internal constructor(
                 val testObj = JSONObject(hintsObj.toString())
                 val testExamples = JSONArray(examplesArray.toString()).put(obj)
                 testObj.put("examples", testExamples)
-                if (testObj.toString().length <= DomainCorpusFormat.MAX_HINTS_LENGTH) {
+                if (testObj.toString().length <= minOf(600, DomainCorpusFormat.MAX_HINTS_LENGTH)) {
                     examplesArray.put(obj)
                 } else {
-                    break
+                    continue
                 }
             }
 
@@ -429,15 +588,32 @@ open class DomainCorpusRepository internal constructor(
                 hintsObj.put("examples", examplesArray)
             }
 
-            val hintsString = hintsObj.toString()
-            DomainCorpusMatch(exactTranslation = null, hints = hintsString, revision = _revision.value)
+            val hintsString = if (examplesArray.length() > 0) hintsObj.toString() else ""
+            DomainCorpusMatch(exactTranslation = null, hints = hintsString, revision = snapshot.revision,
+                candidatesVisited = candidateIds.size)
         }
+    }
+
+    private fun publishActiveIndexLocked(excludeProfileId: Long? = null,
+        excludeLanguagePair: Pair<String, String>? = null) {
+        activeProfilesCache = null
+        val nextRevision = _revision.value + 1
+        // Withdraw committed replacements/deletions before rebuilding, including its failure path.
+        if (excludeProfileId != null || excludeLanguagePair != null) {
+            publishedIndex = PublishedIndex(publishedIndex.profiles.filter { (languages, cached) ->
+                cached.profile.id != excludeProfileId && languages != excludeLanguagePair
+            }, nextRevision)
+            _revision.value = nextRevision
+        }
+        val profiles = getOrLoadActiveProfilesCacheLocked()
+        publishedIndex = PublishedIndex(profiles, nextRevision)
+        _revision.value = nextRevision
     }
 
     private fun getOrLoadActiveProfilesCacheLocked(): Map<Pair<String, String>, CachedActiveProfile> {
         val existing = activeProfilesCache
         if (existing != null) return existing
-
+        beforeIndexLoad()
         val db = requireNotNull(dbHelper).readableDatabase
         val activeProfiles = ArrayList<DomainCorpusProfile>()
         db.rawQuery(
@@ -487,17 +663,18 @@ open class DomainCorpusRepository internal constructor(
 
             map[profile.sourceLanguageTag to profile.targetLanguageTag] = CachedActiveProfile(
                 profile = profile,
-                pairs = pairs,
-                exactMap = exactMap,
+                pairs = pairs.toList(),
+                exactMap = exactMap.toMap(),
+                lexicalIndex = BoundedDomainLexicalIndex(pairs.map { it.tokens }),
             )
         }
 
-        activeProfilesCache = map
-        return map
+        activeProfilesCache = map.toMap()
+        return requireNotNull(activeProfilesCache)
     }
 
     private fun extractMeaningfulTokens(text: String): Set<String> {
-        val tokens = HashSet<String>()
+        val tokens = linkedSetOf<String>()
         val words = text.split(PUNCTUATION_REGEX)
         for (w in words) {
             val trimmed = w.trim()
@@ -560,21 +737,24 @@ open class DomainCorpusRepository internal constructor(
                 )
             )
         }
-        val cached = CachedActiveProfile(profile, pairs, exactMap)
+        val cached = CachedActiveProfile(profile, pairs.toList(), exactMap.toMap(), BoundedDomainLexicalIndex(pairs.map { it.tokens }))
         val current = activeProfilesCache?.toMutableMap() ?: HashMap()
         current[profile.sourceLanguageTag to profile.targetLanguageTag] = cached
-        activeProfilesCache = current
+        activeProfilesCache = current.toMap()
         _revision.value += 1
+        publishedIndex = PublishedIndex(requireNotNull(activeProfilesCache), _revision.value)
     }
 
     internal fun invalidateCacheForTest() {
         activeProfilesCache = null
         _revision.value += 1
+        publishedIndex = PublishedIndex(emptyMap(), _revision.value)
     }
 
     internal fun clearActiveProfilesForTest() {
         activeProfilesCache = emptyMap()
         _revision.value += 1
+        publishedIndex = PublishedIndex(emptyMap(), _revision.value)
     }
 
     companion object {
@@ -613,7 +793,7 @@ open class DomainCorpusRepository internal constructor(
 }
 
 private class DomainCorpusDatabase(context: Context, databaseName: String = "domain_corpus.db") :
-    SQLiteOpenHelper(context, databaseName, null, 2) {
+    SQLiteOpenHelper(context, databaseName, null, 3) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -647,13 +827,22 @@ private class DomainCorpusDatabase(context: Context, databaseName: String = "dom
         db.execSQL("CREATE INDEX idx_pairs_profile_id ON domain_pairs(profile_id)")
         db.execSQL("CREATE INDEX idx_pairs_nfc_lookup ON domain_pairs(profile_id, source_nfc)")
         createLearningHistory(db)
+        createReferenceDocuments(db)
     }
 
     private fun createLearningHistory(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE domain_learning_revisions (profile_id INTEGER PRIMARY KEY, parent_profile_id INTEGER NOT NULL, created_at INTEGER NOT NULL, FOREIGN KEY(profile_id) REFERENCES domain_profiles(id) ON DELETE CASCADE)")
     }
+    private fun createReferenceDocuments(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE domain_reference_documents (id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,kind TEXT NOT NULL,body TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 0)")
+        db.execSQL("CREATE INDEX idx_reference_documents_active_kind ON domain_reference_documents(enabled,kind,id)")
+    }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        if (oldVersion == 1 && newVersion == 2) { createLearningHistory(db); return }
+        if (oldVersion in 1..2 && newVersion == 3) {
+            if (oldVersion == 1) createLearningHistory(db)
+            createReferenceDocuments(db)
+            return
+        }
         throw SQLiteException("Destructive database schema changes are prohibited to preserve user domain data.")
     }
 

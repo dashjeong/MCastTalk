@@ -22,6 +22,9 @@ class SharedTranslationBatchContext(
     private data class Entry(val fingerprint: String, val result: Deferred<Map<String, String>>)
     private val entries = linkedMapOf<Long, Entry>()
     private var retiredThrough = -1L
+    private data class SnapshotEntry(val fingerprint: String, val result: Deferred<Any>)
+    private val snapshots = linkedMapOf<Long, SnapshotEntry>()
+    private var snapshotRetiredThrough = -1L
 
     init {
         require(requestScope.isNotBlank())
@@ -31,6 +34,41 @@ class SharedTranslationBatchContext(
     }
 
     fun accepts(): Boolean = parentScope.coroutineContext[kotlinx.coroutines.Job]?.isActive != false && isCurrent()
+
+    /** Freeze one immutable input snapshot before language workers or shared transport use it. */
+    suspend fun <T : Any> freezeInputSnapshot(
+        identity: TranslationRequestIdentity,
+        fingerprint: String,
+        capture: suspend () -> T,
+    ): T {
+        require(identity.scope == requestScope && fingerprint.length in 1..256)
+        check(accepts()) { "Translation input lifetime ended" }
+        val result = synchronized(snapshots) {
+            snapshots[identity.sequence]?.also {
+                check(it.fingerprint == fingerprint) { "Conflicting input snapshot identity" }
+            }?.result ?: run {
+                check(identity.sequence > snapshotRetiredThrough) { "Retired input snapshot cannot be recaptured" }
+                if (snapshots.size >= capacity) {
+                    val completed = snapshots.entries.filter { it.value.result.isCompleted }.minByOrNull { it.key }
+                    check(completed != null) { "Input snapshot queue is full" }
+                    snapshotRetiredThrough = maxOf(snapshotRetiredThrough, requireNotNull(completed).key)
+                    snapshots.remove(completed.key)
+                }
+                val deferred = parentScope.async<Any>(start = CoroutineStart.LAZY) {
+                    check(accepts()) { "Translation input lifetime ended" }
+                    capture().also { check(accepts()) { "Translation input lifetime ended" } }
+                }
+                snapshots[identity.sequence] = SnapshotEntry(fingerprint, deferred)
+                deferred
+            }
+        }
+        result.start()
+        val snapshot = result.await()
+        currentCoroutineContext().ensureActive()
+        check(accepts()) { "Translation input lifetime ended" }
+        @Suppress("UNCHECKED_CAST")
+        return snapshot as T
+    }
 
     /** Failures remain cached too: no replay after timeout, cancellation or response loss. */
     suspend fun await(

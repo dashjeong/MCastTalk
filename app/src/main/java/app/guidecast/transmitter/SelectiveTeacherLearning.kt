@@ -97,6 +97,7 @@ internal fun targetScriptMatches(text: String, target: String): Boolean {
         "zh" -> setOf(Character.UnicodeScript.HAN)
         "en", "fr", "de", "es", "vi", "nl" -> setOf(Character.UnicodeScript.LATIN)
         "ar" -> setOf(Character.UnicodeScript.ARABIC)
+        "ru" -> setOf(Character.UnicodeScript.CYRILLIC)
         else -> return true
     }
     return text.codePoints().toArray().any { Character.UnicodeScript.of(it) in expected }

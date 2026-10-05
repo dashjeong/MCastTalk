@@ -38,10 +38,10 @@ data class TranscriptArchiveSnapshot(
     val warning: String? = null,
     val sessions: List<ArchivedBroadcastSession> = emptyList(),
     val revision: Long = 0L,
-    val retentionPolicy: TranscriptRetentionPolicy = TranscriptRetentionPolicy.OVERWRITE_OLDEST,
+    val retentionPolicy: TranscriptRetentionPolicy = TranscriptRetentionPolicy.KEEP_ALL,
 )
 
-enum class TranscriptRetentionPolicy { OVERWRITE_OLDEST, DAILY_BACKUP }
+enum class TranscriptRetentionPolicy { KEEP_ALL, OVERWRITE_OLDEST, DAILY_BACKUP }
 
 data class ArchivedBroadcastSession(
     val sessionId: Long,
@@ -99,7 +99,7 @@ class BroadcastTranscriptArchive(
     private var drainScheduled = false
     private var drainRetryDelayMillis = INITIAL_RETRY_DELAY_MILLIS
     private var activeLineCount = 0L
-    private var retentionPolicy = TranscriptRetentionPolicy.OVERWRITE_OLDEST
+    private var retentionPolicy = TranscriptRetentionPolicy.KEEP_ALL
     private var maintenanceWarning: String? = null
     private var nextMaintenanceRetryAt = 0L
     private var maintenanceScheduled = false
@@ -116,9 +116,16 @@ class BroadcastTranscriptArchive(
                 retentionPolicy = db.rawQuery("SELECT value FROM archive_settings WHERE name='retention_policy'", null)
                     .use { cursor ->
                         if (cursor.moveToFirst()) runCatching { TranscriptRetentionPolicy.valueOf(cursor.getString(0)) }
-                            .getOrDefault(TranscriptRetentionPolicy.OVERWRITE_OLDEST)
-                        else TranscriptRetentionPolicy.OVERWRITE_OLDEST
+                            .getOrDefault(TranscriptRetentionPolicy.KEEP_ALL)
+                        else TranscriptRetentionPolicy.KEEP_ALL
                     }
+                // Earlier versions defaulted to count-based deletion. Retain existing and new
+                // records until explicit deletion; the bounded 1000-row snapshot is display only.
+                if (retentionPolicy == TranscriptRetentionPolicy.OVERWRITE_OLDEST) {
+                    retentionPolicy = TranscriptRetentionPolicy.KEEP_ALL
+                    db.execSQL("INSERT OR REPLACE INTO archive_settings(name,value) VALUES('retention_policy',?)",
+                        arrayOf(retentionPolicy.name))
+                }
                 reloadSnapshotInternal(db)
                 scheduleMaintenance()
             }
@@ -128,13 +135,14 @@ class BroadcastTranscriptArchive(
 
     fun setRetentionPolicy(policy: TranscriptRetentionPolicy) {
         if (closed.get()) return
+        val normalized = if (policy == TranscriptRetentionPolicy.OVERWRITE_OLDEST) TranscriptRetentionPolicy.KEEP_ALL else policy
         executor.execute {
             runDatabaseOperation {
                 database.writableDatabase.execSQL(
                     "INSERT OR REPLACE INTO archive_settings(name,value) VALUES('retention_policy',?)",
-                    arrayOf(policy.name),
+                    arrayOf(normalized.name),
                 )
-                retentionPolicy = policy
+                retentionPolicy = normalized
                 nextMaintenanceRetryAt = 0L
                 reloadSnapshotInternal(database.readableDatabase)
                 scheduleMaintenance()
@@ -663,6 +671,7 @@ class BroadcastTranscriptArchive(
     }
 
     private fun maintainOneBatch(db: SQLiteDatabase): Boolean {
+        if (retentionPolicy == TranscriptRetentionPolicy.KEEP_ALL) return false
         val excess = (activeLineCount - maximumStoredLines).coerceAtLeast(0L)
         val today = archiveDay(clockMillis())
         val day = if (retentionPolicy == TranscriptRetentionPolicy.DAILY_BACKUP) {

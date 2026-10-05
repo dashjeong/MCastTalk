@@ -19,6 +19,8 @@ class RnNoiseMicrophoneProcessor(
     private var failed = false
     private var closed = false
 
+    @Synchronized fun pendingInputBytes(): Int = samples * 2 + if (lowByte >= 0) 1 else 0
+
     @Synchronized fun process(input: ByteArray): ByteArray {
         check(!closed)
         val availableSamples = (input.size + if (lowByte >= 0) 1 else 0) / 2

@@ -113,13 +113,13 @@ assert.match(
 );
 assert.match(
   source,
-  /const MAX_BUFFERED_AUDIO_SECONDS = 4;/,
+  /const MAX_BUFFERED_AUDIO_SECONDS = 20;/,
   "the browser audio queue needs a finite live-listening bound",
 );
 assert.match(
   source,
-  /discardScheduledAudio\(request\.audioContext\);[\s\S]*startAt = now \+ minimumLead;/,
-  "moving an over-limit queue to live must stop scheduled PCM before resetting its clock",
+  /request\.overloaded = true;[\s\S]*detachSocketHandlers\(blockedSocket\)/,
+  "overload must stop intake explicitly while preserving accepted PCM",
 );
 assert.match(
   source,
@@ -143,8 +143,8 @@ assert.doesNotMatch(
 );
 assert.match(
   listenerIndex,
-  /느린 배속의 누적 지연은 최대 4초입니다/,
-  "listeners must be told when slow playback automatically returns to live",
+  /실시간 듣기는 1배속 이상으로 재생합니다/,
+  "listeners must be told to use replay for slow listening",
 );
 
 class MockElement {
@@ -246,6 +246,13 @@ function createListenerHarness({
   element("#transcript-status").hidden = true;
 
   const contexts = [];
+  const floatAllocations = [];
+  class ObservedFloat32Array extends Float32Array {
+    constructor(...args) {
+      super(...args);
+      floatAllocations.push(this.length);
+    }
+  }
   class MockAudioContext {
     constructor() {
       this.mode = resumeModes[contexts.length] || "immediate";
@@ -396,7 +403,7 @@ function createListenerHarness({
     ArrayBuffer,
     DataView,
     Date: MockDate,
-    Float32Array,
+    Float32Array: ObservedFloat32Array,
     Math,
     Number,
     URLSearchParams,
@@ -448,6 +455,7 @@ function createListenerHarness({
   return {
     advanceTime: (ms) => { currentTimeMs += ms; },
     contexts,
+    floatAllocations,
     diagnostics: () => sandbox.window.__guideCastDiagnostics(),
     document: mockDocument,
     element,
@@ -759,7 +767,10 @@ async function verifyTranscriptLanguageChangeRepaintsDuringNotModifiedRequest() 
   const transcriptList = harness.element("#transcript-list");
   language.value = "source";
   await harness.loadTranscripts(true);
-  assert.match(collectText(transcriptList), /선택 표시: 확정/);
+  assert.match(collectText(transcriptList), /원문: 평화를 함께 걷습니다\./);
+  assert.match(collectText(transcriptList), /확정/);
+  assert.doesNotMatch(collectText(transcriptList), /We walk together for peace\./,
+    "source-only selection must omit translated content before switching languages");
 
   harness.element("#transcript-follow").checked = false;
   transcriptList.scrollTop = 37;
@@ -797,7 +808,7 @@ async function verifyTranscriptLanguageChangeRepaintsDuringNotModifiedRequest() 
   assert.equal(transcriptList.scrollTop, 37);
 }
 
-async function verifySlowPlaybackQueueStaysBoundedForFiveMinutes() {
+async function verifyLiveListeningAvoidsSlowRateDriftForFiveMinutes() {
   const harness = createListenerHarness();
   await harness.flush();
   harness.element("#playback-rate").value = "0.75";
@@ -827,10 +838,10 @@ async function verifySlowPlaybackQueueStaysBoundedForFiveMinutes() {
   const diagnostics = harness.diagnostics();
   maximumObservedBuffer = Math.max(maximumObservedBuffer, diagnostics.bufferedSeconds);
   assert.equal(diagnostics.receivedFrames, 15_000);
-  assert.ok(
-    diagnostics.automaticLiveEdgeDrops > 0,
-    "0.75× live playback must eventually drop stale scheduled audio",
-  );
+  assert.equal(diagnostics.playbackRate, 1);
+  assert.equal(diagnostics.automaticLiveEdgeDrops, 0);
+  assert.equal(diagnostics.rejectedAudioSeconds, 0);
+  assert.equal(diagnostics.skippedAudioSeconds, 0);
   assert.ok(
     maximumObservedBuffer <= diagnostics.maxBufferedAudioSeconds + 0.001,
     `five-minute fake live input exceeded its queue bound: ${maximumObservedBuffer}`,
@@ -841,6 +852,91 @@ async function verifySlowPlaybackQueueStaysBoundedForFiveMinutes() {
   );
 }
 
+async function verifySlowReplayPreferenceCannotCarryIntoLivePlayback() {
+  const harness = createListenerHarness();
+  await harness.flush();
+  harness.element("#listening-mode").value = "replay";
+  harness.element("#playback-rate").value = "0.75";
+  harness.element("#playback-rate").dispatch("change");
+  assert.equal(harness.diagnostics().playbackRate, 0.75, "replay retains slow playback");
+  harness.element("#listening-mode").value = "live";
+  await harness.element("#play").dispatch("click")[0];
+  assert.equal(harness.diagnostics().playbackRate, 1, "returning live prevents rate drift");
+  assert.equal(harness.element("#playback-rate").value, "1");
+}
+
+async function verifyBurstsPreserveContentAndOverloadIsExplicit() {
+  for (const singleFrame of [false, true]) {
+    const harness = createListenerHarness();
+    await harness.flush();
+    await harness.element("#play").dispatch("click")[0];
+    const ws = harness.sockets[0]; ws.onopen();
+    ws.onmessage({ data: JSON.stringify({ type: "config", sampleRate: 48000 }) });
+    const sizes = singleFrame ? [480000] : Array(500).fill(960);
+    for (const size of sizes) ws.onmessage({ data: new ArrayBuffer(size * 2) });
+    const accepted = harness.contexts[0].sources;
+    assert.equal(accepted.reduce((sum, node) => sum + node.buffer.duration, 0).toFixed(3), "10.000");
+    assert.equal(accepted.filter(node => node.stopped).length, 0);
+    for (let i = 1; i < accepted.length; i++) {
+      assert.ok(accepted[i].startAt >= accepted[i - 1].startAt + accepted[i - 1].buffer.duration - 1e-9,
+        "accepted burst frames preserve order without overlapping");
+    }
+    assert.equal(harness.diagnostics().automaticLiveEdgeDrops, 0);
+    const receive = ws.onmessage;
+    receive({ data: new ArrayBuffer(11 * 48000 * 2) });
+    assert.equal(harness.diagnostics().outputOverloaded, true);
+    assert.equal(harness.diagnostics().rejectedAudioSeconds, 11);
+    assert.equal(accepted.filter(node => node.stopped).length, 0, "accepted audio continues on overload");
+    assert.equal(ws.closed, true); assert.equal(ws.onmessage, null);
+    assert.equal(harness.pendingTimeouts().length, 0, "overload must not silently reconnect");
+    assert.match(harness.element("#status").textContent, /새 음성 수신을 멈췄습니다/);
+    harness.element("#pause").dispatch("click");
+    assert.equal(accepted.every(node => node.stopped), true);
+    await harness.element("#play").dispatch("click")[0];
+    assert.equal(harness.diagnostics().outputOverloaded, false);
+    assert.equal(harness.sockets.length, 2);
+  }
+}
+async function verifyOverloadRecoveryRetainsLossAndDisclosesPendingSkip() {
+  for (const action of ["#play", "#live-edge"]) {
+    const harness = createListenerHarness();
+    await harness.flush();
+    await harness.element("#play").dispatch("click")[0];
+    const ws = harness.sockets[0]; ws.onopen();
+    ws.onmessage({ data: JSON.stringify({ type: "config", sampleRate: 48000 }) });
+    ws.onmessage({ data: new ArrayBuffer(480000 * 2) });
+    ws.onmessage({ data: new ArrayBuffer(480000 * 2) });
+    assert.equal(harness.diagnostics().outputOverloaded, true);
+    assert.equal(harness.diagnostics().rejectedAudioSeconds, 10);
+    assert.equal(harness.diagnostics().unreceivedAudioUnknown, true);
+    assert.match(harness.element(action).textContent, /대기 음성 건너뛰고/);
+    const accepted = harness.contexts[0].sources;
+    harness.element(action).dispatch("click");
+    await harness.flush();
+    assert.equal(accepted.every(node => node.stopped), true);
+    assert.equal(harness.sockets.length, 2);
+    assert.equal(harness.diagnostics().rejectedAudioSeconds, 10);
+    assert.equal(harness.diagnostics().skippedAudioSeconds, 10);
+    assert.equal(harness.diagnostics().unreceivedAudioUnknown, true);
+    assert.match(harness.element("#status").textContent, /건너뛰기 누적 10.00초/);
+    assert.match(harness.element("#status").textContent, /미수신 음성량 UNKNOWN/);
+  }
+}
+async function verifyOversizedFramesAreRejectedBeforeConversion() {
+  for (const [rate, samples] of [[48000, 480001], [16000, 160001], [96000, 600000]]) {
+    const harness = createListenerHarness();
+    await harness.flush();
+    await harness.element("#play").dispatch("click")[0];
+    const ws = harness.sockets[0]; ws.onopen();
+    ws.onmessage({ data: JSON.stringify({ type: "config", sampleRate: rate }) });
+    ws.onmessage({ data: new ArrayBuffer(samples * 2) });
+    assert.equal(harness.floatAllocations.length, 0, "oversized frames cannot allocate conversion/resampling buffers");
+    assert.equal(harness.contexts[0].sources.length, 0);
+    assert.equal(harness.diagnostics().outputOverloaded, true);
+    assert.equal(harness.diagnostics().rejectedAudioSeconds, samples / rate);
+    assert.equal(ws.closed, true);
+  }
+}
 async function verifyClosedSocketReconnectsAndStopCancelsRetry() {
   const harness = createListenerHarness({ locationHash: "#token=listener-token" });
   await harness.flush();
@@ -1480,6 +1576,38 @@ async function verifyEmptyCacheScopeChangeClearsBackoffEvenWithoutSnapshot() {
   assert.match(collectText(harness.element("#transcript-list")), /새 토큰 성공/);
 }
 
+async function verifyOriginalTranscriptSeparatesContentAndFinalState() {
+  const harness = createListenerHarness({ fetchImpl: async (url) => {
+    if (url === "/api/session") return mockJsonResponse({ access: "public" });
+    if (url.startsWith("/api/status")) return mockJsonResponse({ channels: [
+      { id: "en", name: "English", languageTag: "en-US" },
+    ] });
+    return mockJsonResponse({ transcripts: [
+      { sourceText: "안내 방송을 시작합니다.", isFinal: true,
+        translations: { en: "The announcement begins." } },
+      { sourceText: "다음 문장은", isFinal: false, translations: {} },
+    ] });
+  } });
+  await harness.flush();
+  harness.element("#transcript-language").value = "source";
+  await harness.loadTranscripts(true);
+  const rows = harness.element("#transcript-list").children[0].children;
+  assert.equal(rows.length, 2);
+  for (const row of rows) {
+    assert.equal(row.children.filter(child => child.className === "source-text").length, 1);
+    assert.equal(row.children.filter(child => child.className === "transcript-state").length, 1);
+    assert.equal(row.children.filter(child => child.className === "translated-text").length, 0,
+      "source selection must not create a second content row from final-state metadata");
+  }
+  assert.match(collectText(rows[0]), /안내 방송을 시작합니다\./);
+  assert.match(collectText(rows[0]), /확정/);
+  assert.match(collectText(rows[1]), /다음 문장은/);
+  assert.match(collectText(rows[1]), /받는 중/);
+  harness.element("#transcript-language").value = "en";
+  await harness.loadTranscripts(true);
+  assert.match(collectText(harness.element("#transcript-list")), /The announcement begins\./);
+}
+
 async function verifyRestrictedStorageStillAllowsQrAndPinEntry() {
   for (const locationHash of ["", "#token=synthetic-qr"]) {
     const requests = [];
@@ -1508,6 +1636,7 @@ async function verifyRestrictedStorageStillAllowsQrAndPinEntry() {
   }
 }
 
+await verifyOriginalTranscriptSeparatesContentAndFinalState();
 await verifyRestrictedStorageStillAllowsQrAndPinEntry();
 await verifyDeveloperInformationIsOptInAndDoesNotRefetchOrHideErrors();
 await verifyPinnedLanguageCanSwitchToOriginal();
@@ -1515,7 +1644,11 @@ await verifyDelayedResumeCannotUndoPause();
 await verifyRapidLanguageSwitchKeepsOnlyNewestGeneration();
 await verifyTranscriptPollingCoalescesAndRevalidates();
 await verifyTranscriptLanguageChangeRepaintsDuringNotModifiedRequest();
-await verifySlowPlaybackQueueStaysBoundedForFiveMinutes();
+await verifyLiveListeningAvoidsSlowRateDriftForFiveMinutes();
+await verifySlowReplayPreferenceCannotCarryIntoLivePlayback();
+await verifyBurstsPreserveContentAndOverloadIsExplicit();
+await verifyOverloadRecoveryRetainsLossAndDisclosesPendingSkip();
+await verifyOversizedFramesAreRejectedBeforeConversion();
 await verifyClosedSocketReconnectsAndStopCancelsRetry();
 await verifyTranscriptRetainsOn429WithRetryAfterBackoff();
 await verifyTranscript429ParsesHttpDateHeader();

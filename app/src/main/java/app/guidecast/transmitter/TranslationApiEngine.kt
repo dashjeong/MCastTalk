@@ -78,7 +78,7 @@ class TranslationApiService internal constructor(
 
     private suspend fun onlineBatch(options: TranslationApiOptions, text: String, context: String?, source: String,
         target: String, style: TranslationStyle, identity: TranslationRequestIdentity,
-        batch: SharedTranslationBatchContext, local: TextTranslationEngine): String {
+        batch: SharedTranslationBatchContext, reference: Pair<Long, String>): String {
         check(target in batch.targets)
         val fingerprint = java.security.MessageDigest.getInstance("SHA-256").digest(
             JSONObject().put("text", text).put("context", context.orEmpty()).put("source", source)
@@ -87,10 +87,10 @@ class TranslationApiService internal constructor(
         val translations = batch.await(identity, fingerprint) {
             fun allowed() = batch.accepts() && authorized(options)
             check(allowed()) { "Online consent changed" }
-            val reference = if (options.allowDomainReferences && local is DomainCorpusTranslationEngine)
-                withTimeout(100L) { local.captureBatchReference(text, source, batch.targets, style) } else 0L to ""
-            val request = GeminiTranslationBatch.request(options, style, text, context, source, batch.targets,
-                reference.second, reference.first)
+            val google = options.provider == TranslationApiProvider.GEMINI
+            val request = if (google) GeminiTranslationBatch.request(options, style, text, context, source, batch.targets,
+                reference.second, reference.first) else OpenAiTranslationBatch.request(options, style, text, context,
+                source, batch.targets, reference.second, reference.first)
             val key = keyFor(options) ?: error("API key unavailable")
             check(allowed())
             val requestId = java.util.UUID.randomUUID().toString()
@@ -104,7 +104,7 @@ class TranslationApiService internal constructor(
                 "revision=${options.revision} target_count=${batch.targets.size} stage=DISPATCH")
             try {
                 response = withTimeout(8_000L) {
-                    httpFactory(options).postObserved(options.endpoint, CloudReviewProvider.GOOGLE, key, request, 8_000L, ::allowed,
+                    httpFactory(options).postObserved(options.endpoint, if (google) CloudReviewProvider.GOOGLE else CloudReviewProvider.OPENAI, key, request, 8_000L, ::allowed,
                         observeTransport = { event ->
                             when (event.phase) {
                                 CloudTransportPhase.ATTEMPT -> attempts.incrementAndGet()
@@ -116,7 +116,8 @@ class TranslationApiService internal constructor(
                         })
                 }
                 check(allowed()) { "Online consent changed" }
-                val values = GeminiTranslationBatch.result(options, requireNotNull(response) { "Batch response unavailable" }, batch.targets)
+                val values = if (google) GeminiTranslationBatch.result(options, requireNotNull(response) { "Batch response unavailable" }, batch.targets)
+                    else OpenAiTranslationBatch.result(options, requireNotNull(response) { "Batch response unavailable" }, batch.targets)
                 // Validate every language before releasing ANY translation to its TTS worker.
                 values.forEach { (language, value) ->
                     check(targetScriptMatches(value, language)) { "Batch language mismatch" }
@@ -134,15 +135,43 @@ class TranslationApiService internal constructor(
                 throw IllegalStateException("다국어 번역을 완료하지 못했습니다. 입력·연결·모델 상태를 확인하세요.", error)
             } finally {
                 val elapsed = (System.nanoTime() - started) / 1_000_000L
-                val rawUsage = geminiBatchUsage(response)
-                recordBatchUsage(options, rawUsage, elapsed, batch.targets.size)
-                RuntimeDiagnosticLog.record("batch_usage", "request_id=$requestId input_session=${batch.correlationId} sequence=${identity.sequence} " +
+                val usageDiagnostic = if (google) {
+                    val rawUsage = geminiBatchUsage(response)
+                    recordBatchUsage(options, rawUsage, elapsed, batch.targets.size)
+                    rawUsage.diagnostic()
+                } else {
+                    val rawUsage = openAiBatchUsage(response)
+                    recordOpenAiBatchUsage(options, rawUsage, elapsed, batch.targets.size)
+                    rawUsage.diagnostic()
+                }
+                RuntimeDiagnosticLog.record("batch_usage", "provider=${options.provider} request_id=$requestId input_session=${batch.correlationId} sequence=${identity.sequence} " +
                     "revision=${options.revision} target_count=${batch.targets.size} attempts=${attempts.get()} bodies_sent=${bodiesSent.get()} " +
-                    "http_status=${responseStatus.get().takeIf { it >= 0 } ?: "UNKNOWN"} outcome=$outcome elapsed_ms=$elapsed ${rawUsage.diagnostic()}", true)
+                    "http_status=${responseStatus.get().takeIf { it >= 0 } ?: "UNKNOWN"} outcome=$outcome elapsed_ms=$elapsed $usageDiagnostic", true)
             }
         }
         check(authorized(options) && batch.accepts()) { "Online consent changed" }
         return translations.getValue(target)
+    }
+
+    @Synchronized private fun recordOpenAiBatchUsage(options: TranslationApiOptions, raw: OpenAiBatchUsage,
+        elapsedMillis: Long, targets: Int) {
+        val measured = if (raw.input != null && raw.cached != null && raw.output != null && raw.totalsMatch == true)
+            OnlineUsage(ModalityUsage(raw.input, raw.cached, raw.output)) else null
+        val price = translationPrice(options)
+        val estimate = price?.estimate(measured)
+        val previous = mutableUsage.value
+        mutableUsage.value = previous.copy(requests = previous.requests + 1,
+            unconfirmedUsage = previous.unconfirmedUsage + if (measured == null) 1 else 0,
+            unpricedUsage = previous.unpricedUsage + if (measured != null && price == null) 1 else 0,
+            estimatedUsd = previous.estimatedUsd + (estimate ?: java.math.BigDecimal.ZERO),
+            textInputTokens = previous.textInputTokens + (measured?.text?.input ?: 0),
+            cachedInputTokens = previous.cachedInputTokens + (measured?.text?.cachedInput ?: 0),
+            textOutputTokens = previous.textOutputTokens + (measured?.text?.output ?: 0),
+            requestWallMillis = previous.requestWallMillis + elapsedMillis.coerceAtLeast(0),
+            lastModel = options.model, priceVersion = price?.version, sharedTargetCount = targets,
+            reportedInputTokens = raw.input, reportedOutputTokens = raw.output, reportedReasoningTokens = raw.reasoning,
+            reportedTotalsMatch = raw.totalsMatch,
+            reportedTotalTokens = raw.total, reportedPromptTokens = null, reportedCandidateTokens = null, reportedThoughtTokens = null)
     }
 
     @Synchronized private fun recordBatchUsage(options: TranslationApiOptions, raw: GeminiBatchUsage, elapsedMillis: Long, targets: Int) {
@@ -161,12 +190,15 @@ class TranslationApiService internal constructor(
             requestWallMillis = previous.requestWallMillis + elapsedMillis.coerceAtLeast(0),
             lastModel = options.model, priceVersion = price?.version, sharedTargetCount = targets,
             reportedPromptTokens = raw.prompt, reportedCandidateTokens = raw.candidates,
-            reportedThoughtTokens = raw.thoughts, reportedTotalTokens = raw.total)
+            reportedTotalsMatch = raw.totalsMatch,
+            reportedThoughtTokens = raw.thoughts, reportedTotalTokens = raw.total,
+            reportedInputTokens = null, reportedOutputTokens = null, reportedReasoningTokens = null)
     }
 
     private suspend fun online(options: TranslationApiOptions, text: String, context: String?, source: String,
         target: String, style: TranslationStyle, hints: String, corpusRevision: Long,
         identity: TranslationRequestIdentity, allowed: () -> Boolean): String {
+        check(!options.usesNativeLiveAudio) { "직접 음성 통역은 문장 API로 대체하지 않습니다." }
         check(allowed() && validTranslationApiOptions(options)) { "온라인 전송 동의가 필요합니다." }
         require(text.length in 1..4_000 && text.isNotBlank() && !containsCredentialLikeText(text) &&
             !containsCredentialLikeText(context.orEmpty().takeLast(1_000)) && !containsCredentialLikeText(hints))
@@ -183,7 +215,7 @@ class TranslationApiService internal constructor(
                 withTimeout(6_000L) {
                     if (options.provider == TranslationApiProvider.OPENAI_REALTIME) {
                         val json = JSONObject(request)
-                        realtime.translate(key, json.getString("instructions"),
+                        realtime.translateModel(options.model, key, json.getString("instructions"),
                             json.getJSONArray("input").getJSONObject(0).getString("content"), allowed).also {
                             response = it.rawResponse
                         }.text
@@ -227,11 +259,28 @@ class TranslationApiService internal constructor(
             fun current(): Boolean = valid.get() && primaryJob?.isCancelled != true && currentOptions() == primary &&
                 if (offlinePrimary) auxiliary != null && auxiliaryAuthorized(auxiliary) && sessionLearning()
                 else authorized(primary) && (primary.alwaysLearnOnline || sessionLearning())
-            val capture = if (compare || onlineOptions?.allowDomainReferences == true) try {
+            val batch = currentCoroutineContext()[SharedTranslationBatchContext]
+            val sharedCapture = batch != null && onlineOptions?.provider in setOf(TranslationApiProvider.GEMINI, TranslationApiProvider.OPENAI) &&
+                (compare || onlineOptions?.allowDomainReferences == true) && local is DomainCorpusTranslationEngine
+            val frozen = if (sharedCapture) try {
+                val fingerprint = java.security.MessageDigest.getInstance("SHA-256").digest(
+                    JSONObject().put("text", text).put("context", contextBefore.orEmpty()).put("source", sourceLanguageTag)
+                        .put("style", style.name).put("revision", primary.revision).toString().toByteArray()
+                ).joinToString("") { "%02x".format(it) }
+                batch!!.freezeInputSnapshot(identity, fingerprint) {
+                    withTimeout(100L) { (local as DomainCorpusTranslationEngine)
+                        .captureInputSnapshot(text, sourceLanguageTag, batch.targets, style) }
+                }
+            } catch (_: TimeoutCancellationException) { null }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { null } else null
+            val capture = if (sharedCapture) frozen?.let { (local as DomainCorpusTranslationEngine).fromInputSnapshot(it, targetLanguageTag) }
+            else if (compare || onlineOptions?.allowDomainReferences == true) try {
                 withTimeoutOrNull(50) { (local as? DomainCorpusTranslationEngine)?.capture(text, sourceLanguageTag, targetLanguageTag, style) }
             } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { null } else null
             val hints = capture?.capturedHints.orEmpty()
             val version = capture?.capturedRevision ?: 0L
+            currentCoroutineContext()[TranslationDeliveryContext]?.bindVersions(primary.revision, capture?.capturedRevision)
             var onlineResult: String? = null
             var offlineResult: String? = null
             val pairLock = Any()
@@ -246,7 +295,10 @@ class TranslationApiService internal constructor(
             suspend fun runLocal(engine: TextTranslationEngine): String = if (engine is ContextualTextTranslationEngine)
                 engine.translateWithContext(text, contextBefore, sourceLanguageTag, targetLanguageTag)
                 else engine.translate(text, sourceLanguageTag, targetLanguageTag)
-            val comparisonReady = compare && capture != null && comparisonResources() &&
+            val exactEvidenceComparable = frozen?.let {
+                it.matches[targetLanguageTag]?.exactTranslation == null || targetLanguageTag in it.exactReferencesIncluded
+            } ?: true
+            val comparisonReady = compare && capture != null && exactEvidenceComparable && comparisonResources() &&
                 (offlinePrimary || shadowAllowed(targetLanguageTag)) && (hints.isEmpty() || onlineOptions?.allowDomainReferences == true)
             if (comparisonReady) {
                 val accepted = shadowRunner.offer(allowed = { current() && comparisonResources() && (offlinePrimary || shadowAllowed(targetLanguageTag)) }) {
@@ -263,8 +315,12 @@ class TranslationApiService internal constructor(
                     } catch (_: Exception) { updateShadow { it.copy(incomplete = it.incomplete + 1, lastPause = "보조 비교 실패 · 주 방송 유지") } }
                 }
                 if (!accepted) pause("비교 대기열이 가득 찼거나 일시 중지됨")
-            } else if (compare) pause(if (hints.isNotEmpty() && onlineOptions?.allowDomainReferences != true)
-                "동일 자료 비교를 위한 관련 근거 전송 동의 필요" else "로컬 엔진·자료·열·메모리 준비 필요")
+            } else if (compare) pause(when {
+                sharedCapture && frozen == null -> "동일 자료 버전을 확인하지 못해 학습 비교 보류"
+                !exactEvidenceComparable -> "동일 근거를 담지 못해 학습 비교 보류"
+                hints.isNotEmpty() && onlineOptions?.allowDomainReferences != true -> "동일 자료 비교를 위한 관련 근거 전송 동의 필요"
+                else -> "로컬 엔진·자료·열·메모리 준비 필요"
+            })
             try {
                 if (offlinePrimary) {
                     val result = runLocal(capture ?: local)
@@ -272,9 +328,9 @@ class TranslationApiService internal constructor(
                     if (comparisonReady) complete(false, result)
                     return result
                 }
-                val batch = currentCoroutineContext()[SharedTranslationBatchContext]
-                val result = if (primary.provider == TranslationApiProvider.GEMINI && batch != null)
-                    onlineBatch(primary, text, contextBefore, sourceLanguageTag, targetLanguageTag, style, identity, batch, local)
+                val result = if (primary.provider in setOf(TranslationApiProvider.GEMINI, TranslationApiProvider.OPENAI) && batch != null)
+                    onlineBatch(primary, text, contextBefore, sourceLanguageTag, targetLanguageTag, style, identity, batch,
+                        if (primary.allowDomainReferences) version to hints else 0L to "")
                 else online(primary, text, contextBefore, sourceLanguageTag, targetLanguageTag, style,
                     if (primary.allowDomainReferences) hints else "", version, identity) { authorized(primary) }
                 if (comparisonReady) complete(true, result)
@@ -370,6 +426,10 @@ internal object TranslationApiJson {
 
 /** Session-local comparison evidence, not a correctness verdict or an automatically applied lesson. */
 data class ShadowComparison(val original: String, val contextBefore: String?, val source: String, val target: String,
-    val corpusRevision: Long, val online: String, val offline: String, val style: TranslationStyle = TranslationStyle.AUTO)
+    val corpusRevision: Long, val online: String, val offline: String, val style: TranslationStyle = TranslationStyle.AUTO,
+    val nativeIdentity: NativeComparisonIdentity? = null, val offlineModel: String? = null)
+data class NativeComparisonIdentity(val sessionId: Long, val inputId: String, val responseId: String,
+    val inputSequence: Long, val settingsRevision: Long, val provider: TranslationApiProvider, val model: String,
+    val controlGeneration: Long = 0)
 data class ShadowComparisonStatus(val attempted: Long = 0, val completed: Long = 0, val incomplete: Long = 0, val lastPause: String? = null,
-    val skipped: Long = 0, val last: ShadowComparison? = null)
+    val skipped: Long = 0, val last: ShadowComparison? = null, val nativeControlGeneration: Long? = null)

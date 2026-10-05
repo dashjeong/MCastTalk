@@ -87,9 +87,17 @@ class StrictTranslationBatchJsonTest {
         assertThrowsIllegalArgumentException { parseStrictTranslationBatch("""{"en": "hello\u0000world"}""", listOf("en")) }
         assertThrowsIllegalArgumentException { parseStrictTranslationBatch("""{"en": "hello\u001fworld"}""", listOf("en")) }
         assertThrowsIllegalArgumentException { parseStrictTranslationBatch("""{"en": "hello\u007fworld"}""", listOf("en")) }
-        assertThrowsIllegalArgumentException { parseStrictTranslationBatch("""{"en": "hello\nworld"}""", listOf("en")) }
-        assertThrowsIllegalArgumentException { parseStrictTranslationBatch("""{"en": "hello\tworld"}""", listOf("en")) }
+        assertThrowsIllegalArgumentException { parseStrictTranslationBatch("""{"en": "hello\bworld"}""", listOf("en")) }
+        assertThrowsIllegalArgumentException { parseStrictTranslationBatch("""{"en": "hello\fworld"}""", listOf("en")) }
         assertThrowsIllegalArgumentException { parseStrictTranslationBatch("{\"en\": \"hello\nworld\"}", listOf("en")) }
+    }
+
+    @Test fun onlyEscapedFormattingWhitespaceInValuesIsNormalized() {
+        for (escaped in listOf("\\n", "\\r", "\\t", "\\u000A", "\\u000D", "\\u0009")) {
+            assertEquals("hello world", parseStrictTranslationBatch("{\"en\":\"hello${escaped}world\"}", listOf("en"))["en"])
+            assertThrowsIllegalArgumentException { parseStrictTranslationBatch("{\"e${escaped}n\":\"hello\"}", listOf("en")) }
+        }
+        assertThrowsIllegalArgumentException { parseStrictTranslationBatch("""{"en":"a","\u0065n":"b"}""", listOf("en")) }
     }
 
     @Test

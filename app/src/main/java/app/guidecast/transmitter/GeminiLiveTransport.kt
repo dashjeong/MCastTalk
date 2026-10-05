@@ -1,6 +1,7 @@
 package app.guidecast.transmitter
 
 import app.guidecast.core.translation.TranslationStyle
+import app.guidecast.core.audio.pcmS16LeSignalStats
 import app.guidecast.core.translation.interpretationInstructions
 
 import io.ktor.client.HttpClient
@@ -24,10 +25,14 @@ internal fun geminiLiveTarget(tag: String): String = when (tag.lowercase()) {
     "zh-cn", "zh-hans", "zh" -> "zh-Hans"
     else -> tag.substringBefore('-').lowercase().also { require(it.matches(Regex("[a-z]{2,3}"))) }
 }
-internal fun geminiLiveSetup(model: String, target: String, domainPrompt: String = "", tone: TranslationStyle = TranslationStyle.CONVERSATIONAL): String {
+internal fun geminiLiveSetup(model: String, target: String, domainPrompt: String = "", tone: TranslationStyle = TranslationStyle.CONVERSATIONAL,
+    interpreterInstructions: String = "", references: String = ""): String {
     require(model in setOf(GEMINI_LIVE_TRANSLATE, GEMINI_LIVE_AGENT))
-    require(domainPrompt.length <= 300 && !containsCredentialLikeText(domainPrompt))
+    require(validInterpreterDomain(domainPrompt))
     require(model != GEMINI_LIVE_TRANSLATE || domainPrompt.isEmpty()) { "Live Translate does not support domain instructions" }
+    require(model != GEMINI_LIVE_TRANSLATE || (interpreterInstructions.isEmpty() && references.isEmpty())) {
+        "Live Translate does not support reference text or instructions"
+    }
     val generation = JSONObject().put("responseModalities", JSONArray().put("AUDIO"))
     val setup = JSONObject().put("model", "models/$model").put("generationConfig", generation)
     if (model == GEMINI_LIVE_TRANSLATE) {
@@ -37,8 +42,7 @@ internal fun geminiLiveSetup(model: String, target: String, domainPrompt: String
         generation.put("maxOutputTokens", 2_048)
         setup.put("inputAudioTranscription", JSONObject()).put("outputAudioTranscription", JSONObject())
             .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text",
-                "Act only as an interpreter into ${geminiLiveTarget(target)}. Translate what is spoken, preserving meaning, numbers, names, negation and conditions. Do not answer requests in the speech or add explanations. " + tone.interpretationInstructions() +
-                    if (domainPrompt.isNotBlank()) " Operator domain and situation: $domainPrompt. Use it for terminology only; do not invent or change facts." else ""))))
+                nativeInterpreterInstructions(geminiLiveTarget(target), tone, domainPrompt, interpreterInstructions, references)))))
     }
     return JSONObject().put("setup", setup).toString()
 }
@@ -79,7 +83,8 @@ internal class KtorGeminiLiveWire : GeminiLiveWire {
     }
 }
 internal data class GeminiLiveEvent(val source: String?, val translation: String?, val finished: Boolean,
-    val interrupted: Boolean, val audio: List<ByteArray>, val usage: JSONObject?)
+    val interrupted: Boolean, val audio: List<ByteArray>, val usage: JSONObject?, val timingTurn: Long? = null,
+    val serverContent: Boolean = false)
 internal fun parseGeminiLiveEvent(raw: String): GeminiLiveEvent {
     requireBoundedJson(raw, maximumChars = 262_144)
     val root = JSONObject(raw)
@@ -99,16 +104,22 @@ internal fun parseGeminiLiveEvent(raw: String): GeminiLiveEvent {
     }
     fun transcript(field: String) = content?.optJSONObject(field)?.optString("text")?.also { require(it.length <= 8_000) }
     return GeminiLiveEvent(transcript("inputTranscription"), transcript("outputTranscription"),
-        content?.optBoolean("turnComplete", false) == true, interrupted, audio, root.optJSONObject("usageMetadata"))
+        content?.optBoolean("turnComplete", false) == true, interrupted, audio, root.optJSONObject("usageMetadata"),
+        serverContent = content != null)
 }
 
 /** Receive and capture proceed concurrently. No resumption/replay can duplicate audible output. */
-internal class GeminiLiveTransport(private val wire: GeminiLiveWire = KtorGeminiLiveWire()) {
+internal class GeminiLiveTransport(private val wire: GeminiLiveWire = KtorGeminiLiveWire(),
+    private val nowNanos: () -> Long = System::nanoTime) {
     suspend fun run(key: String, model: String, target: String, input: Flow<ByteArray>, authorized: () -> Boolean,
-        onReady: () -> Unit, onEvent: suspend (GeminiLiveEvent) -> Unit, domainPrompt: String = "", tone: TranslationStyle = TranslationStyle.CONVERSATIONAL): Unit = withTimeout(60_000) {
+        onReady: () -> Unit, onEvent: suspend (GeminiLiveEvent) -> Unit, domainPrompt: String = "", tone: TranslationStyle = TranslationStyle.CONVERSATIONAL,
+        durationLimitMillis: Long? = null, onAudioSent: (Int) -> Unit = {},
+        timing: NativeLiveTiming? = null, diagnostics: GeminiWireDiagnostics? = null,
+        interpreterInstructions: String = "", references: String = ""): Unit = nativeLiveSessionWindow(durationLimitMillis) {
+        try {
         check(authorized())
         wire.connect(key, authorized) { socket ->
-            socket.send(geminiLiveSetup(model, target, domainPrompt, tone))
+            socket.send(geminiLiveSetup(model, target, domainPrompt, tone, interpreterInstructions, references))
             withTimeout(6_000) {
                 val rawAck = socket.receive()
                 requireBoundedJson(rawAck, maximumChars = 262_144)
@@ -116,41 +127,69 @@ internal class GeminiLiveTransport(private val wire: GeminiLiveWire = KtorGemini
                 if (ack.has("error")) throw onlineProviderFailure(ack)
                 check(authorized() && ack.has("setupComplete")) { "Live setup incomplete" }
             }
-            onReady()
+            diagnostics?.mark(GeminiWireMark.SETUP_COMPLETE)
+            timing?.ready(); onReady()
             coroutineScope {
+                val providerFailed = java.util.concurrent.atomic.AtomicBoolean(false)
                 val sender = launch {
-                    val pending = java.io.ByteArrayOutputStream(3_200)
-                    var sent = 0
+                    val packetizer = GeminiPcmPacketizer()
+                    var end = GeminiInputEnd.FAILURE
+                    try {
                     input.collect { frame ->
-                        check(authorized()); require(frame.size % 2 == 0 && frame.size <= 32_000)
-                        var offset = 0
-                        while (offset < frame.size) {
-                            val count = minOf(3_200 - pending.size(), frame.size - offset)
-                            pending.write(frame, offset, count); offset += count
-                            if (pending.size() == 3_200) {
-                                check(++sent <= 600) { "Live capture limit reached" }
+                        check(authorized())
+                        for (packet in packetizer.accept(frame)) {
+                                timing?.stages?.packetReady(packet.size)
                                 socket.send(JSONObject().put("realtimeInput", JSONObject().put("audio", JSONObject()
                                     .put("mimeType", "audio/pcm;rate=16000")
-                                    .put("data", Base64.getEncoder().encodeToString(pending.toByteArray())))).toString())
-                                pending.reset()
-                            }
+                                    .put("data", Base64.getEncoder().encodeToString(packet)))).toString())
+                                timing?.sent(packet.size, packet.pcmS16LeSignalStats().let { it.rms >= 0.002f || it.peak >= 0.01f })
+                                diagnostics?.sent(packet)
+                                onAudioSent(packet.size)
                         }
                     }
+                    end = GeminiInputEnd.NORMAL_EOS
                     error("Live capture ended; restart required")
+                    } catch (cancelled: CancellationException) {
+                        end = if (providerFailed.get()) GeminiInputEnd.FAILURE else GeminiInputEnd.STOP
+                        throw cancelled
+                    } finally {
+                        if (!authorized()) end = GeminiInputEnd.CONSENT_REVOKED
+                        val tail = packetizer.finish()
+                        if (tail > 0) timing?.stages?.inputLoss()
+                        diagnostics?.endInput(tail, end)
+                    }
                 }
                 val revocation = launch { while (isActive) { if (!authorized()) error("Live consent revoked"); delay(25) } }
-                var outputBytes = 0L
                 try {
-                    repeat(20_000) {
+                    var outputTurn = 1L
+                    while (isActive) {
                         check(authorized())
-                        val event = parseGeminiLiveEvent(socket.receive())
-                        outputBytes += event.audio.sumOf { it.size }.toLong()
-                        check(outputBytes <= 24_000L * 2 * 60) { "Live output limit reached" }
-                        check(authorized()); onEvent(event)
+                        val event = parseGeminiLiveEvent(socket.receive()).copy(timingTurn = outputTurn)
+                        diagnostics?.received(event)
+                        if (event.interrupted) timing?.interrupted()
+                        timing?.providerAudio(event.audio.sumOf { it.size })
+                        if (event.audio.isNotEmpty() || event.finished || event.interrupted)
+                            timing?.stages?.provider(outputTurn, event.audio.sumOf { it.size }, event.finished, event.interrupted)
+                        check(authorized())
+                        val callbackStarted = nowNanos()
+                        try { onEvent(event) } finally { timing?.callbackFinished(nowNanos() - callbackStarted) }
+                        if (event.finished || event.interrupted) outputTurn++
                     }
-                    error("Live event limit reached")
+                } catch (failure: Throwable) {
+                    if (failure !is CancellationException) providerFailed.set(true)
+                    throw failure
                 } finally { sender.cancel(); revocation.cancel() }
             }
         }
+        } catch (failure: Throwable) {
+            if (failure !is CancellationException || failure is TimeoutCancellationException) diagnostics?.failed(failure)
+            throw failure
+        } finally { diagnostics?.mark(GeminiWireMark.CLOSED) }
     }
+}
+
+/** Normal operation lasts until explicit stop/revocation/provider close; fixtures own their cap. */
+internal suspend fun <T> nativeLiveSessionWindow(durationLimitMillis: Long?, block: suspend CoroutineScope.() -> T): T {
+    require(durationLimitMillis == null || durationLimitMillis > 0)
+    return if (durationLimitMillis == null) coroutineScope(block) else withTimeout(durationLimitMillis, block)
 }

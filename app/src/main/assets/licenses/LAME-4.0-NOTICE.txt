@@ -1,0 +1,10 @@
+MCastTalk uses LAME 4.0 for on-device MP3 export.
+Copyrights: The LAME Project and contributors; see upstream source headers.
+License: GNU Library General Public License v2 or later (COPYING and individual source headers).
+Official project: https://lame.sourceforge.io/
+Unmodified upstream source: third_party/lame/lame-4.0.tar.gz in the distributed product source.
+Source SHA256: 3df5124d5ad3a98312ffd7ba6a9b36230e4f8a3e66d3ce0f425e336c32d216eb
+Android encoder-only build configuration and JNI client: third_party/lame/android/ and scripts/build-lame.sh.
+LAME is packaged separately as libmp3lame.so; the JNI client dynamically links it.
+Build/relink instructions are included with the product source. Decoder/frontend disabled; encoding is local.
+No warranty is provided by upstream.

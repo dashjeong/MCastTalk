@@ -5,6 +5,7 @@ import vm from "node:vm";
 const base = new URL("../core/server/src/main/assets/listener/", import.meta.url);
 const source = await readFile(new URL("i18n.js", base), "utf8");
 const player = await readFile(new URL("player.js", base), "utf8");
+const replay = await readFile(new URL("replay.js", base), "utf8");
 const html = await readFile(new URL("index.html", base), "utf8");
 const context = vm.createContext({});
 vm.runInContext(source, context);
@@ -19,7 +20,18 @@ for (const locale of api.locales) {
   for (const text of html.matchAll(/>([^<>]*[가-힣][^<>]*)</g)) {
     assert(!/[가-힣]/.test(ui.text(text[1])), `${locale}: ${text[1]}`);
   }
+  for (const text of replay.matchAll(/"([^"\n]*[가-힣][^"\n]*)"/g)) {
+    assert(!/[가-힣]/.test(ui.text(text[1])), `${locale}: replay ${text[1]}`);
+  }
+  assert(!/[가-힣]/.test(ui.text("녹음 공백 3회 · 실시간 듣기는 계속됩니다")));
   assert(!/[가-힣]/.test(ui.text("방송 연결 끊김 · 0.5초 후 재연결")));
+  assert(!/[가-힣]/.test(ui.text("오디오 running · 10 프레임 · 재생 대기 3.0초 · 미재생 음성 2.0초")));
+  assert(!/[가-힣]/.test(ui.text("수신량이 많아 새 음성 수신을 멈췄습니다 · 받은 음성은 계속 재생됩니다. 누락 구간은 돌려보기에서 확인하세요.")));
+  for (const text of ["대기 음성 건너뛰고 다시 연결", "대기 음성 건너뛰고 현재 방송",
+    "받은 음성 건너뛰기 누적 10.00초", "거절된 음성 누적 0.020초",
+    "수신 중단 이후 미수신 음성량 UNKNOWN", "받은 대기 음성 10.00초를 건너뛰고 방송 연결 중"]) {
+    assert(!/[가-힣]/.test(ui.text(text)), `${locale}: ${text}`);
+  }
   assert(!/[가-힣]/.test(ui.text("확정 후 첫 음성 1800ms (2초 목표 이내)")));
   assert.notEqual(ui.text("재생"), "재생");
   const node = {nodeValue: "재생", parentElement: {tagName: "BUTTON"}};

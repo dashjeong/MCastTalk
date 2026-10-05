@@ -58,6 +58,9 @@ val requiredStaticLicenseAssetNames = setOf(
     "THIRD-PARTY-NOTICES.txt",
     "OPENCC-APACHE-2.0.txt",
     "OPENCC-README.txt",
+    "LAME-4.0-COPYING.txt",
+    "LAME-4.0-LICENSE.txt",
+    "LAME-4.0-NOTICE.txt",
 )
 val requiredGeneratedLicenseAssetNames = setOf(
     "upstream/LICENSE",
@@ -133,12 +136,14 @@ android {
         applicationId = "app.guidecast.transmitter"
         minSdk = 30
         targetSdk = 36
-        versionCode = 59
-        versionName = "0.2.47"
+        versionCode = 60
+        versionName = "0.2.48"
 
         // Galaxy Note9/S23 and newer targets are ARM64. Keeping only the required ABI
         // avoids shipping an unused second LiteRT-LM native runtime in the sideload APK.
-        ndk.abiFilters += "arm64-v8a"
+        val testAbi = providers.gradleProperty("guideCastTestAbi").orNull
+        require(testAbi == null || testAbi == "x86_64")
+        ndk.abiFilters += testAbi ?: "arm64-v8a"
 
         testInstrumentationRunner = "app.guidecast.transmitter.GuideCastTestRunner"
         vectorDrawables.useSupportLibrary = true
@@ -173,6 +178,7 @@ android {
             versionNameSuffix = "-debug"
         }
         release {
+            vcsInfo.include = false
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -182,6 +188,7 @@ android {
         }
         create("alpha") {
             initWith(getByName("release"))
+            vcsInfo.include = false
             applicationIdSuffix = ".alpha"
             // Keep the installed application ID and build task for in-place Alpha -> Beta updates.
             versionNameSuffix = "-beta"
@@ -199,6 +206,9 @@ android {
     }
 
     sourceSets.getByName("main").assets.srcDir(generatedThirdPartyLicenseAssets)
+    // Lab guards are shared by JVM/API0 device tests, never packaged in the product APK.
+    sourceSets.getByName("test").java.srcDir("src/testSupport/kotlin")
+    sourceSets.getByName("androidTest").java.srcDir("src/testSupport/kotlin")
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -215,6 +225,8 @@ android {
         // bytes so the APK gate can reject any stale or accidentally substituted runtime.
         jniLibs.keepDebugSymbols += "lib/arm64-v8a/libmoonshine.so"
         jniLibs.keepDebugSymbols += "lib/arm64-v8a/libmoonshine-jni.so"
+        jniLibs.keepDebugSymbols += "**/libmp3lame.so"
+        jniLibs.keepDebugSymbols += "**/libguidecast_mp3.so"
     }
 }
 
@@ -283,8 +295,24 @@ val verifyMoonshineDependency by tasks.registering {
     }
 }
 
+val verifyMp3Encoder by tasks.registering {
+    group = "verification"
+    description = "Checks the pinned encoder-only LAME source, JNI client and shared libraries."
+    doLast {
+        val manifest = groovy.json.JsonSlurper().parse(rootProject.file("third_party/lame/provenance.json")) as Map<*, *>
+        for (group in listOf("inputs", "libraries")) {
+            for (entry in manifest[group] as List<*>) {
+                val item = entry as Map<*, *>
+                val file = rootProject.file(item["path"] as String)
+                val sha = MessageDigest.getInstance("SHA-256").digest(file.readBytes()).joinToString("") { "%02x".format(it) }
+                check(sha == item["sha256"]) { "Pinned MP3 $group file changed: ${item["path"]}" }
+            }
+        }
+    }
+}
+
 tasks.named("preBuild").configure {
-    dependsOn(generateThirdPartyLicenseAssets, verifyThirdPartyLicenseAssets, verifyMoonshineDependency)
+    dependsOn(generateThirdPartyLicenseAssets, verifyThirdPartyLicenseAssets, verifyMoonshineDependency, verifyMp3Encoder)
 }
 
 val verifyPackagedThirdPartyLicenseAssets by tasks.registering {

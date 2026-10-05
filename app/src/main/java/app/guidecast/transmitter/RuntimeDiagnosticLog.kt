@@ -47,10 +47,17 @@ internal object RuntimeDiagnosticLog {
     }
 
     fun record(event: String, detail: String = "", critical: Boolean = false) {
-        val record = "${System.currentTimeMillis()} ${if (critical) "ERROR" else "INFO"} $event $detail"
+        write(event, detail, critical, critical)
+    }
+
+    /** Count-only receipts need synchronous durability without labelling a success as ERROR. */
+    fun durableRecord(event: String, detail: String) = write(event, detail, true, false)
+
+    private fun write(event: String, detail: String, synchronous: Boolean, error: Boolean) {
+        val record = "${System.currentTimeMillis()} ${if (error) "ERROR" else "INFO"} $event $detail"
         val target = sink ?: return
         val action = Runnable { runCatching { target.append(record) } }
-        if (critical) action.run() else runCatching { writer.execute(action) }
+        if (synchronous) action.run() else runCatching { writer.execute(action) }
     }
 
     fun failure(event: String, error: Throwable) {

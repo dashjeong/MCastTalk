@@ -77,7 +77,7 @@ private class StrictJsonParser(
                 throw IllegalArgumentException("Invalid JSON syntax: expected string value")
             }
 
-            val value = parseString()
+            val value = parseString(normalizeWhitespace = true)
 
             if (value.isBlank()) {
                 throw IllegalArgumentException("Blank value not allowed")
@@ -122,7 +122,7 @@ private class StrictJsonParser(
         return map
     }
 
-    private fun parseString(): String {
+    private fun parseString(normalizeWhitespace: Boolean = false): String {
         cursor++ // consume opening quote
         val sb = StringBuilder()
 
@@ -144,7 +144,11 @@ private class StrictJsonParser(
                     '"' -> sb.append('"')
                     '\\' -> sb.append('\\')
                     '/' -> sb.append('/')
-                    'b', 'f', 'n', 'r', 't' -> {
+                    'n', 'r', 't' -> {
+                        if (!normalizeWhitespace) throw IllegalArgumentException("Control character escape not allowed")
+                        sb.append(' ')
+                    }
+                    'b', 'f' -> {
                         throw IllegalArgumentException("Control character escape not allowed")
                     }
                     'u' -> {
@@ -165,10 +169,11 @@ private class StrictJsonParser(
                         } else if (code in 0xDC00..0xDFFF) {
                             throw IllegalArgumentException("Unpaired surrogate")
                         } else {
-                            if (Character.isISOControl(code)) {
+                            if (normalizeWhitespace && code in listOf(9, 10, 13)) {
+                                sb.append(' ')
+                            } else if (Character.isISOControl(code)) {
                                 throw IllegalArgumentException("Decoded control character not allowed")
-                            }
-                            sb.append(code.toChar())
+                            } else sb.append(code.toChar())
                         }
                     }
                     else -> throw IllegalArgumentException("Invalid or malformed escape sequence")

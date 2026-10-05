@@ -9,6 +9,27 @@ import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class GeminiLiveSafetyTest {
+    @Test fun liveUsagePreservesUnknownAndExplicitZeroWithoutAddingCache() {
+        val usage = org.json.JSONObject("""{"promptTokensDetails":[{"modality":"AUDIO","tokenCount":0}],"cachedContentTokenCount":55}""")
+        assertEquals(0L, reportedLiveModalityTokens(usage, "promptTokensDetails", "AUDIO"))
+        assertNull(reportedLiveModalityTokens(usage, "promptTokensDetails", "TEXT"))
+        assertNull(reportedLiveModalityTokens(usage, "responseTokensDetails", "AUDIO"))
+        val invalid = org.json.JSONObject("""{"promptTokensDetails":[{"modality":"AUDIO","tokenCount":-1}]}""")
+        assertNull(reportedLiveModalityTokens(invalid, "promptTokensDetails", "AUDIO"))
+    }
+
+    @Test fun interruptedCaptionRemainsCancelledAndNeverBecomesReviewedAlignment() {
+        val segments = GeminiLiveSegments("en", "ko", 100)
+        segments.accept(GeminiLiveEvent("공개 합성 문장", "Synthetic sentence", false, false, emptyList(), null), 1)
+        val cancelled = requireNotNull(segments.accept(GeminiLiveEvent(null, null, false, true, emptyList(), null), 2))
+        assertEquals(LiveOutputState.CANCELLED, cancelled.liveOutputState)
+        assertNull(cancelled.liveSourceFinal)
+        assertTrue(cancelled.sourceStatusLabel.contains("미확인"))
+        val next = requireNotNull(segments.accept(GeminiLiveEvent(null, null, false, false, listOf(ByteArray(640)), null), 3))
+        assertTrue(next.sequence > cancelled.sequence)
+        assertEquals("", next.sourceText)
+    }
+
     @Test fun threeLanguageDiagnosticsSeparateInputLossAndOutputWithoutSavingContent() {
         val languages = listOf("en", "zh-Hans", "ja").associateWith { GeminiLiveCounters() }
         languages.values.forEach { it.capture(640) }

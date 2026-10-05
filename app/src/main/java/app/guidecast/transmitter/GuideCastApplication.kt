@@ -29,6 +29,7 @@ import java.io.File
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlin.coroutines.coroutineContext
 
 class GuideCastApplication : Application() {
@@ -112,6 +113,8 @@ class GuideCastApplication : Application() {
     }
     val speechRecognitionEngine by speechRecognitionEngineDelegate
     val broadcastRuntime = BroadcastRuntime()
+    internal val recordings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { BroadcastRecordingRepository(this) }
+    internal val recordedPlayback = RecordedPlaybackOwnership()
     internal val translationWorkspaceActive = kotlinx.coroutines.flow.MutableStateFlow(false)
     private val transcriptArchiveDelegate = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         BroadcastTranscriptArchive(this)
@@ -124,6 +127,17 @@ class GuideCastApplication : Application() {
     val speechCorrections by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { SpeechCorrectionRepository(this) }
     val uiDisplaySettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { UiDisplaySettings(this) }
     val operatorSettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { OperatorSettings(this) }
+    internal val interpreterRelaySettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { InterpreterRelaySettings(this) }
+    internal val nativeLearningMonitor = NativeLearningMonitor()
+    private val nativeLearningDispatcherDelegate = lazy {
+        java.util.concurrent.Executors.newSingleThreadExecutor { task ->
+            Thread({ android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND); task.run() },
+                "mcasttalk-native-comparison").apply { isDaemon = true }
+        }.asCoroutineDispatcher()
+    }
+    private val nativeLearningScopeDelegate = lazy {
+        CoroutineScope(SupervisorJob() + nativeLearningDispatcherDelegate.value)
+    }
     val developerLabSettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { DeveloperLabSettings(this) }
     internal val geminiLiveMonitor = GeminiLiveMonitor()
     val translationApiSettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { TranslationApiSettings(this) }
@@ -147,6 +161,54 @@ class GuideCastApplication : Application() {
         manager.getMemoryInfo(info)
         return !info.lowMemory && info.availMem > maxOf(info.threshold, 512L * 1024 * 1024)
     }
+
+    internal fun createNativeLearningSession(sessionId: Long, options: TranslationApiOptions,
+        source: String, target: String, captureStartsAfterAdmission: Boolean, isCurrent: () -> Boolean): NativeLearningSession? =
+        nativeLearningSessionFor(options, sessionId, interpreterRelaySettings.state.value.compareOffline, nativeLearningMonitor) {
+        fun ready(): NativeLearningPause? = when {
+            localFileWorkActive.value || localVoiceNoteWorkActive.value || localModelWorkActive.value -> NativeLearningPause.BUSY
+            !gemmaTranslationProviderDelegate.isInitialized() || !gemmaTranslationProvider.hasActivePreparedWorker() ||
+                !GemmaTranslationProvider.supportsTranslation(source, target) -> NativeLearningPause.PREPARATION
+            !learningResourcesAvailable() -> NativeLearningPause.RESOURCES
+            else -> null
+        }
+        fun allowed() = isCurrent() && interpreterRelaySettings.state.value.compareOffline &&
+            translationApiSettings.authorized(options) && options.allowLiveAudio
+        NativeLearningSession(nativeLearningScopeDelegate.value, sessionId, nativeLearningMonitor,
+            enabled = { interpreterRelaySettings.state.value.compareOffline },
+            authorized = { translationApiSettings.authorized(options) && options.allowLiveAudio },
+            isCurrent = isCurrent, controlGeneration = { interpreterRelaySettings.comparisonGeneration },
+            corpusRevision = { domainCorpus.revision.value }, readiness = ::ready,
+            captureStartsAfterAdmission = captureStartsAfterAdmission,
+            compare = { pair ->
+                check(allowed() && ready() == null)
+                val lease = requireNotNull(acquireTranslationBackendUseIf(::allowed))
+                try {
+                    check(allowed() && ready() == null)
+                    app.guidecast.core.translation.requireProtectedTranslationMeaning(pair.original, pair.translation, source, target)
+                    val model = gemmaTranslationProvider.modelManager.selectedVariant.id
+                    val captured = DomainCorpusTranslationEngine(gemmaTranslationProvider.preparedEngineFor(target), domainCorpus)
+                        .capture(pair.original, source, target, options.tone)
+                    check(captured.capturedRevision == pair.corpusRevision)
+                    val offline = withContext(app.guidecast.core.translation.TranslationStyleContext(options.tone)) {
+                        captured.translateWithContext(pair.original, null, source, target)
+                    }
+                    check(gemmaTranslationProvider.modelManager.selectedVariant.id == model)
+                    ShadowComparison(pair.original, null, source, target, pair.corpusRevision, pair.translation, offline,
+                        options.tone, NativeComparisonIdentity(sessionId, pair.inputId, pair.responseId, pair.sequence,
+                            options.revision, options.provider, options.model, pair.controlGeneration),
+                        if (captured.capturedExactMatch) "검수한 번역 예문 재사용" else model)
+                } finally { lease.close() }
+            })
+    }
+    internal fun isNativeComparisonCurrent(candidate: ShadowComparison): Boolean {
+        val api = translationApiSettings.state.value
+        return nativeComparisonIsCurrent(candidate, nativeLearningMonitor.ownsCandidate(candidate),
+            interpreterRelaySettings.state.value, interpreterRelaySettings.comparisonGeneration, api,
+            translationApiSettings.authorized(api), domainCorpus.revision.value)
+    }
+    internal fun nativeComparisonCommitAdmission(candidate: ShadowComparison) = NativeComparisonCommitAdmission(
+        listOf(nativeLearningMonitor.reviewAdmissionLock, interpreterRelaySettings, translationApiSettings)) { isNativeComparisonCurrent(candidate) }
     val microphoneNoiseSettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { MicrophoneNoiseSettings(this) }
     val diagnosticExportState = kotlinx.coroutines.flow.MutableStateFlow(DiagnosticExportState())
     internal val fileWorkOwners = LocalWorkOwners()
@@ -547,6 +609,7 @@ class GuideCastApplication : Application() {
             finally { previousHandler.uncaughtException(thread, error) }
         }
         if (getProcessName() == packageName) {
+            nativeEngineScope.launch(Dispatchers.IO) { runCatching { recordedShareStore(this@GuideCastApplication).cleanup() } }
             nativeEngineScope.launch(Dispatchers.IO) {
                 // Optional personalization must never block application/STT startup.
                 runCatching { speechCorrections.refresh() }
@@ -558,6 +621,11 @@ class GuideCastApplication : Application() {
                         .getHistoricalProcessExitReasons(packageName, 0, 16).forEach {
                             RuntimeDiagnosticLog.record("previous_exit", "process=${it.processName} time=${it.timestamp} reason=${it.reason} status=${it.status} pssKiB=${it.pss} rssKiB=${it.rss}")
                         }
+                }
+            }
+            nativeEngineScope.launch {
+                audioCaptureEngine.diagnostics.collect { snapshot ->
+                    RuntimeDiagnosticLog.record("capture_format", snapshot.toString())
                 }
             }
             nativeEngineScope.launch {
@@ -599,6 +667,8 @@ class GuideCastApplication : Application() {
 
     override fun onTerminate() {
         nativeEngineScope.cancel()
+        if (nativeLearningScopeDelegate.isInitialized()) nativeLearningScopeDelegate.value.cancel()
+        if (nativeLearningDispatcherDelegate.isInitialized()) nativeLearningDispatcherDelegate.value.close()
         audioInputRepository.close()
         if (translationProviderDelegate.isInitialized()) translationProvider.close()
         if (gemmaTranslationProviderDelegate.isInitialized()) gemmaTranslationProvider.close()

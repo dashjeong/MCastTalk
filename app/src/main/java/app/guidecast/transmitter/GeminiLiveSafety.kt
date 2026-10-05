@@ -31,13 +31,21 @@ internal fun recordLivePublication(result: StreamPublishResult?, bytes: Int, los
 }
 
 /** Provider segments have no common microphone utterance ID. Audio without a transcript still has a row. */
-internal class GeminiLiveSegments(private val target: String, private val sourceLanguage: String, initialSequence: Long) {
+internal class GeminiLiveSegments(private val target: String, private val sourceLanguage: String, initialSequence: Long,
+    private val sessionId: Long? = null) {
     private var next = initialSequence
     private var source = ""
     private var translation = ""
     private var firstEventNanos: Long? = null
+    private var sourceFinal: Boolean? = null
     fun accept(event: GeminiLiveEvent, now: Long): TranslationTranscriptLine? {
-        if (event.interrupted) { advance(); return null }
+        if (event.interrupted) {
+            val row = if (firstEventNanos != null) TranslationTranscriptLine(next, source, requireNotNull(firstEventNanos),
+                translations = if (translation.isNotBlank()) mapOf(target to translation) else emptyMap(),
+                sourceLanguageTag = sourceLanguage, liveSegmentLanguage = target, liveSourceFinal = sourceFinal,
+                nativeAudioSessionId = sessionId, liveOutputState = LiveOutputState.CANCELLED) else null
+            advance(); return row
+        }
         event.source?.let { source = (source + it).takeLast(8_000) }
         event.translation?.let { translation = (translation + it).takeLast(8_000) }
         val visible = source.isNotBlank() || translation.isNotBlank() || event.audio.isNotEmpty() || firstEventNanos != null
@@ -45,17 +53,21 @@ internal class GeminiLiveSegments(private val target: String, private val source
         if (firstEventNanos == null) firstEventNanos = now
         val row = TranslationTranscriptLine(next, source, requireNotNull(firstEventNanos), event.finished,
             translations = if (translation.isNotBlank()) mapOf(target to translation) else emptyMap(),
-            sourceLanguageTag = sourceLanguage, liveSegmentLanguage = target)
+            sourceLanguageTag = sourceLanguage, liveSegmentLanguage = target, liveSourceFinal = sourceFinal,
+            nativeAudioSessionId = sessionId,
+            liveOutputState = if (event.finished) LiveOutputState.GENERATED else LiveOutputState.GENERATING)
         if (event.finished) advance()
         return row
     }
-    private fun advance() { next++; source = ""; translation = ""; firstEventNanos = null }
+    private fun advance() { next++; source = ""; translation = ""; firstEventNanos = null; sourceFinal = null }
 }
 
 /** Counts only. No key, transcript, PCM content or provider error is retained in diagnostics. */
 internal class GeminiLiveCounters {
     private var frames = 0L
     private var bytes = 0L
+    private var sentFrames = 0L
+    private var sentBytes = 0L
     private var sourceEvents = 0L
     private var translationEvents = 0L
     private var outputBytes = 0L
@@ -63,6 +75,7 @@ internal class GeminiLiveCounters {
     private var interruptions = 0L
     private val losses = mutableMapOf<LiveAudioLoss, Long>()
     @Synchronized fun capture(size: Int) { frames++; bytes += size }
+    @Synchronized fun sent(size: Int) { sentFrames++; sentBytes += size }
     @Synchronized fun loss(reason: LiveAudioLoss, size: Int) { losses[reason] = (losses[reason] ?: 0) + size }
     @Synchronized fun event(event: GeminiLiveEvent) {
         if (!event.source.isNullOrBlank()) sourceEvents++
@@ -73,6 +86,7 @@ internal class GeminiLiveCounters {
     }
     @Synchronized fun summary(): String =
         "captureFrames=$frames captureBytes=$bytes sourceEvents=$sourceEvents translationEvents=$translationEvents " +
+            "sentFrames=$sentFrames sentBytes=$sentBytes " +
             "outputBytes=$outputBytes turns=$turns interruptions=$interruptions " +
             LiveAudioLoss.entries.joinToString(" ") { "${it.name}Bytes=${losses[it] ?: 0}" }
 }

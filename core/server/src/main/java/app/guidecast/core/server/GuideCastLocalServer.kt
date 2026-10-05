@@ -9,6 +9,7 @@ import app.guidecast.core.stream.AudioChannelDescriptor
 import app.guidecast.core.stream.AudioStreamRegistry
 import app.guidecast.core.stream.ListenerLimitExceededException
 import app.guidecast.core.stream.StreamSession
+import app.guidecast.core.stream.RecordedBroadcast
 import app.guidecast.core.stream.StreamSessionSupersededException
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
@@ -117,6 +118,8 @@ class GuideCastLocalServer(
     private val onSpeakerSessionOpened: () -> Long = { 0L },
     private val onSpeakerSessionClosed: (Long) -> Unit = {},
     private val transcriptSnapshotProvider: (() -> GuideCastTranscriptSnapshot)? = null,
+    private val replayProvider: (() -> RecordedBroadcast?)? = null,
+    private val replayCaptionsProvider: ((Long?, Long?) -> String)? = null,
 ) {
     private val appContext = context.applicationContext
     private val started = AtomicBoolean(false)
@@ -182,6 +185,8 @@ class GuideCastLocalServer(
                         requireTlsSpeakerTransport = config.enableHttps,
                         tlsBackendAuthenticator = tlsBackendAuthenticator,
                         transcriptSnapshotProvider = transcriptSnapshotProvider,
+                        replayProvider = replayProvider,
+                        replayCaptionsProvider = replayCaptionsProvider,
                     )
                 }.start(wait = false)
                 stopSecureBackend = {
@@ -228,6 +233,8 @@ class GuideCastLocalServer(
                     // but it must never reopen the legacy plaintext query-token microphone path.
                     requireTlsSpeakerTransport = config.enableHttps,
                     transcriptSnapshotProvider = transcriptSnapshotProvider,
+                        replayProvider = replayProvider,
+                        replayCaptionsProvider = replayCaptionsProvider,
                 )
             }.start(wait = false)
         } catch (error: Throwable) {
@@ -367,6 +374,8 @@ internal fun Application.guideCastModule(
     admissionController: LocalRequestAdmissionController = LocalRequestAdmissionController(),
     speakerAssets: SpeakerAssets? = null,
     transcriptSnapshotProvider: (() -> GuideCastTranscriptSnapshot)? = null,
+    replayProvider: (() -> RecordedBroadcast?)? = null,
+    replayCaptionsProvider: ((Long?, Long?) -> String)? = null,
 ) = guideCastModule(
     expectedHost = expectedHost,
     authenticator = authenticator,
@@ -376,6 +385,8 @@ internal fun Application.guideCastModule(
     admissionController = admissionController,
     speakerAssets = speakerAssets,
     transcriptSnapshotProvider = transcriptSnapshotProvider,
+                        replayProvider = replayProvider,
+                        replayCaptionsProvider = replayCaptionsProvider,
 )
 
 internal fun Application.guideCastModule(
@@ -397,6 +408,8 @@ internal fun Application.guideCastModule(
     requireTlsSpeakerTransport: Boolean = httpsPort != null,
     tlsBackendAuthenticator: GuideCastTlsBackendAuthenticator? = null,
     transcriptSnapshotProvider: (() -> GuideCastTranscriptSnapshot)? = null,
+    replayProvider: (() -> RecordedBroadcast?)? = null,
+    replayCaptionsProvider: ((Long?, Long?) -> String)? = null,
 ) {
     install(WebSockets) {
         pingPeriodMillis = 15_000
@@ -974,6 +987,69 @@ internal fun Application.guideCastModule(
             }
         }
 
+        // Only this authenticated server's logical recording is exposed; no user supplied
+        // session ID or filesystem path is accepted. History stays on the operator device.
+        get("/api/replay") {
+            val admission = call.acquireAdmission(admissionController, LocalRequestKind.READ_API) ?: return@get
+            try {
+                if (!call.requireValidHost(expectedHost) || !call.requireValidOrigin(transportSecurity, httpsPort)) return@get
+                call.secureApiResponse()
+                if (!call.requireAuthorized(authenticator)) return@get
+                val channel = call.request.queryParameters["channel"] ?: "source"
+                if (!streamSession.isActive() || !streamSession.hasConfiguredChannel(channel)) {
+                    call.respond(HttpStatusCode.Gone); return@get
+                }
+                val recording = replayProvider?.invoke()
+                if (recording == null) { call.respond(HttpStatusCode.NotFound); return@get }
+                var offset = 0L
+                val items = recording.segments.filter { it.channel.id == channel && it.committedBytes > 0 }.map { segment ->
+                    val start = offset; offset += segment.committedBytes
+                    "{\"part\":${segment.partId},\"segment\":${segment.segment},\"bytes\":${segment.committedBytes},\"startByte\":$start,\"sampleRate\":${segment.channel.sampleRateHz}}"
+                }
+                call.respondText("{\"state\":\"${recording.state}\",\"recordingGaps\":${recording.droppedRecordingFrames},\"storageFailed\":${recording.failure != null},\"timeline\":\"RECORDED_AUDIO_EXCLUDING_PAUSES\",\"segments\":[${items.joinToString(",")}]}" , ContentType.Application.Json)
+            } finally { admission.close() }
+        }
+        get("/api/replay-captions") {
+            val admission = call.acquireAdmission(admissionController, LocalRequestKind.READ_API) ?: return@get
+            try {
+                if (!call.requireValidHost(expectedHost) || !call.requireValidOrigin(transportSecurity, httpsPort)) return@get
+                call.secureApiResponse()
+                if (!call.requireAuthorized(authenticator)) return@get
+                if (!streamSession.isActive()) { call.respond(HttpStatusCode.Gone); return@get }
+                val part = call.request.queryParameters["afterPart"]?.toLongOrNull()
+                val sequence = call.request.queryParameters["afterSequence"]?.toLongOrNull()
+                if ((part == null) != (sequence == null) || (part != null && (part < 0 || sequence!! < 0))) { call.respond(HttpStatusCode.BadRequest); return@get }
+                val body = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { replayCaptionsProvider?.invoke(part, sequence) }
+                if (body == null) { call.respond(HttpStatusCode.NotFound); return@get }
+                call.respondText(body, ContentType.Application.Json)
+            } finally { admission.close() }
+        }
+        get("/api/replay/{part}/{segment}") {
+            val admission = call.acquireAdmission(admissionController, LocalRequestKind.READ_API) ?: return@get
+            try {
+                if (!call.requireValidHost(expectedHost) || !call.requireValidOrigin(transportSecurity, httpsPort)) return@get
+                call.secureApiResponse()
+                if (!call.requireAuthorized(authenticator)) return@get
+                val channel = call.request.queryParameters["channel"] ?: "source"
+                if (!streamSession.isActive() || !streamSession.hasConfiguredChannel(channel)) { call.respond(HttpStatusCode.Gone); return@get }
+                val part = call.parameters["part"]?.toLongOrNull()
+                val number = call.parameters["segment"]?.toIntOrNull()
+                val offset = call.request.queryParameters["offset"]?.toLongOrNull()
+                val count = call.request.queryParameters["count"]?.toIntOrNull()
+                val segment = replayProvider?.invoke()?.segments?.firstOrNull { it.partId == part && it.segment == number && it.channel.id == channel }
+                if (segment == null) { call.respond(HttpStatusCode.NotFound); return@get }
+                if (offset == null || count == null || offset < 0 || offset % 2 != 0L || count !in 2..262144 || count % 2 != 0 || offset > segment.committedBytes - count) {
+                    call.respond(HttpStatusCode.RequestedRangeNotSatisfiable); return@get
+                }
+                val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    java.io.RandomAccessFile(segment.file, "r").use { file ->
+                        file.seek(offset); ByteArray(count).also(file::readFully)
+                    }
+                }
+                call.respondBytes(bytes, ContentType.Application.OctetStream)
+            } finally { admission.close() }
+        }
+
         webSocket("/ws/{channel}") {
             val admission = when (val decision = admissionController.tryAcquire(
                 call.guideCastRemoteAddress(),
@@ -1381,7 +1457,7 @@ internal data class ListenerAssets(
         fun load(context: Context) = ListenerAssets(
             html = context.assets.readBytes("listener/index.html"),
             javascript = context.assets.readBytes("listener/i18n.js") + "\n".toByteArray() +
-                context.assets.readBytes("listener/player.js"),
+                context.assets.readBytes("listener/player.js") + "\n".toByteArray() + context.assets.readBytes("listener/replay.js"),
             css = context.assets.readBytes("listener/player.css"),
         )
 

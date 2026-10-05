@@ -27,21 +27,34 @@ data class TranslationApiOptions(
     val tone: TranslationStyle = TranslationStyle.CONVERSATIONAL,
     val interpretationMode: OnlineInterpretationMode = OnlineInterpretationMode.CONTINUOUS,
     val domainPrompt: String = "",
+    val interpreterInstructions: String = "",
     val allowOnline: Boolean = false, val localFallback: Boolean = false,
     val hasKey: Boolean = false, val revision: Long = 0,
     val alwaysLearnOnline: Boolean = false,
     val allowDomainReferences: Boolean = false,
     val allowLiveAudio: Boolean = false,
     val budgetLimitUsd: String = "1.00",
+    /** Existing saved Realtime choices retain the text route until the user selects audio. */
+    val realtimeAudio: Boolean = false,
 ) {
+    internal val usesNativeLiveAudio: Boolean get() = provider == TranslationApiProvider.GEMINI_LIVE ||
+        (provider == TranslationApiProvider.OPENAI_REALTIME && realtimeAudio)
     internal fun portable() = JSONObject().put("provider", provider.name).put("model", model).put("baseUrl", baseUrl)
-        .put("protocol", protocol.name).put("tone", tone.name).put("interpretationMode", interpretationMode.name).put("domainPrompt", domainPrompt).put("localFallback", localFallback)
-    internal val credentialScope: String get() = if (provider in setOf(TranslationApiProvider.GEMINI, TranslationApiProvider.GEMINI_LIVE))
-        "GOOGLE:" + baseUrl else provider.name + ":" + baseUrl
-    internal val readableCredentialScopes: List<String> get() = if (provider in setOf(TranslationApiProvider.GEMINI, TranslationApiProvider.GEMINI_LIVE))
-        listOf(credentialScope, provider.name + ":" + baseUrl,
-            (if (provider == TranslationApiProvider.GEMINI) "GEMINI_LIVE:" else "GEMINI:") + baseUrl)
-        else listOf(credentialScope)
+        .put("protocol", protocol.name).put("tone", tone.name).put("interpretationMode", interpretationMode.name).put("domainPrompt", domainPrompt)
+        .put("interpreterInstructions", interpreterInstructions).put("localFallback", localFallback).put("realtimeAudio", realtimeAudio)
+    internal val credentialScope: String get() = when {
+        provider in setOf(TranslationApiProvider.GEMINI, TranslationApiProvider.GEMINI_LIVE) -> "GOOGLE:" + baseUrl
+        provider in setOf(TranslationApiProvider.OPENAI, TranslationApiProvider.OPENAI_REALTIME) && baseUrl == "https://api.openai.com/v1" -> "OPENAI:" + baseUrl
+        else -> provider.name + ":" + baseUrl
+    }
+    internal val readableCredentialScopes: List<String> get() = when {
+        provider in setOf(TranslationApiProvider.GEMINI, TranslationApiProvider.GEMINI_LIVE) ->
+            listOf(credentialScope, provider.name + ":" + baseUrl,
+                (if (provider == TranslationApiProvider.GEMINI) "GEMINI_LIVE:" else "GEMINI:") + baseUrl).distinct()
+        provider in setOf(TranslationApiProvider.OPENAI, TranslationApiProvider.OPENAI_REALTIME) && baseUrl == "https://api.openai.com/v1" ->
+            listOf(credentialScope, "OPENAI_REALTIME:" + baseUrl)
+        else -> listOf(credentialScope)
+    }
     internal val endpoint: String get() = when (provider) {
         TranslationApiProvider.GEMINI -> "$baseUrl/models/$model:generateContent"
         else -> "$baseUrl/" + if (protocol == TranslationApiProtocol.RESPONSES) "responses" else "chat/completions"
@@ -54,7 +67,9 @@ data class TranslationApiOptions(
                 protocol = TranslationApiProtocol.valueOf(row.optString("protocol", "RESPONSES")),
                 interpretationMode = OnlineInterpretationMode.valueOf(row.optString("interpretationMode", "CONTINUOUS")),
                 domainPrompt = row.optString("domainPrompt", ""),
-                tone = TranslationStyle.valueOf(row.optString("tone", "CONVERSATIONAL")), localFallback = false)
+                interpreterInstructions = row.optString("interpreterInstructions", ""),
+                tone = TranslationStyle.valueOf(row.optString("tone", "CONVERSATIONAL")), localFallback = false,
+                realtimeAudio = row.optBoolean("realtimeAudio", false))
             require(validTranslationApiOptions(result))
             return result
         }
@@ -62,7 +77,8 @@ data class TranslationApiOptions(
 }
 
 internal fun validTranslationApiOptions(options: TranslationApiOptions): Boolean = runCatching {
-    require(options.domainPrompt.length <= 300 && options.domainPrompt.none { it.code < 32 || it.code == 127 } && !containsCredentialLikeText(options.domainPrompt))
+    require(validInterpreterInstructions(options.interpreterInstructions))
+    require(validInterpreterDomain(options.domainPrompt))
     require(options.model.matches(Regex("[A-Za-z0-9][A-Za-z0-9._/:-]{0,119}")) && ".." !in options.model)
     val uri = URI(options.baseUrl)
     require(options.baseUrl.length <= 300 && uri.scheme == "https" && !uri.host.isNullOrBlank() &&
@@ -70,7 +86,7 @@ internal fun validTranslationApiOptions(options: TranslationApiOptions): Boolean
         !options.baseUrl.endsWith('/') && ".." !in uri.path && '%' !in uri.rawPath &&
         uri.path.matches(Regex("(?:/[A-Za-z0-9._-]+)*")))
     when (options.provider) {
-        TranslationApiProvider.OPENAI_REALTIME -> require(options.baseUrl == "https://api.openai.com/v1" && options.model == "gpt-realtime-2.1-mini" && options.protocol == TranslationApiProtocol.RESPONSES)
+        TranslationApiProvider.OPENAI_REALTIME -> require(options.baseUrl == "https://api.openai.com/v1" && options.model in OPENAI_REALTIME_MODELS && options.protocol == TranslationApiProtocol.RESPONSES)
         TranslationApiProvider.OPENAI -> require(options.baseUrl == "https://api.openai.com/v1")
         TranslationApiProvider.GEMINI_LIVE -> require(options.baseUrl == "https://generativelanguage.googleapis.com/v1beta" && options.model in setOf("gemini-3.5-live-translate-preview", "gemini-3.8-live"))
         TranslationApiProvider.GEMINI -> require(options.baseUrl == "https://generativelanguage.googleapis.com/v1beta" && validReviewModel(options.model))
@@ -114,11 +130,11 @@ class TranslationApiSettings(context: Context) {
         if (!agreeToTextAndCost) return false
         if (state.value.provider == TranslationApiProvider.LOCAL) {
             val candidate = preparedLearningProvider()?.takeIf { it.hasKey } ?: return false
-            if (candidate.provider == TranslationApiProvider.GEMINI_LIVE) return false
+            if (candidate.usesNativeLiveAudio) return false
             mutableLearningOnline.value = candidate.copy(allowOnline = true, allowDomainReferences = allowReferences,
                 revision = ++learningGeneration)
         } else {
-            if (!authorized(state.value) || state.value.provider == TranslationApiProvider.GEMINI_LIVE) return false
+            if (!authorized(state.value) || state.value.usesNativeLiveAudio) return false
             store(state.value.copy(allowDomainReferences = allowReferences, revision = state.value.revision + 1))
         }
         mutableSessionLearning.value = true
@@ -130,16 +146,16 @@ class TranslationApiSettings(context: Context) {
     @Synchronized fun consentToSelectedService() {
         if (!state.value.hasKey) return
         store(state.value.copy(allowOnline = true,
-            allowLiveAudio = state.value.provider == TranslationApiProvider.GEMINI_LIVE,
+            allowLiveAudio = state.value.usesNativeLiveAudio,
             revision = state.value.revision + 1))
     }
     @Synchronized fun revokeSelectedService() {
         store(state.value.copy(allowOnline = false, allowLiveAudio = false, allowDomainReferences = false,
             revision = state.value.revision + 1))
     }
-    internal fun usesTemporaryKey(): Boolean = sessionKeys.containsKey(state.value.credentialScope)
+    internal fun usesTemporaryKey(): Boolean = state.value.readableCredentialScopes.any(sessionKeys::containsKey)
     @Synchronized fun setLiveAudioConsent(allowed: Boolean) {
-        store(state.value.copy(allowLiveAudio = allowed && state.value.hasKey && state.value.provider == TranslationApiProvider.GEMINI_LIVE, revision = state.value.revision + 1))
+        store(state.value.copy(allowLiveAudio = allowed && state.value.hasKey && state.value.usesNativeLiveAudio, revision = state.value.revision + 1))
     }
     @Synchronized fun setBudgetLimit(value: String): Boolean {
         val next = state.value.copy(budgetLimitUsd = value.trim(), revision = state.value.revision + 1)
@@ -151,17 +167,47 @@ class TranslationApiSettings(context: Context) {
     }
     @Synchronized fun configure(options: TranslationApiOptions): Boolean {
         if (!validTranslationApiOptions(options)) return false
-        if (options.provider == TranslationApiProvider.GEMINI_LIVE) {
+        if (options.usesNativeLiveAudio) {
             mutableSessionLearning.value = false
             mutableLearningOnline.value = null
         }
         store(options.copy(allowLiveAudio = false, allowOnline = false, alwaysLearnOnline = state.value.alwaysLearnOnline, allowDomainReferences = false, localFallback = false, hasKey = resolvedKey(options) != null, revision = state.value.revision + 1))
         return true
     }
+    /** Retain consent for the same data categories; newly reachable stored context requires consent. */
+    @Synchronized internal fun selectModel(model: String): Boolean {
+        val current = state.value
+        val choice = serviceModelChoices(current).firstOrNull { it.id == model } ?: return false
+        if (current.model == model) return true
+        val next = current.copy(model = choice.id, interpretationMode = choice.interpretationMode,
+            revision = current.revision + 1)
+        val selected = if (nativeContextTransmissionExpands(current, next)) next.copy(
+            allowOnline = false, allowLiveAudio = false, allowDomainReferences = false,
+        ) else next
+        if (!validTranslationApiOptions(selected)) return false
+        store(selected)
+        return true
+    }
     @Synchronized fun setDomainPrompt(prompt: String): Boolean {
         val next = state.value.copy(domainPrompt = prompt.trim(), revision = state.value.revision + 1)
         if (!validTranslationApiOptions(next)) return false
         // Same provider/data category; keep consent, but invalidate any in-flight snapshot.
+        store(next)
+        return true
+    }
+    @Synchronized fun setInterpreterInstructions(instructions: String): Boolean {
+        val next = state.value.copy(interpreterInstructions = instructions.trim(), revision = state.value.revision + 1)
+        if (!validTranslationApiOptions(next)) return false
+        store(next)
+        return true
+    }
+    @Synchronized internal fun setProfessionalRelayInstructions(domain: String, instructions: String): Boolean {
+        val current = state.value
+        if (!current.usesNativeLiveAudio || !serviceExperience(current).supportsDomainInstructions) return false
+        if (containsNativeContextCredentialLikeText(domain)) return false
+        val next = current.copy(domainPrompt = domain.trim(), interpreterInstructions = instructions.trim(),
+            interpretationMode = OnlineInterpretationMode.PROFESSIONAL, revision = current.revision + 1)
+        if (!validTranslationApiOptions(next)) return false
         store(next)
         return true
     }

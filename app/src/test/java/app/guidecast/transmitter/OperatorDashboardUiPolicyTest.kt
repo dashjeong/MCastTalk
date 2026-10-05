@@ -5,9 +5,19 @@ import app.guidecast.core.translation.ModelReadiness
 import app.guidecast.provider.moonshine.tts.MoonshineTtsReadiness
 import app.guidecast.provider.moonshine.tts.MoonshineTtsStatus
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OperatorDashboardUiPolicyTest {
+    @Test fun standaloneRelayNeverClaimsDeviceOnlyProcessingOrLocalModelReadiness() {
+        val statuses = operatorStageStatuses(BroadcastSnapshot(isInterpreterRelay = true,
+            runMode = BroadcastRunMode.STANDALONE, relayPhase = InterpreterRelayPhase.CONNECTING), TranslationModelUiState())
+        assertEquals("Live API", statuses[1].label)
+        assertEquals("연결 중", statuses[1].state)
+        assertEquals("기기 재생", statuses[2].state)
+        assertTrue(statuses.none { it.state.contains("기기 내 처리") || it.state.contains("모델") })
+    }
+
     @Test
     fun silenceAndQuietPcmAreNormalWaitingNotAnInputFailure() {
         for (peak in listOf(0f, 0.0001f)) {

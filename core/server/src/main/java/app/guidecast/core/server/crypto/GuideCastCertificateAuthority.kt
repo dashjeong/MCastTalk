@@ -49,7 +49,7 @@ data class ServerCertificateBundle(
  * certificates containing the transmitter's current Wi-Fi hotspot IP address in the
  * Subject Alternative Name (IP SAN) extension.
  *
- * Complies strictly with AGENTS.md:
+ * Implementation details:
  * - Zero hardcoded or pre-shared private keys in APK or repository.
  * - Zero external library dependencies (uses pure Kotlin Asn1Der encoder).
  * - Full offline operation without public WebPKI dependency.

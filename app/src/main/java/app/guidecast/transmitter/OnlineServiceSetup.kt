@@ -21,21 +21,33 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 internal fun onlineServiceChoice(current: TranslationApiOptions, google: Boolean): TranslationApiOptions =
-    current.copy(provider = if (google) TranslationApiProvider.GEMINI_LIVE else TranslationApiProvider.OPENAI_REALTIME,
+    if ((google && current.provider == TranslationApiProvider.GEMINI_LIVE) ||
+        (!google && current.provider == TranslationApiProvider.OPENAI_REALTIME && !current.realtimeAudio)) current
+    else current.copy(provider = if (google) TranslationApiProvider.GEMINI_LIVE else TranslationApiProvider.OPENAI_REALTIME,
         model = if (google) {
             if (current.interpretationMode == OnlineInterpretationMode.CONTINUOUS) GEMINI_LIVE_TRANSLATE else GEMINI_LIVE_AGENT
         } else "gpt-realtime-2.1-mini",
         baseUrl = if (google) "https://generativelanguage.googleapis.com/v1beta" else "https://api.openai.com/v1",
-        protocol = TranslationApiProtocol.RESPONSES)
+        protocol = TranslationApiProtocol.RESPONSES, realtimeAudio = false)
+
+internal fun openAiAudioChoice(current: TranslationApiOptions): TranslationApiOptions =
+    if (current.provider == TranslationApiProvider.OPENAI_REALTIME && current.realtimeAudio) current
+    else onlineServiceChoice(current, false).copy(realtimeAudio = true)
 
 internal fun geminiSharedInputChoice(current: TranslationApiOptions): TranslationApiOptions =
-    current.copy(provider = TranslationApiProvider.GEMINI, model = "gemini-3.5-flash-lite",
+    if (current.provider == TranslationApiProvider.GEMINI) current
+    else current.copy(provider = TranslationApiProvider.GEMINI, model = "gemini-3.5-flash-lite",
         baseUrl = "https://generativelanguage.googleapis.com/v1beta", protocol = TranslationApiProtocol.RESPONSES)
+
+internal fun openAiTextChoice(current: TranslationApiOptions): TranslationApiOptions =
+    if (current.provider == TranslationApiProvider.OPENAI) current
+    else current.copy(provider = TranslationApiProvider.OPENAI, model = "gpt-5.4-mini",
+        baseUrl = "https://api.openai.com/v1", protocol = TranslationApiProtocol.RESPONSES)
 
 /** Everyday setup stays short. Diagnostics never stand between the operator and a usable key. */
 @Composable
 internal fun TranslationApiPanel(settings: TranslationApiSettings, service: TranslationApiService, enabled: Boolean,
-    corpus: DomainCorpusRepository? = null, liveMonitor: GeminiLiveMonitor? = null,
+    corpus: DomainCorpusRepository? = null, liveMonitor: GeminiLiveMonitor? = null, nativeOnly: Boolean = false,
     checkConnection: suspend (TranslationApiOptions) -> OnlineConnectionResult = { selected ->
         OnlineConnectionCheck().run(selected, settings.key(selected).orEmpty()) { settings.authorized(selected) }
     },
@@ -48,6 +60,7 @@ internal fun TranslationApiPanel(settings: TranslationApiSettings, service: Tran
     var advanced by remember { mutableStateOf(false) }
     var servicePicker by remember { mutableStateOf(false) }
     var modelPicker by remember { mutableStateOf(false) }
+    var aiModelPicker by remember { mutableStateOf(false) }
     var keyDialog by remember { mutableStateOf(false) }
     var consentDialog by remember { mutableStateOf(false) }
     var keyDraft by remember(options.credentialScope) { mutableStateOf("") }
@@ -104,7 +117,7 @@ internal fun TranslationApiPanel(settings: TranslationApiSettings, service: Tran
     if (consentDialog) AlertDialog(
         onDismissRequest = { consentDialog = false }, title = { Text("온라인 통역 이용 동의") },
         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(if (options.provider == TranslationApiProvider.GEMINI_LIVE)
+            Text(if (options.usesNativeLiveAudio)
                 "통역을 위해 마이크 음성과 입력한 관련 내용을 $serviceName 서비스로 전송합니다."
                 else "통역을 위해 인식된 문장과 필요한 문맥을 $serviceName 서비스로 전송합니다. 현재 이 연결의 음성 인식·재생은 기기에서 처리합니다.")
             Text("처리·보관·데이터 활용에는 해당 서비스의 정책과 계정 설정이 적용되며, 사용량에 따라 별도 API 요금이 발생할 수 있습니다.")
@@ -118,16 +131,35 @@ internal fun TranslationApiPanel(settings: TranslationApiSettings, service: Tran
         title = { Text("통역 서비스 선택") },
         text = { Column(Modifier.verticalScroll(rememberScrollState())) { ServiceExperienceChoices("AI 서비스", listOf(
             ExperienceChoice("gemini-batch", "Gemini · 다국어 통역", "한 번 인식한 문장을 요청 한 번으로 여러 언어로 번역하고 기기 음성으로 재생합니다."),
-            ExperienceChoice("gemini", "Gemini", "마이크 음성을 보내 통역 음성을 받습니다."),
-            ExperienceChoice("openai", "OpenAI", "기기에서 인식한 문장을 번역하고 기기 음성으로 재생합니다.")),
-            when (options.provider) { TranslationApiProvider.GEMINI -> "gemini-batch"; TranslationApiProvider.GEMINI_LIVE -> "gemini"; TranslationApiProvider.OPENAI_REALTIME -> "openai"; else -> "" }, enabled) {
-            settings.configure(if (it == "gemini-batch") geminiSharedInputChoice(options) else onlineServiceChoice(options, it == "gemini")); servicePicker = false
+            ExperienceChoice("gemini", "Gemini · Live 음성 통역", "마이크 음성을 보내 통역 음성을 받습니다. 현재 한 가지 출력 언어를 지원합니다."),
+            ExperienceChoice("openai-audio", "OpenAI · Realtime 음성 통역", "마이크 음성을 한 번 보내 통역 음성과 원문·번역 자막을 받습니다. 한 가지 출력 언어를 지원합니다."),
+            ExperienceChoice("openai", "OpenAI · Realtime 문장 연결", "기기에서 인식한 문장을 번역하고 기기 음성으로 재생합니다."),
+            ExperienceChoice("openai-text", "OpenAI · 문장 번역", "GPT 문장 모델로 번역하고 기기 음성으로 재생합니다.")).filter { !nativeOnly || it.id in setOf("gemini", "openai-audio") },
+            when (options.provider) { TranslationApiProvider.GEMINI -> "gemini-batch"; TranslationApiProvider.GEMINI_LIVE -> "gemini"; TranslationApiProvider.OPENAI_REALTIME -> if (options.realtimeAudio) "openai-audio" else "openai"; TranslationApiProvider.OPENAI -> "openai-text"; else -> "" }, enabled) {
+            val next = when (it) {
+                "gemini-batch" -> geminiSharedInputChoice(options)
+                "openai-text" -> openAiTextChoice(options)
+                "openai-audio" -> openAiAudioChoice(options)
+                else -> onlineServiceChoice(options, it == "gemini")
+            }
+            if (next != options) settings.configure(next)
+            servicePicker = false
         } } }, confirmButton = { TextButton(onClick = { servicePicker = false }) { Text("닫기") } })
+    if (aiModelPicker) AlertDialog(onDismissRequest = { aiModelPicker = false },
+        title = { Text("AI 모델 선택") },
+        text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            ServiceModelPicker(options, enabled && !checking) { settings.selectModel(it.model); aiModelPicker = false }
+            if (serviceModelChoices(options).none { it.id == options.model })
+                Text("현재 사용자 지정 모델 · ${options.model}. 직접 입력은 고급 설정에서 변경할 수 있습니다.")
+            Text(experience.processing)
+            Text("사용량에 따라 API 요금이 발생합니다. 예상 비용은 안내용이며 실제 청구는 제공자 기준입니다.", style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = { uri.openUri(if (google) "https://ai.google.dev/gemini-api/docs/pricing" else "https://openai.com/api/pricing/") }) { Text("공식 모델별 요금 안내") }
+        } }, confirmButton = { TextButton(onClick = { aiModelPicker = false }) { Text("닫기") } })
     if (modelPicker) AlertDialog(onDismissRequest = { modelPicker = false },
         title = { Text("통역 방식 선택") },
         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (options.provider == TranslationApiProvider.GEMINI_LIVE)
-                ServiceModelPicker(options, enabled) { settings.configure(it); modelPicker = false }
+                ServiceModelPicker(options, enabled) { settings.selectModel(it.model); modelPicker = false }
             else ServiceExperienceChoices("통역 방식", listOf(
                 ExperienceChoice("continuous", "연속통역", "말하는 내용을 이어서 통역합니다."),
                 ExperienceChoice("professional", "전문통역", "분야와 상황을 알려 용어 해석을 돕습니다.")),
@@ -140,7 +172,7 @@ internal fun TranslationApiPanel(settings: TranslationApiSettings, service: Tran
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("통역 서비스", style = MaterialTheme.typography.titleLarge)
             if (!enabled) ServiceConnectionFeedback("설정을 변경하려면 진행 중인 입력·방송·통역 시험을 먼저 중지해 주세요.")
-            ServiceExperienceChoices("사용 방식", listOf(
+            if (!nativeOnly) ServiceExperienceChoices("사용 방식", listOf(
                 ExperienceChoice("offline", "오프라인", "기기에 준비한 모델로 통역합니다."),
                 ExperienceChoice("online", "온라인", "선택한 AI 서비스에 연결해 통역합니다.")),
                 if (online) "online" else "offline", enabled && !checking) {
@@ -157,7 +189,7 @@ internal fun TranslationApiPanel(settings: TranslationApiSettings, service: Tran
             if (!styleSupported) {
                 Text("선택한 Live Translate는 말투 지시를 지원하지 않습니다. 말투를 지정하려면 일반 Live 음성 모델로 전환하세요.", style = MaterialTheme.typography.bodySmall)
                 TextButton(enabled = enabled && !checking, onClick = {
-                    settings.configure(options.copy(model = GEMINI_LIVE_AGENT))
+                    settings.selectModel(GEMINI_LIVE_AGENT)
                 }) { Text("말투를 지원하는 Live로 전환") }
             } else if (options.tone == TranslationStyle.AUTO) {
                 Text("기존 문맥 자동 설정을 유지 중입니다. 위에서 말투를 직접 선택할 수 있습니다.", style = MaterialTheme.typography.bodySmall)
@@ -165,9 +197,10 @@ internal fun TranslationApiPanel(settings: TranslationApiSettings, service: Tran
             if (!online) Text("말투 지시는 Gemma에서 적용됩니다. ML Kit 번역은 말투 지시를 지원하지 않습니다.", style = MaterialTheme.typography.bodySmall)
             if (online) {
                 OutlinedButton(enabled = enabled && !checking, onClick = { servicePicker = true }, modifier = Modifier.fillMaxWidth()) { Text("서비스 · $serviceName") }
+                OutlinedButton(enabled = enabled && !checking, onClick = { aiModelPicker = true }, modifier = Modifier.fillMaxWidth()) { Text("AI 모델 · ${options.model}") }
                 OutlinedButton(enabled = enabled && !checking, onClick = { modelPicker = true }, modifier = Modifier.fillMaxWidth()) { Text("통역 방식 · ${options.interpretationMode.label}") }
                 Text(experience.processing, style = MaterialTheme.typography.bodySmall)
-                if (options.interpretationMode == OnlineInterpretationMode.PROFESSIONAL) {
+                if (options.interpretationMode == OnlineInterpretationMode.PROFESSIONAL && !nativeOnly) {
                     OutlinedTextField(domain, { domain = it.take(300) }, label = { Text("분야·상황 (선택)") },
                         placeholder = { Text("예: 반도체 장비 세미나") }, enabled = enabled && !checking, modifier = Modifier.fillMaxWidth())
                     if (domain != options.domainPrompt) TextButton(onClick = {
@@ -185,7 +218,7 @@ internal fun TranslationApiPanel(settings: TranslationApiSettings, service: Tran
                 else message?.let { ServiceConnectionFeedback(it) }
                 if (checking) TextButton(onClick = { checkJob?.cancel(); checking = false; message = "연결 확인 취소됨" }) { Text("확인 취소") }
                 experience.limitation?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                Text(if (options.provider == TranslationApiProvider.GEMINI_LIVE) "예상 비용 · 사용량 집계 후 표시" else if (usage.requests == 0L) "예상 비용 · 사용량 집계 후 표시"
+                Text(if (options.usesNativeLiveAudio) "예상 비용 · 사용량 집계 후 표시" else if (usage.requests == 0L) "예상 비용 · 사용량 집계 후 표시"
                     else if (usage.estimatedUsd.signum() == 0 && usage.unconfirmedUsage + usage.unpricedUsage > 0) "예상 비용 · 미확인 (서비스 사용량에서 확인하세요)" else
                     "확인된 사용량 예상 USD ${usage.estimatedUsd.stripTrailingZeros().toPlainString()} · 미확인 ${usage.unconfirmedUsage + usage.unpricedUsage}회", style = MaterialTheme.typography.bodySmall)
                 Text("예상 비용은 안내용이며 실제 청구는 서비스 제공자 기준입니다. 금액 미확인은 이용을 제한하지 않습니다.", style = MaterialTheme.typography.bodySmall)
@@ -194,11 +227,18 @@ internal fun TranslationApiPanel(settings: TranslationApiSettings, service: Tran
                         "출력 ${usage.reportedCandidateTokens ?: "미확인"} · 생각 ${usage.reportedThoughtTokens ?: "미확인"} · " +
                         "총 ${usage.reportedTotalTokens ?: "미확인"} 토큰", style = MaterialTheme.typography.bodySmall)
                 }
+                if (options.provider == TranslationApiProvider.OPENAI && usage.sharedTargetCount != null) {
+                    Text("최근 공유 번역 ${usage.sharedTargetCount}개 언어 · 입력 ${usage.reportedInputTokens ?: "미확인"} · " +
+                        "출력 ${usage.reportedOutputTokens ?: "미확인"} · 총 ${usage.reportedTotalTokens ?: "미확인"} 토큰 · " +
+                        "출력에 포함된 생각 ${usage.reportedReasoningTokens ?: "미확인"}", style = MaterialTheme.typography.bodySmall)
+                }
+                if (usage.sharedTargetCount != null && usage.reportedTotalsMatch == false)
+                    Text("사용량 합계가 일치하지 않아 누적 사용량과 요금 추정에서 제외했습니다.", style = MaterialTheme.typography.bodySmall)
                 if (options.allowOnline) TextButton(onClick = { checkJob?.cancel(); settings.revokeSelectedService(); message = "전송 동의 철회됨 · 진행 중인 요청을 중지합니다" }) { Text("전송 동의 철회") }
                 if (options.hasKey) TextButton(enabled = !checking, onClick = { message = if (settings.clearKey()) "키 삭제됨" else "삭제를 확인하지 못했습니다. 전송은 중지했습니다." }) { Text("키 삭제") }
             }
-            TextButton(onClick = { advanced = !advanced }) { Text(if (advanced) "고급 설정 닫기" else "모델·학습·사용량 상세") }
-            if (advanced) AdvancedTranslationApiPanel(settings, service, enabled, corpus, liveMonitor)
+            if (!nativeOnly) TextButton(onClick = { advanced = !advanced }) { Text(if (advanced) "고급 설정 닫기" else "모델·학습·사용량 상세") }
+            if (advanced && !nativeOnly) AdvancedTranslationApiPanel(settings, service, enabled, corpus, liveMonitor)
         }
     }
 }
