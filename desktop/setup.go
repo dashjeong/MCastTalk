@@ -317,9 +317,12 @@ func (a *App) verifySetup(ctx context.Context, cfg Config, c *setupController) e
 		}
 	}
 	start := time.Now()
-	startCtx, cancel := context.WithTimeout(ctx, 180*time.Second)
-	err := a.pipeline.engine.Start(startCtx, cfg, a.store.assets())
-	cancel()
+	installed := a.store.assets()
+	startCtx, cancel, err := newEngineStartupContext(ctx, 180*time.Second, cfg, installed, a.assets.Registry())
+	if err == nil {
+		err = a.pipeline.engine.Start(startCtx, cfg, installed)
+		cancel()
+	}
 	c.mu.Lock()
 	c.operation.StartupChecks = append([]setupCheck(nil), a.pipeline.engine.Ready().StartupChecks...)
 	c.mu.Unlock()

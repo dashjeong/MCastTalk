@@ -149,7 +149,11 @@ func run() error {
 			if ready := engine.Ready(); ready.TranslationReady || ready.STTReady {
 				return
 			}
-			ctx, cancel := context.WithTimeout(pipeline.ctx, 120*time.Second)
+			ctx, cancel, err := newEngineStartupContext(pipeline.ctx, 120*time.Second, cfg, installed, app.assets.Registry())
+			if err != nil {
+				pipeline.report(err)
+				return
+			}
 			defer cancel()
 			if err := engine.Start(ctx, cfg, installed); err != nil {
 				pipeline.report(fmt.Errorf("저장된 모델 자동 시작: %w", err))

@@ -415,9 +415,14 @@ func (a *App) adminAPI(w http.ResponseWriter, r *http.Request) {
 			apiError(w, errors.New("환경을 가져왔습니다. 프로그램을 다시 실행한 뒤 대상 PC를 진단하고 엔진을 시작하세요"))
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 120*time.Second)
+		cfg, installed := a.config(), a.store.assets()
+		ctx, cancel, err := newEngineStartupContext(r.Context(), 120*time.Second, cfg, installed, a.assets.Registry())
+		if err != nil {
+			apiError(w, err)
+			return
+		}
 		defer cancel()
-		if e := a.pipeline.engine.Start(ctx, a.config(), a.store.assets()); e != nil {
+		if e := a.pipeline.engine.Start(ctx, cfg, installed); e != nil {
 			a.pipeline.report(e)
 			apiError(w, e)
 			return

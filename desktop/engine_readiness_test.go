@@ -116,6 +116,47 @@ func TestProcessHealthCancellationDoesNotExposeCustomCause(t *testing.T) {
 	}
 }
 
+func TestProcessHealthLocalBoundCancelsStalledRequestBeforeLiveParent(t *testing.T) {
+	requested, requestCancelled := make(chan struct{}), make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		close(requested)
+		<-r.Context().Done()
+		close(requestCancelled)
+	}))
+	defer server.Close()
+	parent, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+	defer cancel()
+	result := make(chan error, 1)
+	go func() {
+		result <- waitForProcessHealthBounded(parent, server.URL+"/PRIVATE_HEALTH_CAPABILITY", "PRIVATE_BEARER_CANARY", nil, 40*time.Millisecond)
+	}()
+	awaitHealthSignal(t, requested)
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.DeadlineExceeded) || parent.Err() != nil {
+			t.Fatal("local runtime health bound was lost or cancelled the live parent")
+		}
+		assertHealthFailurePrivate(t, err, server.URL)
+	case <-time.After(time.Second):
+		t.Fatal("stalled health request consumed the enlarged parent startup budget")
+	}
+	awaitHealthSignal(t, requestCancelled)
+}
+
+func TestProcessHealthEarlierParentDeadlineWinsOverLocalBound(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	parent, cancel := context.WithTimeout(t.Context(), 30*time.Millisecond)
+	defer cancel()
+	err := waitForProcessHealthBounded(parent, server.URL, "PRIVATE_BEARER_CANARY", nil, time.Second)
+	if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(parent.Err(), context.DeadlineExceeded) {
+		t.Fatal("runtime health allowance extended the caller's earlier deadline")
+	}
+	assertHealthFailurePrivate(t, err, server.URL)
+}
+
 func TestProcessHealthRedirectDoesNotSendBearerToAnotherEndpoint(t *testing.T) {
 	var redirected atomic.Int32
 	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

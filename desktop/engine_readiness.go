@@ -14,6 +14,12 @@ var errProcessExitedBeforeHealth = errors.New("모델 프로세스가 준비 확
 // owns the process lifetime and cleanup. No process error, URL, key or response
 // body becomes part of the returned error.
 func waitForProcessHealth(ctx context.Context, url, key string, done <-chan error) error {
+	return waitForProcessHealthBounded(ctx, url, key, done, engineHealthLimit)
+}
+
+func waitForProcessHealthBounded(ctx context.Context, url, key string, done <-chan error, limit time.Duration) error {
+	ctx, cancelTimeout := context.WithTimeout(ctx, limit)
+	defer cancelTimeout()
 	if err := ctx.Err(); err != nil {
 		return err
 	}

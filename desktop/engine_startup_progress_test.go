@@ -59,6 +59,24 @@ func TestEngineStartupReceiptRetainsOnlyClosedWorkerFailure(t *testing.T) {
 	}
 }
 
+func TestEngineStartupReceiptRetainsOnlyContextSentinel(t *testing.T) {
+	for _, sentinel := range []error{context.DeadlineExceeded, context.Canceled} {
+		t.Run(sentinel.Error(), func(t *testing.T) {
+			e := NewEngine(t.TempDir())
+			err := e.startupStep("번역 모델 해시 확인", "", func() error {
+				return errors.Join(errors.New(ttsPrivateCanary), sentinel)
+			})
+			status := e.Ready()
+			if !errors.Is(err, sentinel) || len(status.StartupChecks) != 1 || status.StartupChecks[0].Passed || status.TranslationReady {
+				t.Fatal("context failure was lost or published as readiness")
+			}
+			if status.StartupChecks[0].Error != sentinel.Error() || strings.Contains(status.StartupChecks[0].Error, ttsPrivateCanary) {
+				t.Fatal("context receipt omitted its fixed status or exposed arbitrary private data")
+			}
+		})
+	}
+}
+
 func TestEngineVoiceProgressKeepsOverallStageAndNoFalseReadiness(t *testing.T) {
 	e := NewEngine(t.TempDir())
 	entered, release := make(chan struct{}), make(chan struct{})

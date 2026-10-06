@@ -20,6 +20,11 @@ func (e *Engine) startupStep(stage, language string, run func() error) error {
 		// The full failure remains in the existing local engine error path.
 		// This receipt is sufficient to distinguish the failing component.
 		check.Error = "이 단계의 준비 확인에 실패했습니다"
+		if errors.Is(err, context.DeadlineExceeded) {
+			check.Error = context.DeadlineExceeded.Error()
+		} else if errors.Is(err, context.Canceled) {
+			check.Error = context.Canceled.Error()
+		}
 		var workerErr *ttsWorkerStartupError
 		if errors.As(err, &workerErr) {
 			check.Error = workerErr.Error()

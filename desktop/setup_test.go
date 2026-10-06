@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -399,10 +400,20 @@ func setupTestLocalSource(t *testing.T, a *App, f *portableTestFixture, mode str
 	}))
 	t.Cleanup(server.Close)
 	t.Cleanup(func() { close(s.stop) })
+	modelRoutes := map[string]*url.URL{}
 	a.assets.mu.Lock()
 	for i, art := range a.assets.registry {
 		if data, ok := payloads[art.ID]; ok {
-			art.URL, art.Bytes, art.SHA256 = server.URL+"/"+art.ID, int64(len(data)), portableTestHash(data)
+			localURL := server.URL + "/" + art.ID
+			if art.Task == "translation" || art.Task == "stt" {
+				// Keep the immutable custom model profile and its consent /
+				// environment fingerprint intact. Only the test transport maps
+				// this exact source to a tiny localhost fixture.
+				modelRoutes[art.URL], _ = url.Parse(localURL)
+			} else {
+				art.URL = localURL
+			}
+			art.Bytes, art.SHA256 = int64(len(data)), portableTestHash(data)
 			if artifactBundle(art) {
 				art.TreeSHA256 = f.manager.bundleTreePins[art.ID]
 			}
@@ -410,6 +421,20 @@ func setupTestLocalSource(t *testing.T, a *App, f *portableTestFixture, mode str
 		}
 	}
 	a.assets.mu.Unlock()
+	originalTransport := http.DefaultClient.Transport
+	delegate := originalTransport
+	if delegate == nil {
+		delegate = http.DefaultTransport
+	}
+	http.DefaultClient.Transport = &mockTransport{roundTripFunc: func(r *http.Request) (*http.Response, error) {
+		if localURL, ok := modelRoutes[r.URL.String()]; ok {
+			copy := r.Clone(r.Context())
+			copy.URL, copy.Host = localURL, localURL.Host
+			return delegate.RoundTrip(copy)
+		}
+		return delegate.RoundTrip(r)
+	}}
+	t.Cleanup(func() { http.DefaultClient.Transport = originalTransport })
 	// Only local fixture profiles use this hook. Production validates immutable sources.
 	a.setup.validate = func(Artifact) error { return nil }
 	return s
@@ -454,6 +479,8 @@ func TestSetupLocalDownloadsInstallAndExerciseSpeechInterfaces(t *testing.T) {
 	}
 	if next := setupTestPlan(t, a); len(next.Missing) != 0 || next.DownloadBytes != 0 {
 		t.Fatal("installed files were not reused by next launch plan")
+	} else if next.EnvironmentFingerprint != op.EnvironmentFingerprint {
+		t.Fatal("test download transport changed immutable profiles or made the verified environment stale")
 	}
 }
 

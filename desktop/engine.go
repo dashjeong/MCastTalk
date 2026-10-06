@@ -170,7 +170,7 @@ func (e *Engine) startLlama(ctx, engineCtx context.Context, cfg Config, assets m
 	}
 
 	if err := e.startupStep("번역 모델 해시 확인", "", func() error {
-		return verifyModel(ctx, asset.Path, asset.SHA256, asset.Bytes, []byte{0x47, 0x47, 0x55, 0x46})
+		return verifyStartupModel(ctx, asset, []byte{0x47, 0x47, 0x55, 0x46})
 	}); err != nil {
 		return fmt.Errorf("model verification failed: %v", err)
 	}
@@ -340,7 +340,7 @@ func (e *Engine) startWhisper(ctx, engineCtx context.Context, cfg Config, assets
 	}
 
 	if err := e.startupStep("음성 인식 모델 해시 확인", "", func() error {
-		return verifyModel(ctx, asset.Path, asset.SHA256, asset.Bytes, []byte{'l', 'm', 'g', 'g'})
+		return verifyStartupModel(ctx, asset, []byte{'l', 'm', 'g', 'g'})
 	}); err != nil {
 		return fmt.Errorf("model verification failed: %v", err)
 	}
@@ -421,7 +421,12 @@ func (e *Engine) startWhisper(ctx, engineCtx context.Context, cfg Config, assets
 	// Warmup
 	wavData := makeSilenceWAV()
 	if err := e.startupStep("음성 인식 모델 첫 추론", "", func() error {
-		_, err := transcribeRequest(ctx, url, wavData, "en")
+		warmCtx, cancel := context.WithTimeout(ctx, engineSTTWarmupLimit)
+		defer cancel()
+		_, err := transcribeRequest(warmCtx, url, wavData, "en")
+		if warmCtx.Err() != nil {
+			return warmCtx.Err()
+		}
 		if err != nil && err.Error() == "empty transcription" {
 			return nil
 		}
