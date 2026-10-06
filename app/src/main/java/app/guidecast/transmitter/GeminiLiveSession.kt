@@ -75,6 +75,7 @@ internal class GeminiLiveSession(
             connected = true
             RuntimeDiagnosticLog.durableRecord("native_audio_connection", org.json.JSONObject()
                 .put("provider", "GEMINI_LIVE").put("session_id", usageSessionId)
+                .put("target", diagnosticTarget)
                 .put("model", options.model.takeIf { it in setOf(GEMINI_LIVE_TRANSLATE, GEMINI_LIVE_AGENT) } ?: "CUSTOM")
                 .put("settings_revision", options.revision).put("stage", "SESSION_ATTEMPT")
                 .put("actual_usage", org.json.JSONObject.NULL).toString())
@@ -94,6 +95,7 @@ internal class GeminiLiveSession(
                         val receipt = org.json.JSONObject().put("provider", "GEMINI_LIVE")
                             .put("model", options.model.takeIf { it in setOf(GEMINI_LIVE_TRANSLATE, GEMINI_LIVE_AGENT) } ?: "CUSTOM")
                             .put("session_id", usageSessionId).put("settings_revision", options.revision)
+                            .put("target", diagnosticTarget)
                             .put("report_index", usageReports).put("scope", "RAW_PROVIDER_EVENT_NOT_BILLING_TOTAL")
                         for (field in listOf("promptTokenCount", "responseTokenCount", "totalTokenCount", "cachedContentTokenCount")) {
                             val number = runCatching { if (!usage.has(field) || usage.isNull(field)) null else
@@ -114,7 +116,7 @@ internal class GeminiLiveSession(
                     diagnostics.sent(bytes)
                     if (wireDiagnostics.sentPacketCount() % 10L == 0L) recordWire()
                 }, timing = timing, diagnostics = wireDiagnostics,
-                interpreterInstructions = context.instructions, references = context.references)
+                interpreterInstructions = context.instructions, references = context.references, liveVoice = options.liveVoice)
         } catch (cancelled: CancellationException) {
             termination.failed(cancelled, settings.authorized(options), allowed())
             if (cancelled is TimeoutCancellationException) onFailure("Gemini Live 연결 준비 시간 초과 · 다시 시작하세요.")
@@ -132,6 +134,8 @@ internal class GeminiLiveSession(
                 .put("target", diagnosticTarget).toString())
             timing?.let { RuntimeDiagnosticLog.durableRecord("native_audio_timing", it.snapshot(close = true)
                 .put("provider", "GEMINI_LIVE").put("session_id", usageSessionId)
+                .put("target", diagnosticTarget)
+                .put("end_reason", termination.reason.name)
                 .put("model", options.model.takeIf { model -> model in setOf(GEMINI_LIVE_TRANSLATE, GEMINI_LIVE_AGENT) } ?: "CUSTOM")
                 .put("settings_revision", options.revision).toString()) }
             recordState("closed")

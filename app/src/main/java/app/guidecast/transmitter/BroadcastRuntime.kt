@@ -208,8 +208,8 @@ data class TranslationTranscriptLine(
 
 /** A closed session may only finalize its own unfinished rows, even after a new session starts. */
 internal fun terminalizeNativeAudioTranscripts(lines: List<TranslationTranscriptLine>, sessionId: Long,
-    reason: NativeAudioEndReason): List<TranslationTranscriptLine> = lines.map { row ->
-    if (row.nativeAudioSessionId == sessionId && row.liveOutputState in setOf(LiveOutputState.QUEUED, LiveOutputState.GENERATING))
+    reason: NativeAudioEndReason, target: String? = null): List<TranslationTranscriptLine> = lines.map { row ->
+    if (row.nativeAudioSessionId == sessionId && (target == null || row.liveSegmentLanguage == target) && row.liveOutputState in setOf(LiveOutputState.QUEUED, LiveOutputState.GENERATING))
         row.copy(isFinal = false, liveOutputState = reason.outputState, liveEndReason = reason)
     else row
 }

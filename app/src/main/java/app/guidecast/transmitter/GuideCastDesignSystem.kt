@@ -30,6 +30,13 @@ private val GuideCastTypography = Typography(
         lineHeight = 38.sp,
         letterSpacing = (-0.3).sp,
     ),
+    headlineMedium = TextStyle(
+        fontFamily = FontFamily.SansSerif,
+        fontWeight = FontWeight.SemiBold,
+        fontSize = 28.sp,
+        lineHeight = 36.sp,
+        letterSpacing = (-0.2).sp,
+    ),
     headlineSmall = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.SemiBold,

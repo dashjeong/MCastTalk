@@ -390,6 +390,7 @@ class NativeAudioContinuityIntegrationTest {
         lazyTermination.request(NativeAudioEndReason.STOPPED); lazyTermination.finish()
         lazyTermination.failed(NativeAudioOverload()); lazyTermination.finish()
         assertEquals(listOf(NativeAudioEndReason.STOPPED), endings)
+        assertEquals(NativeAudioEndReason.STOPPED, lazyTermination.reason)
     }
 
     @Test fun generatedAndIncompleteCaptionsRemainDistinctFromAudibleSuccess() {

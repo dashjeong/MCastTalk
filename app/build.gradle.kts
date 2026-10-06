@@ -136,8 +136,8 @@ android {
         applicationId = "app.guidecast.transmitter"
         minSdk = 30
         targetSdk = 36
-        versionCode = 60
-        versionName = "0.2.48"
+        versionCode = 61
+        versionName = "0.2.49"
 
         // Galaxy Note9/S23 and newer targets are ARM64. Keeping only the required ABI
         // avoids shipping an unused second LiteRT-LM native runtime in the sideload APK.

@@ -36,12 +36,14 @@ data class TranslationApiOptions(
     val budgetLimitUsd: String = "1.00",
     /** Existing saved Realtime choices retain the text route until the user selects audio. */
     val realtimeAudio: Boolean = false,
+    val liveVoice: RelayVoiceGender = RelayVoiceGender.AUTO,
 ) {
     internal val usesNativeLiveAudio: Boolean get() = provider == TranslationApiProvider.GEMINI_LIVE ||
         (provider == TranslationApiProvider.OPENAI_REALTIME && realtimeAudio)
     internal fun portable() = JSONObject().put("provider", provider.name).put("model", model).put("baseUrl", baseUrl)
         .put("protocol", protocol.name).put("tone", tone.name).put("interpretationMode", interpretationMode.name).put("domainPrompt", domainPrompt)
         .put("interpreterInstructions", interpreterInstructions).put("localFallback", localFallback).put("realtimeAudio", realtimeAudio)
+        .put("liveVoice", liveVoice.name)
     internal val credentialScope: String get() = when {
         provider in setOf(TranslationApiProvider.GEMINI, TranslationApiProvider.GEMINI_LIVE) -> "GOOGLE:" + baseUrl
         provider in setOf(TranslationApiProvider.OPENAI, TranslationApiProvider.OPENAI_REALTIME) && baseUrl == "https://api.openai.com/v1" -> "OPENAI:" + baseUrl
@@ -69,7 +71,8 @@ data class TranslationApiOptions(
                 domainPrompt = row.optString("domainPrompt", ""),
                 interpreterInstructions = row.optString("interpreterInstructions", ""),
                 tone = TranslationStyle.valueOf(row.optString("tone", "CONVERSATIONAL")), localFallback = false,
-                realtimeAudio = row.optBoolean("realtimeAudio", false))
+                realtimeAudio = row.optBoolean("realtimeAudio", false),
+                liveVoice = RelayVoiceGender.valueOf(row.optString("liveVoice", "AUTO")))
             require(validTranslationApiOptions(result))
             return result
         }
@@ -123,6 +126,14 @@ class TranslationApiSettings(context: Context) {
     /** Restore choices and scoped credentials, never a previous transmission permission. */
     @Synchronized internal fun restoreOnlineSelection(): Boolean =
         configure(preparedLearningProvider() ?: onlineServiceChoice(state.value, true))
+    /** Streaming restores its own sentence profile; learning keeps its existing provider lookup. */
+    @Synchronized internal fun restoreTextOnlineSelection(): Boolean {
+        fun load(name: String): TranslationApiOptions? = runCatching {
+            preferences.getString(name, null)?.let { TranslationApiOptions.fromPortable(JSONObject(it)) }
+        }.getOrNull()
+        return configure(restoreStreamingTextApiProfile(state.value,
+            savedText = load("last_text_options"), legacyOnline = load("last_online_options")))
+    }
     @Synchronized fun endSessionLearning() { mutableSessionLearning.value = false; mutableLearningOnline.value = null }
     /** User confirmation is session-only; saved online opt-in can never enable OFFLINE networking. */
     @Synchronized fun beginSessionLearning(agreeToTextAndCost: Boolean, allowReferences: Boolean): Boolean {
@@ -244,6 +255,7 @@ class TranslationApiSettings(context: Context) {
     private fun store(value: TranslationApiOptions) {
         endSessionLearning()
         if (value.provider != TranslationApiProvider.LOCAL) preferences.edit().putString("last_online_options", value.portable().toString()).apply()
+        if (isOnlineTextApiProfile(value)) preferences.edit().putString("last_text_options", value.portable().toString()).apply()
         preferences.edit().putString("options", value.portable().toString()).putBoolean("allow_online", value.allowOnline).putBoolean("always_learn_online", value.alwaysLearnOnline)
             .putBoolean("allow_live_audio", value.allowLiveAudio).putBoolean("allow_domain_references", value.allowDomainReferences).putString("budget_limit_usd", value.budgetLimitUsd).apply()
         mutableState.value = value

@@ -49,7 +49,8 @@ internal class KtorOpenAiAudioWire : OpenAiAudioWire {
 }
 
 internal fun openAiAudioSetup(model: String, source: String, target: String, domain: String = "",
-    tone: TranslationStyle = TranslationStyle.CONVERSATIONAL, interpreterInstructions: String = "", references: String = ""): String {
+    tone: TranslationStyle = TranslationStyle.CONVERSATIONAL, interpreterInstructions: String = "", references: String = "",
+    liveVoice: RelayVoiceGender = RelayVoiceGender.AUTO): String {
     require(model in OPENAI_REALTIME_MODELS)
     require(source.matches(Regex("[a-z]{2}")))
     val destination = geminiLiveTarget(target)
@@ -63,7 +64,8 @@ internal fun openAiAudioSetup(model: String, source: String, target: String, dom
     val instructions = nativeInterpreterInstructions(destination, tone, domain, interpreterInstructions, references)
     return JSONObject().put("type", "session.update").put("session", JSONObject()
         .put("type", "realtime").put("model", model).put("output_modalities", JSONArray().put("audio"))
-        .put("audio", JSONObject().put("input", input).put("output", JSONObject().put("format", format).put("voice", "marin")))
+        .put("audio", JSONObject().put("input", input).put("output", JSONObject().put("format", format)
+            .put("voice", openAiRelayVoiceName(liveVoice))))
         .put("instructions", instructions).put("tools", JSONArray()).put("max_output_tokens", 2_048)).toString()
 }
 
@@ -161,8 +163,9 @@ internal class OpenAiAudioTransport(private val wire: OpenAiAudioWire = KtorOpen
         authorized: () -> Boolean, onReady: () -> Unit, onEvent: suspend (OpenAiAudioEvent) -> Unit,
         domain: String = "", tone: TranslationStyle = TranslationStyle.CONVERSATIONAL,
         onRequest: (inputId: String, sequence: Long, sent: Boolean) -> Unit = { _, _, _ -> },
-        durationLimitMillis: Long? = null, interpreterInstructions: String = "", references: String = ""): Unit = nativeLiveSessionWindow(durationLimitMillis) {
-        val setup = openAiAudioSetup(model, source, target, domain, tone, interpreterInstructions, references)
+        durationLimitMillis: Long? = null, interpreterInstructions: String = "", references: String = "",
+        liveVoice: RelayVoiceGender = RelayVoiceGender.AUTO): Unit = nativeLiveSessionWindow(durationLimitMillis) {
+        val setup = openAiAudioSetup(model, source, target, domain, tone, interpreterInstructions, references, liveVoice)
         check(authorized())
         wire.connect(model, key, authorized) { socket ->
             suspend fun send(event: JSONObject) { check(authorized()); socket.send(event.toString()) }

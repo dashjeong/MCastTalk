@@ -192,7 +192,9 @@ class GuideCastDesignSystemRegressionTest {
         val marker = "private fun $functionName("
         val start = source.indexOf(marker)
         check(start >= 0) { "Function not found: $functionName" }
-        return braceBody(start)
+        val openingParameters = source.indexOf('(', start)
+        val parameters = callBody(marker, start)
+        return braceBody(openingParameters + parameters.length + 2)
     }
 
     private fun braceBody(startAt: Int): String {

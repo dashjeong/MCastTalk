@@ -40,6 +40,7 @@ const transcriptStatus = document.querySelector("#transcript-status");
 const pageDescription = document.querySelector("#page-description");
 const pinnedChannelBanner = document.querySelector("#pinned-channel");
 const pinnedChannelName = document.querySelector("#pinned-channel-name");
+let listenerHud = null;
 
 const pinnedChannelId = (() => {
   const segments = location.pathname.split("/").filter(Boolean);
@@ -158,6 +159,7 @@ function setStatus(text, kind = "idle") {
   const losses = playbackLossSummary();
   statusLabel.textContent = uiText(text) + (losses ? ` · ${losses}` : "");
   statusDot.className = `dot ${kind}`;
+  listenerHud?.update();
 }
 
 function playbackLossSummary() {
@@ -280,6 +282,7 @@ function renderNoTranscript(message) {
   line.className = "transcript-empty";
   line.textContent = uiText(message);
   transcriptList.replaceChildren(line);
+  listenerHud?.setTranscript([]);
 }
 
 function formatLatency(value) {
@@ -310,6 +313,7 @@ function renderTranscripts(responseText) {
   }
 
   const selectedLanguage = transcriptSelect.value;
+  listenerHud?.setTranscript(lines);
   const caption = document.querySelector("#current-caption");
   const latest = lines[lines.length - 1];
   if (caption && document.querySelector("#listening-mode")?.value !== "replay" && document.querySelector("#transcript-scope")?.value !== "archive") {
@@ -424,6 +428,7 @@ function clearTranscriptSnapshot() {
   cachedTranscript = null;
   renderedTranscriptScope = null;
   setTranscriptStale(false);
+  listenerHud?.setTranscript([]);
 }
 
 function loadTranscripts(forceRefresh = false) {
@@ -669,9 +674,11 @@ async function loadChannels() {
   }
   setStatus(channels.length ? "재생을 눌러 청취하세요" : "송출 채널 대기 중");
   setDiagnostics();
+  listenerHud?.update();
 }
 
 function showPinDialog(message = "") {
+  listenerHud?.close();
   pinError.textContent = uiText(message);
   if (!pinDialog.open) pinDialog.showModal();
   pinInput.focus();
@@ -722,6 +729,8 @@ liveEdgeButton.addEventListener("click", () => {
 channelSelect.addEventListener("change", () => {
   globalThis.GuideCastReplay?.channelChanged();
   if (desiredState === "playing" && document.querySelector("#listening-mode")?.value !== "replay") startPlayback();
+  listenerHud?.update();
+  if (listenerHud?.isOpen()) loadTranscripts(true);
 });
 
 async function startPlayback() {
@@ -1213,6 +1222,187 @@ window.__guideCastDiagnostics = () => ({
   reconnectPending: reconnectTimer !== null,
 });
 
+function listenerHudCaption(lines, language) {
+  const rows = Array.isArray(lines) ? lines.filter(row => row && typeof row === "object") : [];
+  const text = value => typeof value === "string" ? value : "";
+  let selected = null;
+  for (let index = rows.length - 1; index >= 0; index--) {
+    const row = rows[index];
+    if (language === "source" ? text(row.sourceText).trim() :
+      row.liveSegmentLanguage === language || Object.prototype.hasOwnProperty.call(row.translations || {}, language)) {
+      selected = row;
+      break;
+    }
+  }
+  // Keep a selected lane's source and translation on the same row. Never pair it
+  // with a newer source belonging to another language or provider turn.
+  if (!selected && language !== "source") {
+    for (let index = rows.length - 1; index >= 0; index--) {
+      if (text(rows[index].sourceText).trim()) { selected = rows[index]; break; }
+    }
+  }
+  return { source: text(selected?.sourceText),
+    translation: language === "source" ? "" : text(selected?.translations?.[language]) };
+}
+
+function createListenerHud() {
+  const hud = document.querySelector("#listener-hud");
+  const opener = document.querySelector("#hud-open");
+  const closer = document.querySelector("#hud-close");
+  const language = document.querySelector("#hud-language");
+  const order = document.querySelector("#hud-order");
+  const sourcePane = document.querySelector("#hud-source-pane");
+  const translationPane = document.querySelector("#hud-translation-pane");
+  const captions = document.querySelector("#hud-captions");
+  const sourceText = document.querySelector("#hud-source");
+  const translationText = document.querySelector("#hud-translation");
+  const translationLabel = document.querySelector("#hud-translation-label");
+  const status = document.querySelector("#hud-status");
+  const note = document.querySelector("#hud-fullscreen-note");
+  const main = document.querySelector("main");
+  if (!document.body || typeof window.addEventListener !== "function" ||
+      [hud, opener, closer, language, order, sourcePane, translationPane, captions,
+        sourceText, translationText, translationLabel, status, note, main].some(node => !node)) return null;
+  let opened = false, rows = [], optionSignature = "", previous = null, generation = 0;
+  let ownsHistory = false;
+  let ownsFullscreen = false;
+  const historyMarker = `caption-hud-${Date.now()}`;
+  const historyKey = "guideCastCaptionHud";
+  const ownedHistory = state => Boolean(state && state[historyKey] === historyMarker);
+  const setText = (node, value) => { if (node.textContent !== value) node.textContent = value; };
+  function update() {
+    const options = Array.from(channelSelect.options || channelSelect.children || []);
+    const signature = JSON.stringify(options.map(option => [option.value, option.textContent]));
+    if (optionSignature !== signature) {
+      language.replaceChildren(...options.map(option => {
+        const copy = document.createElement("option");
+        copy.value = option.value; copy.textContent = option.textContent;
+        return copy;
+      }));
+      optionSignature = signature;
+    }
+    language.disabled = channelSelect.disabled || !options.length;
+    language.value = channelSelect.value;
+    const sourceOnly = channelSelect.value === "source";
+    translationPane.hidden = sourceOnly;
+    captions.classList.toggle("is-source-only", sourceOnly);
+    order.disabled = sourceOnly;
+    const recorded = document.querySelector("#listening-mode")?.value === "replay";
+    const archive = document.querySelector("#transcript-scope")?.value === "archive";
+    const selected = recorded && !archive ? { source: "", translation: "" } : listenerHudCaption(rows, channelSelect.value);
+    setText(sourceText, selected.source.trim() ? selected.source : uiText("원문을 기다리고 있습니다."));
+    setText(translationText, selected.translation.trim() ? selected.translation : uiText("선택한 언어의 번역을 기다리고 있습니다."));
+    sourceText.classList.toggle("is-empty", !selected.source.trim());
+    translationText.classList.toggle("is-empty", !selected.translation.trim());
+    setText(translationLabel, `${uiText("번역")} · ${channelLabel(channelSelect.value) || ""}`);
+    const context = recorded && !archive ? uiText("저장 음성 재생 · 스크립트는 통역 스크립트 탭에서 확인하세요.") :
+      archive ? uiText("방송 처음부터 · 표시 중인 스크립트") : "";
+    setText(status, !channelSelect.value ? uiText("청취 언어를 먼저 선택하세요.") :
+      [context, statusLabel.textContent].filter(Boolean).join(" · "));
+  }
+  function close({ fromHistory = false, restore = true } = {}) {
+    if (!opened) return false;
+    opened = false; generation++;
+    ownsFullscreen = false;
+    hud.hidden = true;
+    opener.setAttribute("aria-expanded", "false");
+    document.body.style.overflow = previous.overflow;
+    main.inert = previous.inert;
+    if (previous.ariaHidden === null) main.removeAttribute("aria-hidden");
+    else main.setAttribute("aria-hidden", previous.ariaHidden);
+    if (document.fullscreenElement === hud && typeof document.exitFullscreen === "function") {
+      try { Promise.resolve(document.exitFullscreen()).catch(() => {}); } catch (_) {}
+    }
+    if (restore) {
+      window.scrollTo(previous.x, previous.y);
+      const target = previous.focus?.isConnected !== false ? previous.focus : opener;
+      try { (target || opener).focus({ preventScroll: true }); } catch (_) { opener.focus(); }
+    }
+    if (panelTranscript.hidden) stopTranscriptPolling();
+    if (!fromHistory && ownsHistory && ownedHistory(history.state)) history.back();
+    ownsHistory = false;
+    return true;
+  }
+  function open({ fromHistory = false, fullscreen = true } = {}) {
+    if (opened) return false;
+    opened = true;
+    const openingGeneration = ++generation;
+    previous = { focus: document.activeElement, x: window.scrollX || 0, y: window.scrollY || 0,
+      overflow: document.body.style.overflow, inert: main.inert, ariaHidden: main.getAttribute("aria-hidden") };
+    main.inert = true; main.setAttribute("aria-hidden", "true");
+    document.body.style.overflow = "hidden";
+    hud.hidden = false; note.hidden = true;
+    opener.setAttribute("aria-expanded", "true");
+    update(); closer.focus({ preventScroll: true });
+    ownsHistory = fromHistory;
+    if (!fromHistory) {
+      try {
+        const state = history.state && typeof history.state === "object" ? history.state : {};
+        history.pushState({ ...state, [historyKey]: historyMarker }, "", location.href);
+        ownsHistory = true;
+      } catch (_) { /* Close and Escape still work when history changes are unavailable. */ }
+    }
+    startTranscriptPolling();
+    if (fullscreen && !document.fullscreenElement && typeof hud.requestFullscreen === "function") {
+      try {
+        Promise.resolve(hud.requestFullscreen()).then(() => {
+          if (!opened && document.fullscreenElement === hud) {
+            ownsFullscreen = false;
+            return document.exitFullscreen?.();
+          }
+          if (opened && document.fullscreenElement === hud) ownsFullscreen = true;
+        }).catch(() => {
+          if (opened && generation === openingGeneration) {
+            setText(note, uiText("전체 화면 없이도 HUD를 사용할 수 있습니다.")); note.hidden = false;
+          }
+        });
+      } catch (_) { setText(note, uiText("전체 화면 없이도 HUD를 사용할 수 있습니다.")); note.hidden = false; }
+    }
+    return true;
+  }
+  opener.addEventListener("click", () => open());
+  closer.addEventListener("click", () => close());
+  language.addEventListener("change", () => {
+    if (!Array.from(channelSelect.options || []).some(option => option.value === language.value)) return;
+    channelSelect.value = language.value;
+    channelSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    update();
+  });
+  order.addEventListener("change", () => {
+    if (order.value === "translation-first") captions.append(translationPane, sourcePane);
+    else captions.append(sourcePane, translationPane);
+  });
+  hud.addEventListener("keydown", event => {
+    if (!opened) return;
+    if (event.key === "Escape") { event.preventDefault(); close(); return; }
+    if (event.key !== "Tab") return;
+    const controls = [closer, language, order].filter(control => !control.disabled && !control.hidden);
+    const first = controls[0], last = controls[controls.length - 1];
+    if (event.shiftKey && (document.activeElement === first || !hud.contains(document.activeElement))) {
+      event.preventDefault(); last.focus();
+    } else if (!event.shiftKey && (document.activeElement === last || !hud.contains(document.activeElement))) {
+      event.preventDefault(); first.focus();
+    }
+  });
+  document.addEventListener("focusin", event => { if (opened && !hud.contains(event.target)) closer.focus(); });
+  document.addEventListener("fullscreenchange", () => {
+    if (opened && document.fullscreenElement === hud) ownsFullscreen = true;
+    else if (opened && ownsFullscreen) {
+      ownsFullscreen = false;
+      setText(note, uiText("전체 화면 없이도 HUD를 사용할 수 있습니다."));
+      note.hidden = false;
+    }
+  });
+  window.addEventListener("popstate", event => {
+    if (ownedHistory(event.state)) { if (!opened) open({ fromHistory: true, fullscreen: false }); }
+    else if (opened) close({ fromHistory: true });
+  });
+  window.addEventListener("pagehide", () => close({ fromHistory: true, restore: false }));
+  document.querySelector("#listening-mode")?.addEventListener("change", update);
+  document.querySelector("#transcript-scope")?.addEventListener("change", () => { rows = []; update(); });
+  return { open, close, update, isOpen: () => opened, setTranscript: lines => { rows = Array.isArray(lines) ? lines : []; update(); } };
+}
+
 developerInformationToggle.addEventListener("change", () => {
   developerInformationEnabled = developerInformationToggle.checked;
   try {
@@ -1224,4 +1414,6 @@ developerInformationToggle.addEventListener("change", () => {
 
 switchTabs("player");
 setupTabEvents();
+listenerHud = createListenerHud();
+window.GuideCastHud = listenerHud;
 initialize();

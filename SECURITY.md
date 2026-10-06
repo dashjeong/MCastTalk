@@ -1,7 +1,9 @@
 # Security and privacy
 
-This policy describes the current source. The latest downloadable prerelease is
-0.2.47-beta; changes on `main` are not a completed release or a security certification.
+This policy describes the 0.2.49-beta feature preview (versionCode 61) for Android 11
+and later on ARM64. A preview is not a completed release or a security certification.
+Actual microphone interpretation, LAN audio delivery, continuous operation and
+domain-quality improvement remain pending final acceptance.
 
 ## Offline and online processing
 
@@ -16,7 +18,9 @@ sent for authentication, not as translation content.
 
 Live interpretation uses the selected Gemini or OpenAI audio service. **Microphone
 audio is sent to that provider.** Returned audio and available source/translated
-captions can play on the phone and, when enabled, reach network listeners.
+captions can play on the phone and, when enabled, reach network listeners. Up to five
+translation languages use separate provider connections and may incur separate costs.
+The phone monitors one selected language; listeners choose among broadcast languages.
 Supported models have different language, prompt and reference capabilities; the
 app shows their supported options. Professional context can send the chosen domain,
 interpretation instructions and an enabled reference excerpt after consent. Reference
@@ -38,6 +42,9 @@ checks are limited heuristics, not a complete classifier of sensitive informatio
 
 The listener server runs on the Android device. Users who can reach its network
 address can receive broadcast content according to the selected access settings.
+The listener address and QR remain available during broadcasting. A listener on the
+same Wi-Fi or hotspot can open the page, choose a language and start playback. Page HUD
+controls change caption presentation; they do not change server access settings.
 PINs and QR tokens control access; they do not encrypt HTTP/WebSocket traffic.
 HTTPS requires certificate trust. Browser microphone access also requires a secure
 context and explicit permission. Use a trusted network and review access before

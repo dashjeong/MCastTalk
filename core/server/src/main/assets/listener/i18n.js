@@ -3,6 +3,18 @@
 globalThis.GuideCastI18n = (() => {
   const locales = ["en", "ja", "zh", "zh-tw", "vi", "nl", "es", "ar"];
   const rows = {
+    "HUD 보기": ["Show HUD", "HUDを表示", "显示HUD", "顯示HUD", "Mở HUD", "HUD tonen", "Ver HUD", "عرض HUD"],
+    "HUD 닫기": ["Close HUD", "HUDを閉じる", "关闭HUD", "關閉HUD", "Đóng HUD", "HUD sluiten", "Cerrar HUD", "إغلاق HUD"],
+    "큰 자막": ["Large captions", "大きな字幕", "大字幕", "大字幕", "Phụ đề lớn", "Grote ondertiteling", "Subtítulos grandes", "ترجمة نصية كبيرة"],
+    "자막 순서": ["Caption order", "字幕の順番", "字幕顺序", "字幕順序", "Thứ tự phụ đề", "Volgorde ondertiteling", "Orden de subtítulos", "ترتيب النصوص"],
+    "원문 먼저": ["Source first", "原文を先に", "原文优先", "原文優先", "Nguyên văn trước", "Brontaal eerst", "Original primero", "الأصل أولاً"],
+    "번역 먼저": ["Translation first", "翻訳を先に", "译文优先", "譯文優先", "Bản dịch trước", "Vertaling eerst", "Traducción primero", "الترجمة أولاً"],
+    "원문을 기다리고 있습니다.": ["Waiting for source captions.", "原文の字幕を待っています。", "正在等待原文字幕。", "正在等待原文字幕。", "Đang chờ phụ đề nguyên văn.", "Wachten op brontekst.", "Esperando subtítulos originales.", "بانتظار النص الأصلي."],
+    "선택한 언어의 번역을 기다리고 있습니다.": ["Waiting for the selected language's translation.", "選択した言語の翻訳を待っています。", "正在等待所选语言的译文。", "正在等待所選語言的譯文。", "Đang chờ bản dịch ngôn ngữ đã chọn.", "Wachten op de gekozen vertaling.", "Esperando la traducción del idioma elegido.", "بانتظار ترجمة اللغة المختارة."],
+    "전체 화면 없이도 HUD를 사용할 수 있습니다.": ["HUD is still available without fullscreen.", "全画面なしでもHUDを使えます。", "不使用全屏也可以使用HUD。", "不使用全螢幕也可以使用HUD。", "Vẫn dùng được HUD khi không toàn màn hình.", "De HUD werkt ook zonder volledig scherm.", "El HUD sigue disponible sin pantalla completa.", "يمكن استخدام HUD دون ملء الشاشة."],
+    "닫기 또는 뒤로가기로 원래 화면에 돌아갑니다.": ["Close or go back to return to the previous view.", "閉じるか戻るで元の画面に戻ります。", "关闭或返回可回到原界面。", "關閉或返回可回到原畫面。", "Đóng hoặc quay lại để về màn hình trước.", "Sluit of ga terug naar het vorige scherm.", "Cierra o vuelve atrás para regresar a la vista anterior.", "أغلق أو ارجع للعودة إلى العرض السابق."],
+    "방송 처음부터 · 표시 중인 스크립트": ["From broadcast start · currently displayed transcript", "放送の最初から・表示中のテキスト", "从广播开始·当前显示的文字", "從廣播開始·目前顯示的文字", "Từ đầu chương trình · văn bản đang hiển thị", "Vanaf het begin · momenteel getoonde tekst", "Desde el inicio · transcripción mostrada", "من بداية البث · النص المعروض حالياً"],
+    "청취 언어를 먼저 선택하세요.": ["Choose a listening language first.", "先に聴取言語を選んでください。", "请先选择收听语言。", "請先選擇收聽語言。", "Hãy chọn ngôn ngữ nghe trước.", "Kies eerst een luistertaal.", "Elige primero un idioma de escucha.", "اختر لغة الاستماع أولاً."],
     "받은 음성 건너뛰기 누적": ["Accepted audio skipped, total", "受信済み音声のスキップ累計", "已接收音频跳过总量", "已接收音訊略過總量", "Tổng âm đã nhận bị bỏ qua", "Totaal overgeslagen ontvangen audio", "Total de audio recibido omitido", "إجمالي الصوت المقبول المتجاوز"],
     "거절된 음성 누적": ["Rejected audio, total", "拒否された音声の累計", "已拒绝音频总量", "已拒絕音訊總量", "Tổng âm bị từ chối", "Totaal geweigerde audio", "Total de audio rechazado", "إجمالي الصوت المرفوض"],
     "수신 중단 이후 미수신 음성량 UNKNOWN": ["Unreceived audio after intake stopped: UNKNOWN", "受信停止後の未受信音声量 UNKNOWN", "停止接收后的未接收音频量 UNKNOWN", "停止接收後的未接收音訊量 UNKNOWN", "Lượng âm chưa nhận sau khi dừng: UNKNOWN", "Niet ontvangen audio na ontvangststop: UNKNOWN", "Audio no recibido tras detener la recepción: UNKNOWN", "كمية الصوت غير المستلم بعد توقف الاستقبال: UNKNOWN"],

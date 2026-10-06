@@ -11,6 +11,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -40,15 +41,19 @@ internal fun LiveTranscriptHud(
     onBack: () -> Unit,
     onReconnect: (() -> Unit)? = null,
     recoveryMessage: String? = null,
+    sourceLanguageTag: String? = null,
 ) {
     BackHandler(onBack = onBack)
     var controls by rememberSaveable { mutableStateOf(false) }
     var follow by rememberSaveable { mutableStateOf(true) }
     val context = LocalContext.current
     val preferences = remember(context) { context.getSharedPreferences("transcript_hud", android.content.Context.MODE_PRIVATE) }
+    val languages = remember(transcripts, targetLanguageTags) {
+        transcriptHudLanguageTags(targetLanguageTags, transcripts)
+    }
     // Display preferences never mutate broadcast targets or request a translation.
     var selectedLanguages by remember {
-        mutableStateOf(preferences.getStringSet("languages", setOf("source"))!!.toSet())
+        mutableStateOf(transcriptHudSelection(preferences.getStringSet("languages", setOf("source")).orEmpty(), languages))
     }
     var size by remember { mutableStateOf(preferences.getInt("size", 32).takeIf { it in listOf(24, 32, 44) } ?: 32) }
     fun selectLanguage(tag: String, checked: Boolean) {
@@ -59,8 +64,8 @@ internal fun LiveTranscriptHud(
         }
     }
     val rows = remember(transcripts) { liveTranscriptDisplayLines(transcripts) }
-    val languages = remember(transcripts, targetLanguageTags) {
-        (targetLanguageTags + transcripts.flatMap { it.translations.keys } + (selectedLanguages - "source")).distinct().sorted()
+    LaunchedEffect(languages) {
+        selectedLanguages = transcriptHudSelection(selectedLanguages, languages)
     }
     val list = rememberLazyListState()
     val view = LocalView.current
@@ -88,6 +93,9 @@ internal fun LiveTranscriptHud(
     }
     Surface(Modifier.fillMaxSize().semantics { paneTitle = "실시간 스크립트 HUD" }, color = HudBackground) {
         Box(Modifier.fillMaxSize()) {
+            if (rows.isEmpty()) Text("아직 표시할 스크립트가 없습니다. 원문·통역문을 수신하면 여기에 표시합니다.",
+                color = Color.White, style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.align(Alignment.Center).padding(24.dp))
             LazyColumn(state = list, reverseLayout = true,
                 modifier = Modifier.fillMaxSize().pointerInput(Unit) {
                     awaitEachGesture {
@@ -104,7 +112,7 @@ internal fun LiveTranscriptHud(
                             if (row.sourceText.isBlank()) Text("원문 미확인 · 음성 출력만으로 번역 정확도를 확인할 수 없습니다", color = Color.LightGray)
                         }
                         if ("source" in selectedLanguages) {
-                            Text("원문 · ${row.sourceLanguageTag ?: "언어 미확인"} · ${if (row.sourceText.isBlank()) "미확인" else if (row.isFinal) "확정" else "인식 중"}",
+                            Text("원문 · ${row.sourceLanguageTag ?: sourceLanguageTag ?: "언어 미확인"} · ${if (row.sourceText.isBlank()) "미확인" else row.sourceStatusLabel}",
                                 color = HudSource, style = MaterialTheme.typography.labelLarge)
                             Text(row.sourceText.ifBlank { "원문 미확인" }, color = HudSource, fontSize = size.sp, lineHeight = (size * 1.4f).sp)
                         }
@@ -118,21 +126,24 @@ internal fun LiveTranscriptHud(
                     }
                 }
             }
+            if (!controls) TextButton(onClick = { controls = true },
+                modifier = Modifier.align(Alignment.TopEnd).safeDrawingPadding()) {
+                Text("HUD 설정", color = Color.White)
+            }
             if (controls) Surface(Modifier.align(Alignment.TopCenter).fillMaxWidth().safeDrawingPadding(),
                 color = Color(0xFF202020), contentColor = Color.White) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.verticalScroll(rememberScrollState()).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         TextButton(onClick = onBack) { Text("HUD 닫기", color = Color.White) }
                         TextButton(onClick = { follow = true; controls = false }) { Text("실시간 따라가기", color = HudSource) }
                     }
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         (listOf("source") + languages).forEach { tag ->
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Checkbox(checked = tag in selectedLanguages,
-                                    onCheckedChange = { selectLanguage(tag, it) },
-                                    enabled = selectedLanguages.size > 1 || tag !in selectedLanguages)
-                                Text(if (tag == "source") "원문" else "번역 $tag", color = Color.White)
-                            }
+                            FilterChip(selected = tag in selectedLanguages,
+                                onClick = { selectLanguage(tag, tag !in selectedLanguages) },
+                                enabled = selectedLanguages.size > 1 || tag !in selectedLanguages,
+                                label = { Text(if (tag == "source") "원문" else "번역 $tag",
+                                    color = if (tag in selectedLanguages) Color.Black else Color.White) })
                         }
                     }
                     Text("표시 언어만 변경합니다. 추가 번역 요청이나 음성 방송 언어 변경은 없습니다.", style = MaterialTheme.typography.bodySmall)
@@ -150,3 +161,9 @@ internal fun LiveTranscriptHud(
         }
     }
 }
+
+internal fun transcriptHudLanguageTags(targetLanguageTags: List<String>, transcripts: List<TranslationTranscriptLine>): List<String> =
+    (targetLanguageTags + transcripts.flatMap { it.translations.keys }).filter { it.isNotBlank() }.distinct().sorted()
+
+internal fun transcriptHudSelection(selected: Set<String>, languages: List<String>): Set<String> =
+    selected.intersect((languages + "source").toSet()).ifEmpty { setOf("source") }

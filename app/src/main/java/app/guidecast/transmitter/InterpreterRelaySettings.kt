@@ -9,7 +9,24 @@ internal data class InterpreterRelayOptions(
     val source: String = "ko-KR", val target: String = "en",
     val networkBroadcast: Boolean = false, val localPlayback: Boolean = true,
     val compareOffline: Boolean = false,
-)
+    val targets: List<String> = emptyList(),
+) {
+    /** The legacy target remains the device monitor language. */
+    val targetLanguageTags: List<String> get() = targets.ifEmpty { listOf(target) }
+    fun withTargets(tags: List<String>): InterpreterRelayOptions {
+        require(tags.size in 1..MAX_SIMULTANEOUS_TRANSLATION_LANGUAGES && tags.distinct().size == tags.size)
+        require(tags.all { tag -> translationTargetLanguageOptions(source).any { it.languageTag == tag } })
+        return copy(targets = tags.toList(), target = target.takeIf { it in tags } ?: tags.first())
+    }
+    fun withSource(sourceTag: String): InterpreterRelayOptions {
+        require(SOURCE_LANGUAGE_OPTIONS.any { it.languageTag == sourceTag })
+        val available = translationTargetLanguageOptions(sourceTag).map { it.languageTag }.toSet()
+        val retained = targetLanguageTags.filter { it in available }
+        return copy(source = sourceTag).withTargets(retained.ifEmpty {
+            listOf(if ("en" in available) "en" else "ko")
+        })
+    }
+}
 
 /** Separate relay choices and portable service profiles. Credentials remain in the existing vault. */
 internal class InterpreterRelaySettings(context: Context) {
@@ -22,15 +39,24 @@ internal class InterpreterRelaySettings(context: Context) {
         networkBroadcast = preferences.getBoolean("network", false),
         localPlayback = preferences.getBoolean("playback", true),
         compareOffline = preferences.getBoolean("compare", false),
-    ))
+    ).let { legacy ->
+        val stored = preferences.getString("targets", null)?.split(',').orEmpty()
+        val valid = stored.filter { tag -> translationTargetLanguageOptions(legacy.source).any { it.languageTag == tag } }
+            .distinct().take(MAX_SIMULTANEOUS_TRANSLATION_LANGUAGES)
+        legacy.withTargets(valid.ifEmpty { listOf(legacy.target) })
+    })
     val state = mutable.asStateFlow()
     @Synchronized fun update(options: InterpreterRelayOptions) {
         require(SOURCE_LANGUAGE_OPTIONS.any { it.languageTag == options.source })
         require(translationTargetLanguageOptions(options.source).any { it.languageTag == options.target })
+        require(options.targetLanguageTags.size in 1..MAX_SIMULTANEOUS_TRANSLATION_LANGUAGES)
+        require(options.targetLanguageTags.distinct().size == options.targetLanguageTags.size)
+        require(options.target in options.targetLanguageTags)
+        require(options.targetLanguageTags.all { tag -> translationTargetLanguageOptions(options.source).any { it.languageTag == tag } })
         if (options != mutable.value) comparisonEpoch.incrementAndGet()
         preferences.edit().putString("source", options.source).putString("target", options.target)
             .putBoolean("network", options.networkBroadcast).putBoolean("playback", options.localPlayback)
-            .putBoolean("compare", options.compareOffline).apply()
+            .putBoolean("compare", options.compareOffline).putString("targets", options.targetLanguageTags.joinToString(",")).apply()
         mutable.value = options
     }
     fun rememberRelayApi(options: TranslationApiOptions) {
@@ -54,6 +80,6 @@ internal class InterpreterRelaySettings(context: Context) {
         if (!current.usesNativeLiveAudio) return
         rememberRelayApi(current)
         val saved = load("stream_api")?.takeIf { !it.usesNativeLiveAudio }
-        settings.configure(saved ?: geminiSharedInputChoice(current))
+        if (saved != null) settings.configure(saved) else settings.restoreTextOnlineSelection()
     }
 }

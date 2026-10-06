@@ -48,10 +48,14 @@ internal fun openAiTextChoice(current: TranslationApiOptions): TranslationApiOpt
 @Composable
 internal fun TranslationApiPanel(settings: TranslationApiSettings, service: TranslationApiService, enabled: Boolean,
     corpus: DomainCorpusRepository? = null, liveMonitor: GeminiLiveMonitor? = null, nativeOnly: Boolean = false,
+    textOnly: Boolean = false,
     checkConnection: suspend (TranslationApiOptions) -> OnlineConnectionResult = { selected ->
         OnlineConnectionCheck().run(selected, settings.key(selected).orEmpty()) { settings.authorized(selected) }
     },
+    openItem: String? = null,
+    onOpenItemHandled: () -> Unit = {},
 ) {
+    require(!nativeOnly || !textOnly) { "Select either a native or a text translation route" }
     val options by settings.state.collectAsState()
     val usage by service.usage.collectAsState()
     val scope = rememberCoroutineScope()
@@ -63,6 +67,7 @@ internal fun TranslationApiPanel(settings: TranslationApiSettings, service: Tran
     var aiModelPicker by remember { mutableStateOf(false) }
     var keyDialog by remember { mutableStateOf(false) }
     var consentDialog by remember { mutableStateOf(false) }
+    var consentForSetup by remember { mutableStateOf(false) }
     var keyDraft by remember(options.credentialScope) { mutableStateOf("") }
     var keepKey by remember { mutableStateOf(false) }
     var keyError by remember { mutableStateOf<String?>(null) }
@@ -77,7 +82,11 @@ internal fun TranslationApiPanel(settings: TranslationApiSettings, service: Tran
     val serviceName = if (google) "Google Gemini" else if (options.provider == TranslationApiProvider.COMPATIBLE) "선택한 API 서비스" else "OpenAI"
     fun startCheck() {
         val selected = settings.state.value
-        if (!settings.authorized(selected)) { consentDialog = true; return }
+        if (textOnly && selected.usesNativeLiveAudio) {
+            message = "스트리밍은 문장 번역 서비스를 선택하세요. 직접 음성 API는 통역 중계에서 사용합니다."
+            return
+        }
+        if (!settings.authorized(selected)) { consentForSetup = false; consentDialog = true; return }
         checkJob?.cancel(); checkRevision = selected.revision; checking = true; message = null
         checkJob = scope.launch {
             try {
@@ -92,6 +101,20 @@ internal fun TranslationApiPanel(settings: TranslationApiSettings, service: Tran
     LaunchedEffect(options.revision) {
         if (checkRevision != null && checkRevision != options.revision) {
             checkJob?.cancel(); checking = false; checkRevision = null; message = null
+        }
+    }
+    LaunchedEffect(textOnly, enabled, options.usesNativeLiveAudio) {
+        if (textOnly && enabled && options.usesNativeLiveAudio) settings.restoreTextOnlineSelection()
+    }
+    LaunchedEffect(openItem, enabled) {
+        if (enabled && openItem != null) {
+            when (openItem) {
+            "key" -> keyDialog = true
+            "model" -> aiModelPicker = true
+            "service" -> servicePicker = true
+            "consent" -> { consentForSetup = true; consentDialog = true }
+            }
+            onOpenItemHandled()
         }
     }
     if (keyDialog) AlertDialog(
@@ -124,24 +147,17 @@ internal fun TranslationApiPanel(settings: TranslationApiSettings, service: Tran
             Text("연결 확인은 서버에 접속하지만 음성·대본을 보내거나 번역을 생성하지 않습니다. 실제 통역을 시작할 때 전송하며, 동의는 언제든 철회할 수 있습니다.", style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = { uri.openUri(if (google) "https://ai.google.dev/gemini-api/terms" else "https://platform.openai.com/docs/guides/your-data") }) { Text("서비스의 데이터 처리 안내") }
         } },
-        confirmButton = { TextButton(onClick = { settings.consentToSelectedService(); consentDialog = false; startCheck() }) { Text("동의하고 연결 확인") } },
+        confirmButton = { TextButton(onClick = {
+            settings.consentToSelectedService(); consentDialog = false
+            if (consentForSetup) message = "동의 적용됨 · 운영 화면에서 시작해 주세요." else startCheck()
+        }) { Text(if (consentForSetup) "동의 적용" else "동의하고 연결 확인") } },
         dismissButton = { TextButton(onClick = { consentDialog = false }) { Text("동의하지 않음") } },
     )
     if (servicePicker) AlertDialog(onDismissRequest = { servicePicker = false },
         title = { Text("통역 서비스 선택") },
-        text = { Column(Modifier.verticalScroll(rememberScrollState())) { ServiceExperienceChoices("AI 서비스", listOf(
-            ExperienceChoice("gemini-batch", "Gemini · 다국어 통역", "한 번 인식한 문장을 요청 한 번으로 여러 언어로 번역하고 기기 음성으로 재생합니다."),
-            ExperienceChoice("gemini", "Gemini · Live 음성 통역", "마이크 음성을 보내 통역 음성을 받습니다. 현재 한 가지 출력 언어를 지원합니다."),
-            ExperienceChoice("openai-audio", "OpenAI · Realtime 음성 통역", "마이크 음성을 한 번 보내 통역 음성과 원문·번역 자막을 받습니다. 한 가지 출력 언어를 지원합니다."),
-            ExperienceChoice("openai", "OpenAI · Realtime 문장 연결", "기기에서 인식한 문장을 번역하고 기기 음성으로 재생합니다."),
-            ExperienceChoice("openai-text", "OpenAI · 문장 번역", "GPT 문장 모델로 번역하고 기기 음성으로 재생합니다.")).filter { !nativeOnly || it.id in setOf("gemini", "openai-audio") },
+        text = { Column(Modifier.verticalScroll(rememberScrollState())) { ServiceExperienceChoices("AI 서비스", translationApiServiceChoices(nativeOnly, textOnly),
             when (options.provider) { TranslationApiProvider.GEMINI -> "gemini-batch"; TranslationApiProvider.GEMINI_LIVE -> "gemini"; TranslationApiProvider.OPENAI_REALTIME -> if (options.realtimeAudio) "openai-audio" else "openai"; TranslationApiProvider.OPENAI -> "openai-text"; else -> "" }, enabled) {
-            val next = when (it) {
-                "gemini-batch" -> geminiSharedInputChoice(options)
-                "openai-text" -> openAiTextChoice(options)
-                "openai-audio" -> openAiAudioChoice(options)
-                else -> onlineServiceChoice(options, it == "gemini")
-            }
+            val next = translationApiServiceChoice(options, it, nativeOnly, textOnly)
             if (next != options) settings.configure(next)
             servicePicker = false
         } } }, confirmButton = { TextButton(onClick = { servicePicker = false }) { Text("닫기") } })
@@ -177,7 +193,7 @@ internal fun TranslationApiPanel(settings: TranslationApiSettings, service: Tran
                 ExperienceChoice("online", "온라인", "선택한 AI 서비스에 연결해 통역합니다.")),
                 if (online) "online" else "offline", enabled && !checking) {
                 if (it == "offline") settings.configure(options.copy(provider = TranslationApiProvider.LOCAL))
-                else settings.restoreOnlineSelection()
+                else if (textOnly) settings.restoreTextOnlineSelection() else settings.restoreOnlineSelection()
             }
             val styleSupported = options.provider != TranslationApiProvider.GEMINI_LIVE || options.model == GEMINI_LIVE_AGENT
             ServiceExperienceChoices("통역 말투", listOf(
@@ -237,8 +253,8 @@ internal fun TranslationApiPanel(settings: TranslationApiSettings, service: Tran
                 if (options.allowOnline) TextButton(onClick = { checkJob?.cancel(); settings.revokeSelectedService(); message = "전송 동의 철회됨 · 진행 중인 요청을 중지합니다" }) { Text("전송 동의 철회") }
                 if (options.hasKey) TextButton(enabled = !checking, onClick = { message = if (settings.clearKey()) "키 삭제됨" else "삭제를 확인하지 못했습니다. 전송은 중지했습니다." }) { Text("키 삭제") }
             }
-            if (!nativeOnly) TextButton(onClick = { advanced = !advanced }) { Text(if (advanced) "고급 설정 닫기" else "모델·학습·사용량 상세") }
-            if (advanced && !nativeOnly) AdvancedTranslationApiPanel(settings, service, enabled, corpus, liveMonitor)
+            if (!nativeOnly && !textOnly) TextButton(onClick = { advanced = !advanced }) { Text(if (advanced) "고급 설정 닫기" else "모델·학습·사용량 상세") }
+            if (advanced && !nativeOnly && !textOnly) AdvancedTranslationApiPanel(settings, service, enabled, corpus, liveMonitor)
         }
     }
 }

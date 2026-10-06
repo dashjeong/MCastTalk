@@ -26,7 +26,7 @@ internal fun geminiLiveTarget(tag: String): String = when (tag.lowercase()) {
     else -> tag.substringBefore('-').lowercase().also { require(it.matches(Regex("[a-z]{2,3}"))) }
 }
 internal fun geminiLiveSetup(model: String, target: String, domainPrompt: String = "", tone: TranslationStyle = TranslationStyle.CONVERSATIONAL,
-    interpreterInstructions: String = "", references: String = ""): String {
+    interpreterInstructions: String = "", references: String = "", liveVoice: RelayVoiceGender = RelayVoiceGender.AUTO): String {
     require(model in setOf(GEMINI_LIVE_TRANSLATE, GEMINI_LIVE_AGENT))
     require(validInterpreterDomain(domainPrompt))
     require(model != GEMINI_LIVE_TRANSLATE || domainPrompt.isEmpty()) { "Live Translate does not support domain instructions" }
@@ -40,6 +40,10 @@ internal fun geminiLiveSetup(model: String, target: String, domainPrompt: String
             .put("translationConfig", JSONObject().put("targetLanguageCode", geminiLiveTarget(target)).put("echoTargetLanguage", false))
     } else {
         generation.put("maxOutputTokens", 2_048)
+        geminiRelayVoiceName(model, liveVoice)?.let { voice ->
+            generation.put("speechConfig", JSONObject().put("voiceConfig", JSONObject()
+                .put("prebuiltVoiceConfig", JSONObject().put("voiceName", voice))))
+        }
         setup.put("inputAudioTranscription", JSONObject()).put("outputAudioTranscription", JSONObject())
             .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text",
                 nativeInterpreterInstructions(geminiLiveTarget(target), tone, domainPrompt, interpreterInstructions, references)))))
@@ -115,11 +119,11 @@ internal class GeminiLiveTransport(private val wire: GeminiLiveWire = KtorGemini
         onReady: () -> Unit, onEvent: suspend (GeminiLiveEvent) -> Unit, domainPrompt: String = "", tone: TranslationStyle = TranslationStyle.CONVERSATIONAL,
         durationLimitMillis: Long? = null, onAudioSent: (Int) -> Unit = {},
         timing: NativeLiveTiming? = null, diagnostics: GeminiWireDiagnostics? = null,
-        interpreterInstructions: String = "", references: String = ""): Unit = nativeLiveSessionWindow(durationLimitMillis) {
+        interpreterInstructions: String = "", references: String = "", liveVoice: RelayVoiceGender = RelayVoiceGender.AUTO): Unit = nativeLiveSessionWindow(durationLimitMillis) {
         try {
         check(authorized())
         wire.connect(key, authorized) { socket ->
-            socket.send(geminiLiveSetup(model, target, domainPrompt, tone, interpreterInstructions, references))
+            socket.send(geminiLiveSetup(model, target, domainPrompt, tone, interpreterInstructions, references, liveVoice))
             withTimeout(6_000) {
                 val rawAck = socket.receive()
                 requireBoundedJson(rawAck, maximumChars = 262_144)

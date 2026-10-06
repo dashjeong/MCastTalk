@@ -83,6 +83,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -373,6 +374,13 @@ private fun GuideCastScreen(
     var showSpeechCorrections by rememberSaveable { mutableStateOf(false) }
     var showDomainCorpus by rememberSaveable { mutableStateOf(false) }
     var settingsCategory by rememberSaveable { mutableStateOf(SettingsCategory.LANGUAGES) }
+    var streamSettingsDetail by rememberSaveable { mutableStateOf<String?>(null) }
+    var streamApiItem by rememberSaveable { mutableStateOf<String?>(null) }
+    var streamSetupMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var relaySettingsRequest by rememberSaveable { mutableStateOf(0) }
+    var streamPreparationAdvice by remember { mutableStateOf<StreamingPreparationAdvice?>(null) }
+    var streamVoiceRepairTag by rememberSaveable { mutableStateOf<String?>(null) }
+    var streamTargetPicker by rememberSaveable { mutableStateOf(false) }
     var showAssistant by rememberSaveable { mutableStateOf(false) }
     val noiseSettings = (LocalContext.current.applicationContext as GuideCastApplication).microphoneNoiseSettings
     val developerInfo = LocalDeveloperInfo.current
@@ -422,6 +430,53 @@ private fun GuideCastScreen(
     val recognitionConnection by app.speechRecognitionEngine.status.collectAsStateWithLifecycle()
     val operatorOptions by app.operatorSettings.state.collectAsStateWithLifecycle()
     val apiOptions by app.translationApiSettings.state.collectAsStateWithLifecycle()
+    val relayOptions by app.interpreterRelaySettings.state.collectAsStateWithLifecycle()
+    fun openStreamingSettings(item: String, message: String? = null) {
+        streamSetupMessage = message
+        streamApiItem = item.takeIf { it in setOf("key", "model", "service", "consent") }
+        streamSettingsDetail = item.takeIf { it in setOf("input", "output") }
+        settingsCategory = if (streamApiItem != null) SettingsCategory.MODELS else SettingsCategory.LANGUAGES
+        section = GuideCastSection.MODELS
+        sectionTopRequest += 1
+        if (item == "languages" && message != null) streamTargetPicker = true
+    }
+    fun streamingStartReady(ignorePreparation: Boolean = false): Boolean {
+        val current = app.translationApiSettings.state.value
+        val missing = streamingRequiredSetting(current, translationModels.broadcastTranslationEnabled,
+            translationModels.selectedLanguageTags, app.translationApiSettings.authorized(current))
+        if (missing != null) {
+            openStreamingSettings(missing, when (missing) {
+                "service" -> "스트리밍에는 문장 번역 서비스를 선택해 주세요."
+                "key" -> "선택한 AI 서비스의 API 키를 입력해 주세요."
+                "consent" -> "온라인 문장 전송 동의를 확인해 주세요."
+                else -> "통역 언어를 하나 이상 선택해 주세요."
+            })
+            return false
+        }
+        if (state.selectedDevice == null || (state.selectedDevice?.kind == AudioInputKind.DEVICE_PLAYBACK &&
+                state.selectedPlaybackTarget == null && !isValidAndroidPackageName(state.playbackTargetPackageName))) {
+            openStreamingSettings("input", "입력 장치와 사용할 앱을 선택해 주세요.")
+            return false
+        }
+        if (!inputActive && !permissions.canStartInput(state.selectedDevice?.kind)) {
+            onRequestPermissions(if (!permissions.recordAudioGranted) arrayOf(Manifest.permission.RECORD_AUDIO)
+                else arrayOf(Manifest.permission.BLUETOOTH_CONNECT))
+            return false
+        }
+        if (runMode == BroadcastRunMode.NETWORK &&
+            ((accessMode == OperatorAccessMode.PIN && !(broadcastPin.length in 4..8 && broadcastPin.all(Char::isDigit))) ||
+                (micPinEnabled && !(micPin.length in 4..8 && micPin.all(Char::isDigit))))) {
+            openStreamingSettings("output", "사용할 PIN을 4~8자리 숫자로 입력해 주세요.")
+            return false
+        }
+        val advice = streamingPreparationAdvice(current, translationModels)
+        if (!ignorePreparation && advice != null) { streamPreparationAdvice = advice; return false }
+        return true
+    }
+    fun dispatchOperatingStart(mode: OperatorAccessMode, pin: CharArray?, speakerPin: CharArray?, requestedMode: BroadcastRunMode) {
+        if (!inputActive) onStartInput()
+        onStartBroadcast(mode, pin, speakerPin, requestedMode)
+    }
     val fileState by fileViewModel.uiState.collectAsStateWithLifecycle()
     val filePlayback by fileViewModel.playbackState.collectAsStateWithLifecycle()
     val speechPreviewAllowed = !inputActive && !broadcastActive && !broadcast.translationTestActive &&
@@ -484,11 +539,15 @@ private fun GuideCastScreen(
         if (!broadcastActive) runMode = operatorOptions.runMode
     }
     if (showLiveHud) {
-        LiveTranscriptHud(broadcast.transcripts, translationModels.selectedLanguageTags.toList(),
+        val relayHud = service == MCastService.RELAY || broadcast.isInterpreterRelay
+        LiveTranscriptHud(broadcast.transcripts,
+            if (relayHud) relayOptions.targetLanguageTags else translationModels.selectedLanguageTags.toList(),
             onBack = { showLiveHud = false },
-            onReconnect = if (inputActive && (broadcastActive || broadcast.translationTestActive))
+            onReconnect = if (!relayHud && inputActive && (broadcastActive || broadcast.translationTestActive))
                 ({ app.speechRecognitionEngine.requestReconnect(); Unit }) else null,
-            recoveryMessage = recognitionConnection.message.takeIf { !recognitionConnection.isReady })
+            recoveryMessage = if (relayHud) broadcast.inputErrorMessage ?: broadcast.errorMessage ?: broadcast.translationWarning
+                else recognitionConnection.message.takeIf { !recognitionConnection.isReady },
+            sourceLanguageTag = if (relayHud) relayOptions.source else translationModels.selectedSourceLanguageTag)
         return
     }
     if (showLiveTranscript) {
@@ -501,6 +560,44 @@ private fun GuideCastScreen(
         )
         return
     }
+    streamPreparationAdvice?.let { advice -> AlertDialog(
+        onDismissRequest = { streamPreparationAdvice = null }, title = { Text("통역 준비를 확인해 주세요") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (advice.recognition) Text("기기 음성인식 · ${translationModels.selectedSourceLanguage.label.substringBefore(" ·")} 준비 확인 필요")
+            if (advice.voices.isNotEmpty()) Text("기기 음성 · ${advice.voices.joinToString(", ")} 준비 확인 필요")
+            if (advice.translators.isNotEmpty()) Text("기기 번역 모델 · ${advice.translators.joinToString(", ")} 준비 확인 필요")
+            Text("방송은 시작할 수 있습니다. 준비가 끝나기 전에는 통역 음성이 나오지 않을 수 있습니다.")
+        } },
+        confirmButton = { TextButton(onClick = {
+            streamPreparationAdvice = null
+            openStreamingSettings("preparation", "기기 음성인식·통역 음성을 준비한 뒤 운영 화면에서 시작해 주세요.")
+            streamVoiceRepairTag = if (advice.recognition) null else advice.voices.firstOrNull() ?: advice.translators.firstOrNull()
+        }) { Text("언어·음성 준비로") } },
+        dismissButton = { Column {
+            TextButton(onClick = {
+                streamPreparationAdvice = null
+                if (streamingStartReady(ignorePreparation = true)) {
+                    dispatchOperatingStart(if (runMode == BroadcastRunMode.STANDALONE) OperatorAccessMode.OPEN else accessMode,
+                        broadcastPin.takeIf { runMode == BroadcastRunMode.NETWORK && accessMode == OperatorAccessMode.PIN }?.toCharArray(),
+                        micPin.takeIf { runMode == BroadcastRunMode.NETWORK && micPinEnabled }?.toCharArray(), runMode)
+                    broadcastPin = ""; micPin = ""
+                }
+            }) { Text("현재 설정으로 시작") }
+            TextButton(onClick = { streamPreparationAdvice = null }) { Text("취소") }
+        } }) }
+    if (streamTargetPicker) AlertDialog(onDismissRequest = { streamTargetPicker = false }, title = { Text("통역 언어 선택") },
+        text = { Column(Modifier.verticalScroll(rememberScrollState())) {
+            translationModels.options.forEach { language ->
+                val checked = language.languageTag in translationModels.selectedLanguageTags
+                Row(Modifier.fillMaxWidth().sizeIn(minHeight = 48.dp).toggleable(checked,
+                    enabled = !inputActive && !broadcastActive && !broadcast.translationTestActive &&
+                        (checked || translationModels.selectedLanguageTags.size < MAX_SIMULTANEOUS_TRANSLATION_LANGUAGES),
+                    role = Role.Checkbox, onValueChange = { onToggleTranslationLanguage(language.languageTag) }), verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked, onCheckedChange = null)
+                    Text(language.label)
+                }
+            }
+        } }, confirmButton = { TextButton(onClick = { streamTargetPicker = false }) { Text("닫기") } })
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         topBar = {
@@ -509,9 +606,12 @@ private fun GuideCastScreen(
               TextButton(onClick = {
                   showLicenses = false; showGlossary = false; showSpeechCorrections = false; showDomainCorpus = false
                   showAssistant = false; showDataTransfer = false; showSentenceMemory = false; showDeveloperLab = false; showFileTranslation = false
-                  section = GuideCastSection.BROADCAST; service = null
+                  val returningFromSettings = section == GuideCastSection.MODELS
+                  streamApiItem = null; streamSettingsDetail = null; streamSetupMessage = null
+                  section = GuideCastSection.BROADCAST
+                  if (!returningFromSettings) service = null
               }) {
-                Text("← 운영 메뉴")
+                Text(if (section == GuideCastSection.MODELS) "← 운영 화면으로" else "← 운영 메뉴")
               }
             }
             if (service != MCastService.RELAY && ((!showDomainCorpus && (section != GuideCastSection.BROADCAST || service in setOf(MCastService.VOICE, MCastService.MULTILINGUAL))) || broadcastActive || inputActive)) OperatorHeader(
@@ -552,7 +652,10 @@ private fun GuideCastScreen(
                     onSelect = {
                         showLicenses = false; showGlossary = false; showSpeechCorrections = false; showDomainCorpus = false
                         showAssistant = false; showDataTransfer = false; showSentenceMemory = false; showDeveloperLab = false; showFileTranslation = false
-                        section = it
+                        streamApiItem = null; streamSettingsDetail = null; streamSetupMessage = null
+                        if (service == MCastService.RELAY && it == GuideCastSection.MODELS) {
+                            section = GuideCastSection.BROADCAST; relaySettingsRequest += 1
+                        } else section = it
                         sectionTopRequest += 1
                     },
                 )
@@ -586,7 +689,8 @@ private fun GuideCastScreen(
                         InterpreterRelayScreen(app, broadcast, permissions.recordAudioGranted,
                             onRequestMicrophone = { onRequestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO)) },
                             onStart = onStartRelay, onPause = onPauseBroadcast, onResume = onResumeBroadcast,
-                            onStop = onStopBroadcast, onBack = { service = null })
+                            onStop = onStopBroadcast, onBack = { service = null }, onOpenHud = { showLiveHud = true },
+                            settingsRequest = relaySettingsRequest, onSettingsRequestHandled = { relaySettingsRequest = 0 })
                     }
                     service == MCastService.HISTORY -> serviceScreens.SaveableStateProvider("broadcast-history") {
                         BroadcastHistoryScreen(app, onBack = { service = null })
@@ -643,45 +747,18 @@ private fun GuideCastScreen(
                 item { Text(warning, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
             }
             item {
-                SectionIntroduction(
+                if (section == GuideCastSection.BROADCAST) Text(
+                    (if (service == MCastService.VOICE) MCastService.MULTILINGUAL else service)?.title.orEmpty(),
+                    style = MaterialTheme.typography.headlineMedium)
+                else SectionIntroduction(
                     eyebrow = section.eyebrow,
                     title = if (section == GuideCastSection.BROADCAST) (if (service == MCastService.VOICE) MCastService.MULTILINGUAL else service)?.title.orEmpty() else section.title,
                     description = if (section == GuideCastSection.BROADCAST) (if (service == MCastService.VOICE) MCastService.MULTILINGUAL else service)?.description.orEmpty() else section.description,
                 )
             }
 
-            if (section != GuideCastSection.MODELS) {
-                item(key = "current-interpretation-service") {
-                    OutlinedCard(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(serviceExperience(apiOptions).title, style = MaterialTheme.typography.titleMedium)
-                            Text(serviceExperience(apiOptions).processing, style = MaterialTheme.typography.bodySmall)
-                            Text("송출 언어 · " + translationModels.selectedLanguageTags.joinToString(", ").ifEmpty { "선택 없음" }, style = MaterialTheme.typography.bodySmall)
-                            if (apiOptions.provider != TranslationApiProvider.LOCAL) {
-                                Text("모델 · ${apiOptions.model}", style = MaterialTheme.typography.bodySmall)
-                                Text((if (apiOptions.hasKey) "키 준비됨" else "키 입력 필요") + " · " +
-                                    (if (apiOptions.allowOnline) "전송 동의됨" else "전송 동의 필요"), style = MaterialTheme.typography.bodySmall)
-                                Text("연결 확인은 실제 통역 음성 송출의 성공을 의미하지 않습니다.", style = MaterialTheme.typography.bodySmall)
-                            }
-                            TextButton(onClick = { section = GuideCastSection.MODELS; settingsCategory = SettingsCategory.MODELS }) { Text("통역 서비스 설정") }
-                        }
-                    }
-                }
-                item {
-                    OutlinedButton(onClick = { showLiveTranscript = true }, modifier = Modifier.fillMaxWidth()) {
-                        Text("화면 전환 · 전체 화면 스크립트")
-                    }
-                    OutlinedButton(onClick = { showLiveHud = true }, modifier = Modifier.fillMaxWidth()) {
-                        Text("실시간 스크립트 HUD")
-                    }
-                    if (inputActive && (broadcastActive || broadcast.translationTestActive)) {
-                        OutlinedButton(onClick = { app.speechRecognitionEngine.requestReconnect() },
-                            modifier = Modifier.fillMaxWidth()) { Text("통역 다시 연결") }
-                        Text("입력·방송·듣기 채널을 유지하며 인식만 다시 연결합니다.", style = MaterialTheme.typography.bodySmall)
-                        if (!recognitionConnection.isReady) Text(recognitionConnection.message,
-                            color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
-                    }
-                }
+            if (section == GuideCastSection.TEST) item {
+                OutlinedButton(onClick = { showLiveHud = true }, modifier = Modifier.fillMaxWidth()) { Text("큰 글씨 스크립트 · HUD") }
             }
 
             val needsAudioPermission = !permissions.recordAudioGranted &&
@@ -692,7 +769,7 @@ private fun GuideCastScreen(
             val needsNotificationPermission = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
                 !permissions.notificationsGranted &&
                 section == GuideCastSection.BROADCAST
-            if (needsAudioPermission || needsBluetoothPermission || needsNotificationPermission) {
+            if (section != GuideCastSection.BROADCAST && (needsAudioPermission || needsBluetoothPermission || needsNotificationPermission)) {
                 item {
                     PermissionSetupCard(
                         needsAudioPermission = needsAudioPermission,
@@ -713,8 +790,7 @@ private fun GuideCastScreen(
 
             when (section) {
                 GuideCastSection.BROADCAST -> {
-                    if (broadcastActive) {
-                        item {
+                    item {
                             BroadcastControls(
                                 broadcast = broadcast,
                                 accessMode = effectiveAccessMode,
@@ -728,63 +804,47 @@ private fun GuideCastScreen(
                                 onPinChange = { broadcastPin = it },
                                 onMicPinEnabledChange = { micPinEnabled = it },
                                 onMicPinChange = { micPin = it },
-                                onStart = onStartBroadcast,
-                                onPause = onPauseBroadcast,
-                                onResume = onResumeBroadcast,
-                                onStop = onStopBroadcast,
+                                onStart = ::dispatchOperatingStart,
+                                onPause = { onPauseInput(); onPauseBroadcast() },
+                                onResume = { onResumeInput(); onResumeBroadcast() },
+                                onStop = { onStopBroadcast(); onStopInput() },
                                 onPlayTestTone = onPlayTestTone,
+                                showSetupControls = false,
+                                beforeStart = { streamingStartReady() },
                             )
+                    }
+                    item {
+                        OutlinedCard(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text("입력 · ${state.selectedDevice?.label ?: "선택 필요"}", style = MaterialTheme.typography.titleMedium)
+                                InputLevel(broadcast, state.selectedDevice?.kind, state.playbackCaptureDiagnostics)
+                                broadcast.inputErrorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                                TextButton(onClick = { openStreamingSettings("input") }) { Text("입력 설정") }
+                            }
                         }
                     }
-                    item {
-                        InputSourcePicker(
-                            state = state,
-                            sourceLanguageLabel = translationModels.selectedSourceLanguage.label,
-                            enabled = !inputActive,
-                            permissionsGranted = permissions.recordAudioGranted,
-                            onSelectAutomatic = onSelectAutomatic,
-                            onSelectDevice = onSelectDevice,
-                        )
-                    }
-                    item {
-                        InputControls(
-                            broadcast = broadcast,
-                            selectedDevice = state.selectedDevice,
-                            playbackDiagnostics = state.playbackCaptureDiagnostics,
-                            playbackTargetApps = state.playbackTargetApps,
-                            selectedPlaybackTarget = state.selectedPlaybackTarget,
-                            playbackTargetPackageName = state.playbackTargetPackageName,
-                            onEditPlaybackTargetPackage = onEditPlaybackTargetPackage,
-                            playbackTargetRegistrationMessage =
-                                state.playbackTargetRegistrationMessage,
-                            canStart = permissions.canStartInput(state.selectedDevice?.kind) &&
-                                (state.selectedDevice?.kind != AudioInputKind.DEVICE_PLAYBACK ||
-                                    (state.selectedPlaybackTarget != null ||
-                                        isValidAndroidPackageName(state.playbackTargetPackageName))),
-                            onSelectPlaybackTarget = onSelectPlaybackTarget,
-                            onRegisterPlaybackTarget = onRegisterPlaybackTarget,
-                            onStart = onStartInput,
-                            onPause = onPauseInput,
-                            onResume = onResumeInput,
-                            onStop = onStopInput,
-                        )
-                    }
-                    item {
-                        MicrophoneNoiseOptions(noiseMode, !inputActive &&
-                            state.selectedDevice?.kind != AudioInputKind.DEVICE_PLAYBACK &&
-                            state.selectedDevice?.kind != AudioInputKind.WEB_SPEAKER,
-                            { noiseSettings.selectProfile(microphoneGroup, microphoneProfile.copy(noiseMode = it)) },
-                            nearSpeakerFocus,
-                            { noiseSettings.selectProfile(microphoneGroup, microphoneProfile.copy(nearSpeakerFocus = it)) },
-                            microphoneGroup.label)
-                    }
                     item { OperatorStatusStrip(broadcast = broadcast, models = translationModels) }
+                    item {
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { showLiveHud = true }, modifier = Modifier.weight(1f)) { Text("스크립트 HUD") }
+                            OutlinedButton(onClick = { showLiveTranscript = true }, modifier = Modifier.weight(1f)) { Text("전체 스크립트") }
+                        }
+                        TextButton(onClick = { openStreamingSettings("languages") }) { Text("스트리밍 설정") }
+                    }
+                    if (broadcast.listenerUrl != null) item {
+                        RelayListenerAccessCard(broadcast.listenerUrl, broadcastActive)
+                    }
                     item {
                         LiveSentenceMonitor(
                             broadcast = broadcast,
                             models = translationModels,
                             onOpenTest = { section = GuideCastSection.TEST },
                         )
+                    }
+                    item {
+                        WorkspaceDisclosure("언어별 상태·청취 주소", "${translationModels.selectedLanguageTags.size}개 통역 언어") {
+                            OutputChannelsCard(broadcast, translationModels, onOpenTest = { section = GuideCastSection.TEST })
+                        }
                     }
                     if (developerInfo) item {
                         WorkspaceDisclosure(
@@ -794,13 +854,6 @@ private fun GuideCastScreen(
                             ReadinessCard(state, broadcast, permissions)
                             ProcessingPipelineCard(broadcast = broadcast, models = translationModels)
                         }
-                    }
-                    item {
-                        OutputChannelsCard(
-                            broadcast = broadcast,
-                            models = translationModels,
-                            onOpenTest = { section = GuideCastSection.TEST },
-                        )
                     }
                     if (broadcastActive) {
                         item {
@@ -816,34 +869,7 @@ private fun GuideCastScreen(
                             )
                         }
                     }
-                    item {
-                        BroadcastModeSelector(translationModels.broadcastTranslationEnabled, state.selectedDevice?.kind,
-                            translationModels.options.filter { it.languageTag in translationModels.selectedLanguageTags }.map { it.label },
-                            enabled = !broadcastActive && !broadcast.translationTestActive, onSetTranslationEnabled = onSetTranslationBroadcastEnabled)
-                    }
-                    if (!broadcastActive) {
-                        item {
-                            BroadcastControls(
-                                broadcast = broadcast,
-                                accessMode = effectiveAccessMode,
-                                runMode = if (broadcastActive) broadcast.runMode else runMode,
-                                onRunModeChange = { runMode = it; app.operatorSettings.setRunMode(it) },
-                                pin = broadcastPin,
-                                micPinEnabled = micPinEnabled,
-                                micPin = micPin,
-                                canStart = true,
-                                onAccessModeChange = { accessMode = it },
-                                onPinChange = { broadcastPin = it },
-                                onMicPinEnabledChange = { micPinEnabled = it },
-                                onMicPinChange = { micPin = it },
-                                onStart = onStartBroadcast,
-                                onPause = onPauseBroadcast,
-                                onResume = onResumeBroadcast,
-                                onStop = onStopBroadcast,
-                                onPlayTestTone = onPlayTestTone,
-                            )
-                        }
-                    }
+
                 }
 
                 GuideCastSection.TEST -> {
@@ -899,22 +925,105 @@ private fun GuideCastScreen(
                 }
 
                 GuideCastSection.MODELS -> {
+                  item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { openStreamingSettings("input") }, modifier = Modifier.weight(1f)) { Text("입력 설정") }
+                        OutlinedButton(onClick = { openStreamingSettings("output") }, modifier = Modifier.weight(1f)) { Text("LAN·송출 설정") }
+                    }
+                    streamSetupMessage?.let { Text(it, color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
+                    if (streamSettingsDetail != null) TextButton(onClick = { streamSettingsDetail = null; streamSetupMessage = null }) { Text("언어·AI 설정") }
+                  }
+                  if (streamSettingsDetail == "input") {
+                    if (!permissions.canStartInput(state.selectedDevice?.kind) && state.selectedDevice != null) item {
+                        Button(onClick = { onRequestPermissions(if (!permissions.recordAudioGranted)
+                            arrayOf(Manifest.permission.RECORD_AUDIO) else arrayOf(Manifest.permission.BLUETOOTH_CONNECT)) }) {
+                            Text(if (!permissions.recordAudioGranted) "마이크 접근 허용" else "Bluetooth 마이크 접근 허용")
+                        }
+                    }
+                    item {
+                        InputSourcePicker(
+                            state = state,
+                            sourceLanguageLabel = translationModels.selectedSourceLanguage.label,
+                            enabled = !inputActive,
+                            permissionsGranted = permissions.recordAudioGranted,
+                            onSelectAutomatic = onSelectAutomatic,
+                            onSelectDevice = onSelectDevice,
+                        )
+                    }
+                    item {
+                        InputControls(
+                            broadcast = broadcast,
+                            selectedDevice = state.selectedDevice,
+                            playbackDiagnostics = state.playbackCaptureDiagnostics,
+                            playbackTargetApps = state.playbackTargetApps,
+                            selectedPlaybackTarget = state.selectedPlaybackTarget,
+                            playbackTargetPackageName = state.playbackTargetPackageName,
+                            onEditPlaybackTargetPackage = onEditPlaybackTargetPackage,
+                            playbackTargetRegistrationMessage =
+                                state.playbackTargetRegistrationMessage,
+                            canStart = permissions.canStartInput(state.selectedDevice?.kind) &&
+                                (state.selectedDevice?.kind != AudioInputKind.DEVICE_PLAYBACK ||
+                                    (state.selectedPlaybackTarget != null ||
+                                        isValidAndroidPackageName(state.playbackTargetPackageName))),
+                            onSelectPlaybackTarget = onSelectPlaybackTarget,
+                            onRegisterPlaybackTarget = onRegisterPlaybackTarget,
+                            onStart = onStartInput,
+                            showRunControls = false,
+                            onPause = onPauseInput,
+                            onResume = onResumeInput,
+                            onStop = onStopInput,
+                        )
+                    }
+                    item {
+                        MicrophoneNoiseOptions(noiseMode, !inputActive &&
+                            state.selectedDevice?.kind != AudioInputKind.DEVICE_PLAYBACK &&
+                            state.selectedDevice?.kind != AudioInputKind.WEB_SPEAKER,
+                            { noiseSettings.selectProfile(microphoneGroup, microphoneProfile.copy(noiseMode = it)) },
+                            nearSpeakerFocus,
+                            { noiseSettings.selectProfile(microphoneGroup, microphoneProfile.copy(nearSpeakerFocus = it)) },
+                            microphoneGroup.label)
+                    }
+
+                  } else if (streamSettingsDetail == "output") {
+                    item {
+                        BroadcastModeSelector(translationModels.broadcastTranslationEnabled, state.selectedDevice?.kind,
+                            translationModels.options.filter { it.languageTag in translationModels.selectedLanguageTags }.map { it.label },
+                            enabled = !broadcastActive && !broadcast.translationTestActive, onSetTranslationEnabled = onSetTranslationBroadcastEnabled)
+                    }
+                    item {
+                        BroadcastControls(broadcast, effectiveAccessMode, if (broadcastActive) broadcast.runMode else runMode,
+                            { runMode = it; app.operatorSettings.setRunMode(it) }, broadcastPin, micPinEnabled, micPin,
+                            true, { accessMode = it }, { broadcastPin = it }, { micPinEnabled = it }, { micPin = it },
+                            onStartBroadcast, onPauseBroadcast, onResumeBroadcast, onStopBroadcast, onPlayTestTone,
+                            showRunControls = false)
+                    }
+
+                  } else {
+
                   if (settingsCategory == SettingsCategory.TOOLS) item(key = "operator-assistant") {
                     OutlinedButton(onClick = { showAssistant = true }, modifier = Modifier.fillMaxWidth()) { Text("아스트라 미니미 · 진단과 개선 제안") }
                   }
                   if (settingsCategory == SettingsCategory.TOOLS) item(key = "developer-display") { DeveloperInformationSettings() }
                   item(key = "settings-navigation") {
                     SettingsCategoryPicker(settingsCategory) {
+                        streamApiItem = null; streamSetupMessage = null
                         settingsCategory = it
                         sectionTopRequest += 1
                     }
                   }
-                  if (settingsCategory == SettingsCategory.LANGUAGES) item(key = "automatic-language-preparation") {
+                  if (settingsCategory == SettingsCategory.LANGUAGES && streamSetupMessage == null) item(key = "automatic-language-preparation") {
                     AutomaticPreparationSettings(app.operatorSettings)
                   }
                   if (settingsCategory == SettingsCategory.MODELS) item(key = "translation-api") {
+                    if (inputActive && !broadcastActive) {
+                        OutlinedButton(onClick = onStopInput, modifier = Modifier.fillMaxWidth()) { Text("입력 중지하고 설정") }
+                    }
+                    key(sectionTopRequest) {
                     TranslationApiPanel(app.translationApiSettings, app.translationApiService, corpus = app.domainCorpus, liveMonitor = app.geminiLiveMonitor,
-                        enabled = !inputActive && !broadcastActive && !broadcast.translationTestActive)
+                        enabled = !inputActive && !broadcastActive && !broadcast.translationTestActive, textOnly = true, openItem = streamApiItem,
+                        onOpenItemHandled = { streamApiItem = null })
+                    }
                   }
                   item(key = "settings-${settingsCategory.name}") {
                     if (broadcast.translationTestActive) {
@@ -951,9 +1060,11 @@ private fun GuideCastScreen(
                             }
                         }
                     }
+                    if (settingsCategory == SettingsCategory.LANGUAGES) Text(
+                        "기기 음성은 설치된 엔진·음성에 따라 선택 범위가 달라집니다.", style = MaterialTheme.typography.bodySmall)
                     if (settingsCategory == SettingsCategory.LANGUAGES) TranslationModelCard(
                         state = translationModels,
-                        enabled = !broadcastActive && !broadcast.translationTestActive,
+                        enabled = !inputActive && !broadcastActive && !broadcast.translationTestActive,
                         onSelectSource = onSelectSourceLanguage,
                         onToggle = onToggleTranslationLanguage,
                         onSelectAll = onSelectAllTranslationLanguages,
@@ -963,6 +1074,7 @@ private fun GuideCastScreen(
                         onRecheckSpeechVoices = onRecheckSpeechVoices,
                         onCancelPreparation = onCancelModelPreparation,
                         onRemove = onRemoveTranslationModel,
+                        openLanguageTag = streamVoiceRepairTag, onRepairHandled = { streamVoiceRepairTag = null },
                     )
                     if (settingsCategory == SettingsCategory.MODELS) GemmaModelCard(
                         state = gemmaState,
@@ -1008,6 +1120,7 @@ private fun GuideCastScreen(
                             Text("개발자 실험실 · 표현 TTS / 의역 / API")
                         }
                     }
+                  }
                   }
                 }
             }
@@ -3132,6 +3245,8 @@ private fun InputControls(
     onPause: () -> Unit,
     onResume: () -> Unit,
     onStop: () -> Unit,
+    showSetupControls: Boolean = true,
+    showRunControls: Boolean = true,
 ) {
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -3156,14 +3271,14 @@ private fun InputControls(
             modifier = Modifier.padding(18.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text("입력 제어", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text(if (showRunControls) "입력 제어" else "입력 설정", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Text(
                 selectedDevice?.let { "${it.label} · ${it.kind.displayName()}" }
                     ?: "입력 장치를 먼저 선택하세요.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            if (selectedDevice?.kind == AudioInputKind.DEVICE_PLAYBACK) {
+            if (showSetupControls && selectedDevice?.kind == AudioInputKind.DEVICE_PLAYBACK) {
                 PlaybackTargetSelector(
                     apps = playbackTargetApps,
                     selected = selectedPlaybackTarget,
@@ -3222,7 +3337,7 @@ private fun InputControls(
                 }
             }
 
-            when (broadcast.inputPhase) {
+            if (showRunControls) when (broadcast.inputPhase) {
                 InputPhase.IDLE,
                 InputPhase.FAILED,
                 -> {
@@ -3233,7 +3348,7 @@ private fun InputControls(
                             color = MaterialTheme.colorScheme.error,
                         )
                     }
-                    Button(
+                    OutlinedButton(
                         modifier = Modifier
                             .fillMaxWidth()
                             .sizeIn(minHeight = 56.dp),
@@ -3377,10 +3492,15 @@ private fun TranslationModelCard(
     onRecheckSpeechVoices: () -> Unit,
     onCancelPreparation: () -> Unit,
     onRemove: (String) -> Unit,
+    openLanguageTag: String? = null,
+    onRepairHandled: () -> Unit = {},
 ) {
     var languageQuery by rememberSaveable { mutableStateOf("") }
     var showAdditionalLanguages by rememberSaveable { mutableStateOf(false) }
     var detailLanguageTag by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(openLanguageTag, enabled) {
+        if (enabled && openLanguageTag != null) { detailLanguageTag = openLanguageTag; onRepairHandled() }
+    }
     detailLanguageTag?.let { tag ->
         val translationError = state.statuses.firstOrNull { it.languageTag == tag }?.errorMessage
         val speechStatus = state.ttsStatuses.firstOrNull { it.languageTag == tag }
@@ -4341,6 +4461,9 @@ private fun BroadcastControls(
     onResume: () -> Unit,
     onStop: () -> Unit,
     onPlayTestTone: () -> Unit,
+    showSetupControls: Boolean = true,
+    showRunControls: Boolean = true,
+    beforeStart: () -> Boolean = { true },
 ) {
     val active = broadcast.phase == BroadcastPhase.STARTING ||
         broadcast.phase == BroadcastPhase.LIVE ||
@@ -4348,6 +4471,7 @@ private fun BroadcastControls(
     val validPin = pin.length in 4..8 && pin.all(Char::isDigit)
     val validMicPin = micPin.length in 4..8 && micPin.all(Char::isDigit)
 
+    if (showSetupControls) {
     Text(
         text = "사용 방식",
         style = MaterialTheme.typography.titleLarge,
@@ -4458,7 +4582,9 @@ private fun BroadcastControls(
 
     }
 
-    when (broadcast.phase) {
+    }
+
+    if (showRunControls) when (broadcast.phase) {
         BroadcastPhase.IDLE,
         BroadcastPhase.FAILED,
         -> {
@@ -4474,11 +4600,12 @@ private fun BroadcastControls(
                     .fillMaxWidth()
                     .padding(top = 12.dp)
                     .sizeIn(minHeight = 56.dp),
-                enabled = canStart &&
+                enabled = canStart && (!showSetupControls ||
                     (runMode == BroadcastRunMode.STANDALONE ||
                         ((accessMode != OperatorAccessMode.PIN || validPin) &&
-                        (!micPinEnabled || validMicPin))),
-                onClick = {
+                        (!micPinEnabled || validMicPin)))),
+                onClick = start@ {
+                    if (!beforeStart()) return@start
                     val suppliedPin = pin.takeIf { accessMode == OperatorAccessMode.PIN }
                         ?.toCharArray()
                     val suppliedMicPin = micPin.takeIf { micPinEnabled }?.toCharArray()
