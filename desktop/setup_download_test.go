@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 // Tiny local transport fixtures verify retry/integrity behavior, not actual
@@ -127,7 +128,7 @@ func TestSetupDownloadUnexpectedEOFResumesSamePart(t *testing.T) {
 }
 
 func TestSetupDownloadIntegrityHTTPAndInputErrorsDoNotRetry(t *testing.T) {
-	for _, kind := range []string{"hash", "size", "range", "403", "unknown", "pre-canceled"} {
+	for _, kind := range []string{"hash", "oversize", "range", "403", "unknown", "pre-canceled"} {
 		t.Run(kind, func(t *testing.T) {
 			am, data := setupDownloadTestManager(t)
 			calls, retries := 0, 0
@@ -136,8 +137,8 @@ func TestSetupDownloadIntegrityHTTPAndInputErrorsDoNotRetry(t *testing.T) {
 				switch kind {
 				case "hash":
 					return setupDownloadTestResponse(bytes.Repeat([]byte{'x'}, len(data))), nil
-				case "size":
-					return setupDownloadTestResponse(data[:8]), nil
+				case "oversize":
+					return setupDownloadTestResponse(append(append([]byte(nil), data...), 'x')), nil
 				case "range":
 					r := setupDownloadTestResponse(data)
 					r.StatusCode = 206
@@ -177,5 +178,128 @@ func TestSetupDownloadIntegrityHTTPAndInputErrorsDoNotRetry(t *testing.T) {
 	}
 	if !setupDownloadRetryable(&net.OpError{Op: "read", Net: "tcp", Err: context.DeadlineExceeded}) {
 		t.Fatal("network request timeout not retryable")
+	}
+}
+
+func TestSetupDownloadCleanEOFResumesSamePart(t *testing.T) {
+	am, data := setupDownloadTestManager(t)
+	calls := 0
+	setupDownloadTestTransport(t, func(req *http.Request) (*http.Response, error) {
+		calls++
+		if calls == 1 {
+			return setupDownloadTestResponse(data[:8]), nil
+		}
+		if req.Header.Get("Range") != "bytes=8-" {
+			t.Errorf("clean EOF part not reused: %q", req.Header.Get("Range"))
+		}
+		r := setupDownloadTestResponse(data[8:])
+		r.StatusCode = 206
+		r.Header.Set("Content-Range", fmt.Sprintf("bytes 8-%d/%d", len(data)-1, len(data)))
+		return r, nil
+	})
+	if err := downloadSetupArtifact(context.Background(), "setup-retry-fixture", am, nil); err != nil || calls != 2 {
+		t.Fatalf("chunked EOF resume err=%v calls=%d", err, calls)
+	}
+}
+
+func TestSetupDownloadTransientHTTPStatusesRetry(t *testing.T) {
+	for _, status := range []int{408, 429, 500, 502, 503, 504} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			am, data := setupDownloadTestManager(t)
+			calls := 0
+			setupDownloadTestTransport(t, func(*http.Request) (*http.Response, error) {
+				calls++
+				if calls == 1 {
+					r := setupDownloadTestResponse(nil)
+					r.StatusCode = status
+					return r, nil
+				}
+				return setupDownloadTestResponse(data), nil
+			})
+			if err := downloadSetupArtifact(context.Background(), "setup-retry-fixture", am, nil); err != nil || calls != 2 {
+				t.Fatalf("HTTP %d recovery err=%v calls=%d", status, err, calls)
+			}
+		})
+	}
+	for _, status := range []int{401, 403, 404, 410, 416, 501} {
+		if setupDownloadRetryable(&artifactHTTPError{Status: status}) {
+			t.Fatalf("permanent HTTP %d marked retryable", status)
+		}
+	}
+	if setupDownloadRetryable(errors.New("invalid hash 429 marker")) {
+		t.Fatal("message text caused a retry of an integrity error")
+	}
+}
+
+func TestArtifactDownloadStalledResponseIsBoundedAndRetainsPart(t *testing.T) {
+	am, data := setupDownloadTestManager(t)
+	am.downloadIdleTimeout = 30 * time.Millisecond
+	setupDownloadTestTransport(t, func(req *http.Request) (*http.Response, error) {
+		<-req.Context().Done()
+		return nil, req.Context().Err()
+	})
+	part := filepath.Join(am.dataDir, "downloads", "setup-retry-fixture.part")
+	if err := os.MkdirAll(filepath.Dir(part), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(part, data[:8], 0600); err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	err := am.Download(context.Background(), "setup-retry-fixture")
+	var timeout *artifactIdleError
+	if !errors.As(err, &timeout) || !setupDownloadRetryable(err) || time.Since(started) > time.Second {
+		t.Fatalf("stalled request remained unbounded: %v", err)
+	}
+	retained, readErr := os.ReadFile(part)
+	if readErr != nil || !bytes.Equal(retained, data[:8]) || am.Progress()[0].State != "failed" {
+		t.Fatal("idle timeout discarded the partial file or did not expose a failure")
+	}
+}
+
+func TestArtifactDownloadIdleDeadlineMovesWithProgress(t *testing.T) {
+	ctx, touch, stop := artifactDownloadContext(context.Background(), 250*time.Millisecond)
+	defer stop()
+	for range 6 {
+		time.Sleep(100 * time.Millisecond)
+		touch()
+		if ctx.Err() != nil {
+			t.Fatal("healthy progress was subject to a total download timeout")
+		}
+	}
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("idle deadline never expired after progress stopped")
+	}
+}
+
+func TestArtifactRetryAfterIsBoundedAndCancelable(t *testing.T) {
+	now := time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
+	for value, want := range map[string]time.Duration{
+		"": 0, "invalid": 0, "-1": 0, "1": time.Second, "9999999999": 30 * time.Second,
+		now.Add(2 * time.Second).Format(http.TimeFormat): 2 * time.Second,
+		now.Add(time.Hour).Format(http.TimeFormat):       30 * time.Second,
+		now.Add(-time.Hour).Format(http.TimeFormat):      0,
+	} {
+		if got := boundedArtifactRetryAfter(value, now); got != want {
+			t.Fatalf("Retry-After %q=%v want %v", value, got, want)
+		}
+	}
+	am, _ := setupDownloadTestManager(t)
+	calls := 0
+	setupDownloadTestTransport(t, func(*http.Request) (*http.Response, error) {
+		calls++
+		r := setupDownloadTestResponse(nil)
+		r.StatusCode = http.StatusTooManyRequests
+		r.Header.Set("Retry-After", "30")
+		return r, nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	started := time.Now()
+	err := downloadSetupArtifact(ctx, "setup-retry-fixture", am, func(int) { cancel() })
+	if !errors.Is(err, context.Canceled) || calls != 1 || time.Since(started) > time.Second {
+		t.Fatal("server-requested backoff was not cancellable")
 	}
 }

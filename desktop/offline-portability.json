@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": "0.2.48-desktop",
+  "version": "0.2.49-desktop",
   "updatedUtc": "2026-10-05T22:41:41.872863+00:00",
   "scope": "Windows amd64 offline environment transfer",
   "flow": [

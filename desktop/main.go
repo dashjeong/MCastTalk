@@ -143,7 +143,7 @@ func run() error {
 			controller.mu.Lock()
 			state := controller.operation.State
 			controller.mu.Unlock()
-			if state == "running" || state == "failed" || state == "cancelled" || state == "interrupted" {
+			if state == "running" || state == "failed" || state == "cancelled" || state == "interrupted" || state == "prepared" {
 				return
 			}
 			if ready := engine.Ready(); ready.TranslationReady || ready.STTReady {

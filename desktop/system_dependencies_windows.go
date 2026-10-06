@@ -73,6 +73,7 @@ func checkSystemDependency(ctx context.Context, dep SystemDependency) (SystemDep
 		return state, err
 	}
 	if !state.Supported {
+		state.CheckComplete = true
 		state.Error = "Windows x64 프로그램에서 런타임을 확인하세요"
 		return state, nil
 	}
@@ -104,6 +105,7 @@ func checkSystemDependency(ctx context.Context, dep SystemDependency) (SystemDep
 		}
 	}
 	state.Ready = len(state.MissingDLLs) == 0 && !state.InstallationInProgress
+	state.CheckComplete = true
 	return state, nil
 }
 func lockSystemInstaller(path string) (func(), error) {

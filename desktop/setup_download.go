@@ -32,7 +32,12 @@ func downloadSetupArtifact(ctx context.Context, id string, assets *AssetManager,
 		if onRetry != nil {
 			onRetry(attempt + 1)
 		}
-		timer := time.NewTimer(time.Duration(attempt) * 500 * time.Millisecond)
+		backoff := time.Duration(attempt) * 500 * time.Millisecond
+		var status *artifactHTTPError
+		if errors.As(err, &status) && status.RetryAfter > backoff {
+			backoff = status.RetryAfter
+		}
+		timer := time.NewTimer(backoff)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
@@ -49,6 +54,10 @@ func setupDownloadRetryable(err error) bool {
 	}
 	if errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
+	}
+	var status *artifactHTTPError
+	if errors.As(err, &status) {
+		return status.retryable()
 	}
 	// url.Error itself implements net.Error even for malformed URL/protocol
 	// errors. Classify its cause instead of broadening those into retries.

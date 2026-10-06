@@ -47,14 +47,15 @@ func isValidRepoName(repo string) bool {
 }
 
 type AssetManager struct {
-	dataDir        string
-	persist        func(InstalledAsset) error
-	registry       []Artifact
-	customRegistry []Artifact
-	mu             sync.Mutex
-	progress       map[string]DownloadProgress
-	cancelMap      map[string]context.CancelFunc
-	muCancel       sync.Mutex
+	dataDir             string
+	persist             func(InstalledAsset) error
+	registry            []Artifact
+	customRegistry      []Artifact
+	mu                  sync.Mutex
+	progress            map[string]DownloadProgress
+	cancelMap           map[string]context.CancelFunc
+	muCancel            sync.Mutex
+	downloadIdleTimeout time.Duration // unexported protocol-fixture override
 }
 
 func Catalog() []Artifact {
@@ -155,7 +156,13 @@ func (a *AssetManager) Download(ctx context.Context, id string) (finalErr error)
 		}
 	}
 
-	req, err := http.NewRequestWithContext(cancelCtx, "GET", art.URL, nil)
+	idleTimeout := a.downloadIdleTimeout
+	if idleTimeout <= 0 {
+		idleTimeout = artifactDownloadIdleTimeout
+	}
+	downloadCtx, touch, stopDownloadDeadline := artifactDownloadContext(cancelCtx, idleTimeout)
+	defer stopDownloadDeadline()
+	req, err := http.NewRequestWithContext(downloadCtx, "GET", art.URL, nil)
 	if err != nil {
 		finalErr = err
 		return err
@@ -165,8 +172,13 @@ func (a *AssetManager) Download(ctx context.Context, id string) (finalErr error)
 	}
 	req.Header.Set("Accept-Encoding", "identity")
 
-	resp, err := http.DefaultClient.Do(req)
+	client := artifactDownloadClient()
+	defer client.CloseIdleConnections()
+	resp, err := client.Do(req)
 	if err != nil {
+		if downloadCtx.Err() != nil && cancelCtx.Err() == nil {
+			err = &artifactIdleError{}
+		}
 		finalErr = err
 		return err
 	}
@@ -190,7 +202,7 @@ func (a *AssetManager) Download(ctx context.Context, id string) (finalErr error)
 			return finalErr
 		}
 	} else {
-		finalErr = fmt.Errorf("unexpected status code %d", resp.StatusCode)
+		finalErr = &artifactHTTPError{Status: resp.StatusCode, RetryAfter: boundedArtifactRetryAfter(resp.Header.Get("Retry-After"), time.Now())}
 		return finalErr
 	}
 
@@ -207,6 +219,7 @@ func (a *AssetManager) Download(ctx context.Context, id string) (finalErr error)
 		for {
 			n, err := limitReader.Read(buf)
 			if n > 0 {
+				touch()
 				if _, werr := file.Write(buf[:n]); werr != nil {
 					finalErr = werr
 					return werr
@@ -227,6 +240,9 @@ func (a *AssetManager) Download(ctx context.Context, id string) (finalErr error)
 				if err == io.EOF {
 					break
 				}
+				if downloadCtx.Err() != nil && cancelCtx.Err() == nil {
+					err = &artifactIdleError{}
+				}
 				finalErr = err
 				return err
 			}
@@ -238,9 +254,14 @@ func (a *AssetManager) Download(ctx context.Context, id string) (finalErr error)
 			return err
 		}
 	}
+	// Hashing and installation are local work; the network idle deadline must
+	// not cancel a large verified import after the transfer has completed.
+	stopDownloadDeadline()
 
 	if received != art.Bytes {
-		finalErr = errors.New("size mismatch")
+		// A clean EOF can still truncate a chunked response. Keep the partial
+		// file and retry with Range, while oversized/invalid ranges stay fatal.
+		finalErr = fmt.Errorf("다운로드가 중단되었습니다 (%d/%d bytes): %w", received, art.Bytes, io.ErrUnexpectedEOF)
 		return finalErr
 	}
 

@@ -8,7 +8,7 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Desktop regression tests failed' }
   New-Item -ItemType Directory -Force dist | Out-Null
   $env:CGO_ENABLED='0'; $env:GOOS='windows'; $env:GOARCH=$Architecture
-  $name="dist/MCastTalk-0.2.48-desktop-windows-$Architecture.exe"
+  $name="dist/MCastTalk-0.2.49-desktop-windows-$Architecture.exe"
   go build -trimpath -ldflags '-s -w -H windowsgui' -o $name .
   if ($LASTEXITCODE -ne 0) { throw 'Executable build failed' }
   python scripts/verify-windows-manifest.py --manifest windows-app.manifest --exe $name --expect-arch $Architecture --out "$name.manifest-check.json"

@@ -34,6 +34,7 @@ type SystemDependencyStatus struct {
 	ID                     string            `json:"id"`
 	Supported              bool              `json:"supported"`
 	Ready                  bool              `json:"ready"`
+	CheckComplete          bool              `json:"checkComplete"`
 	MissingDLLs            []string          `json:"missingDLLs"`
 	DLLVersions            map[string]string `json:"dllVersions"`
 	InstallationInProgress bool              `json:"installationInProgress"`
@@ -157,6 +158,45 @@ func PrepareSystemDependency(ctx context.Context, dataDir, id string, progress f
 		}
 	}
 	return SystemDependencyResult{ExitCode: -1}, errors.New("알 수 없는 시스템 구성요소입니다")
+}
+
+// File preparation is usable even before native readiness can be determined.
+// It downloads only the immutable installer and verifies its size/SHA. It does
+// not check Authenticode, elevate, install, or claim that its DLLs are ready.
+func PrepareSystemDependencyFiles(ctx context.Context, dataDir, id string, status SystemDependencyStatus, progress func(DownloadProgress)) (SystemDependencyResult, error) {
+	for _, dep := range SystemDependencies() {
+		if dep.ID == id {
+			return prepareSystemDependencyFiles(ctx, dataDir, dep, status, progress, nil)
+		}
+	}
+	return SystemDependencyResult{ExitCode: -1}, errors.New("알 수 없는 시스템 구성요소입니다")
+}
+
+func prepareSystemDependencyFiles(ctx context.Context, dataDir string, dep SystemDependency, status SystemDependencyStatus, progress func(DownloadProgress), client *http.Client) (SystemDependencyResult, error) {
+	result := SystemDependencyResult{ExitCode: -1, Status: status}
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Minute)
+	defer cancel()
+	path, err := cacheSystemDependency(ctx, dataDir, dep, client, progress)
+	if err == nil {
+		result.InstallerPath = path
+	}
+	if progress != nil {
+		state := "done"
+		if err != nil {
+			state = "failed"
+			if errors.Is(err, context.Canceled) {
+				state = "cancelled"
+			}
+		}
+		p := DownloadProgress{ID: dep.ID, State: state, Total: dep.Bytes}
+		if err == nil {
+			p.Received = dep.Bytes
+		} else {
+			p.Error = err.Error()
+		}
+		progress(p)
+	}
+	return result, err
 }
 
 func prepareSystemDependency(ctx context.Context, dataDir string, dep SystemDependency, progress func(DownloadProgress), hooks systemDependencyHooks) (result SystemDependencyResult, finalErr error) {

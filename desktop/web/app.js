@@ -55,8 +55,9 @@ document.addEventListener('DOMContentLoaded', () => {
         li.setAttribute('tabindex', '0');
         li.setAttribute('role', 'button');
         const activate = () => {
-            document.querySelectorAll('.nav-menu li').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.nav-menu li').forEach(el => { el.classList.remove('active'); el.removeAttribute('aria-current'); });
             li.classList.add('active');
+            li.setAttribute('aria-current', 'page');
             document.querySelectorAll('.panel').forEach(p => {
                 const selected = p.id === `panel-${li.dataset.target}`;
                 p.classList.toggle('active', selected);
@@ -114,10 +115,58 @@ document.addEventListener('DOMContentLoaded', () => {
     let setupRunning = false;
     let setupQueryRunning = false;
     let setupLastState = '';
+    let setupLastOperation = {};
+    let setupPlanPending = false;
+    let setupPlanError = '';
+    let setupRequestPending = false;
+    let cpuChoicePending = false;
+    let cpuStarterRegistered = false;
     const setupStart = document.getElementById('setup-start');
     const setupConsent = document.getElementById('setup-consent');
     const setupStatus = document.getElementById('setup-status');
     const setupCancel = document.getElementById('setup-cancel');
+    const setupCard = document.getElementById('setup-card');
+    const setupBadge = document.getElementById('setup-state-badge');
+    const setupHint = document.getElementById('setup-action-hint');
+    const setupProgressWrap = document.getElementById('setup-progress-wrap');
+    const setupReadyActions = document.getElementById('setup-ready-actions');
+    const setupStagedActions = document.getElementById('setup-staged-actions');
+    const cpuModelButton = document.getElementById('setup-cpu-model');
+    const cpuModelNote = document.getElementById('setup-model-note');
+    const cpuStarterSTT = 'whisper-small-q5';
+    const canPrepare = () => Boolean(setupPlan && (setupPlan.preparationCompatible ?? setupPlan.compatible));
+    const canRun = () => Boolean(setupPlan && (setupPlan.runtimeCompatible ?? setupPlan.compatible));
+    const dependencyFileReady = dependency => Boolean(dependency.installerCached || dependency.cached || dependency.status?.ready);
+    function updateSetupModelChoice() {
+        const oldCPUChoice = fullConfig?.backend === 'cpu' && ['whisper-turbo', 'whisper-turbo-q5'].includes(fullConfig.sttModel);
+        cpuModelButton.hidden = !(oldCPUChoice && cpuStarterRegistered);
+        cpuModelButton.disabled = setupRunning || setupRequestPending || engineRunning || cpuChoicePending;
+        cpuModelButton.textContent = cpuChoicePending ? '음성인식 모델 변경 중…' : 'CPU 시작용 음성인식 모델 선택';
+        cpuModelNote.hidden = !fullConfig?.sttModel;
+        if (fullConfig?.sttModel === cpuStarterSTT) cpuModelNote.textContent = 'Whisper Small (Q5)는 모델 자원 부담을 줄인 시작 구성입니다. 인식 정확도와 통역 지연은 이 PC에서 따로 확인하세요. 7초 이내 처리나 강의 수용량을 보장하지 않습니다.';
+        else if (oldCPUChoice && cpuStarterRegistered) cpuModelNote.textContent = 'CPU 시작용으로 변경하면 음성인식 모델만 Whisper Small (Q5)로 바꿉니다. 번역 모델과 현재 CPU 구동 설정은 유지하며, 인식 품질과 속도는 별도로 확인합니다.';
+        else cpuModelNote.textContent = '선택 모델의 인식 정확도·통역 지연·강의 수용량은 이 PC에서 따로 확인하세요. 다른 모델은 모델 · PC 진단에서 선택할 수 있습니다.';
+    }
+    function currentEnvironmentVerified(op) {
+        return Boolean(op.functionalVerified && setupPlan && op.environmentFingerprint === setupPlan.environmentFingerprint &&
+            !(setupPlan.missing || []).length && !(setupPlan.systemDependencies || []).some(d => !d.status.ready) &&
+            !(setupPlan.speechLanguages?.supported && (setupPlan.speechLanguages.error || setupPlan.speechLanguages.missing?.length)));
+    }
+    function renderSetupSteps(op = setupLastOperation) {
+        let stage = setupPlan ? 1 : 0;
+        if (op.state === 'running' && op.phase?.includes('구동 검증')) stage = (op.checks || []).some(c => c.stage === '엔진 기동·모델 로드' && c.passed) ? 3 : 2;
+        if (['failed', 'cancelled', 'interrupted'].includes(op.state) && op.checks?.length) stage = op.checks.some(c => c.stage === '엔진 기동·모델 로드' && c.passed) ? 3 : 2;
+        if (op.state === 'prepared' && op.environmentFingerprint === setupPlan?.environmentFingerprint && !(setupPlan?.missing || []).length) stage = 2;
+        const verified = currentEnvironmentVerified(op);
+        document.querySelectorAll('#setup-steps li').forEach((item, index) => {
+            item.classList.toggle('done', verified || index < stage);
+            item.classList.toggle('current', !verified && index === stage);
+            item.classList.toggle('failed', op.state === 'failed' && index === stage);
+            if (!verified && index === stage) item.setAttribute('aria-current', 'step');
+            else item.removeAttribute('aria-current');
+        });
+        setupReadyActions.hidden = !verified;
+    }
     function setupSourceLink(artifact) {
         try {
             const u = new URL(artifact.url);
@@ -128,25 +177,63 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch { return null; }
     }
     function updateSetupStart() {
-        setupStart.disabled = setupRunning || !setupPlan?.compatible || !setupConsent.checked;
+        const retry = ['failed', 'cancelled', 'interrupted'].includes(setupLastOperation.state);
+        const filesMissing = (setupPlan?.missing || []).length || (setupPlan?.systemDependencies || []).some(d => !dependencyFileReady(d));
+        const installationPending = (setupPlan?.systemDependencies || []).some(d => d.status.installationInProgress);
+        const restartPending = Boolean((setupLastOperation.restartRequired || setupLastOperation.restartCheckRequired || setupLastOperation.systemInstallationMayContinue) && (setupPlan?.systemDependencies || []).some(d => !d.status.ready));
+        // Historical installer results cannot prove a reboot is still pending.
+        // Fresh unresolved readiness blocks execution; safe file-only staging
+        // follows the backend's independent preparation compatibility result.
+        const dependencyBlocked = canRun() && (installationPending || restartPending);
+        const stagedOnly = canPrepare() && !canRun() && !filesMissing && !setupPlan?.speechLanguages?.error && !(setupPlan?.speechLanguages?.missing || []).length;
+        setupStart.disabled = setupRunning || setupRequestPending || cpuChoicePending || !canPrepare() || !setupConsent.checked || stagedOnly || dependencyBlocked;
+        setupConsent.disabled = setupRunning || setupRequestPending || cpuChoicePending || stagedOnly || dependencyBlocked;
+        setupStagedActions.hidden = !stagedOnly || setupRunning || setupRequestPending;
+        setupStart.textContent = setupRequestPending ? '준비 요청 중…' : setupRunning ? '환경 준비 중…' : !setupPlan ? 'PC 확인 중' : dependencyBlocked ? 'Windows 설치 확인 필요' : !canPrepare() ? 'PC 확인 필요' : stagedOnly ? '파일 준비 완료' : !canRun() ? '파일 먼저 준비' : retry ? '저장된 파일로 이어서 준비' : filesMissing ? '환경 준비 시작' : '저장된 환경 구동 확인';
+        if (setupRunning) setupHint.textContent = '이 창을 열어 두세요. 중단해도 검증을 마친 파일은 다음 준비에 재사용합니다.';
+        else if (!setupPlan) setupHint.textContent = setupPlanError ? 'PC 다시 확인을 눌러 연결을 확인하세요. 받은 환경이 있다면 아래에서 가져올 수 있습니다.' : 'PC 확인이 끝나면 준비 방법을 안내합니다.';
+        else if (installationPending && (!canPrepare() || canRun())) setupHint.textContent = 'Microsoft 실행 구성요소 설치가 진행 중입니다. Windows 설치·관리자 승인 창을 확인하고, 설치 완료 후 PC 다시 확인을 누르세요. 구동 요청은 잠시 기다려 주세요.';
+        else if (restartPending && canRun()) setupHint.textContent = 'Windows 실행 구성요소의 준비를 아직 확인하지 못했습니다. Microsoft 설치를 완료하고 재부팅 안내가 있으면 PC를 재부팅한 뒤 PC 다시 확인을 누르세요.';
+        else if (!canPrepare()) setupHint.textContent = '아래 진단 안내를 확인하고 PC 다시 확인을 누르세요. Windows 구성요소 확인이 실패했다면 받은 파일은 유지한 채 다시 확인할 수 있습니다. 디스크 부족 안내가 있을 때는 설치 공간을 확보하세요.';
+        else if (stagedOnly) setupHint.textContent = '모델과 실행 구성요소의 설치 파일 준비를 마쳤습니다. 환경을 내보내 다른 PC로 옮기거나, 아래 진단 안내를 확인하고 PC 실행 조건 다시 확인을 누르세요. 실제 설치·통역은 대상 PC에서 별도로 확인해야 합니다.' + (installationPending ? ' Microsoft 설치가 진행 중이므로 완료 후 다시 확인하세요.' : restartPending ? ' 이전 Microsoft 설치·재부팅 안내도 먼저 확인하세요.' : '');
+        else if (!canRun()) setupHint.textContent = '모델과 실행 구성요소의 설치 파일을 먼저 받을 수 있습니다. 실제 설치·통역은 아래 진단 안내를 해결한 뒤 확인하세요. RAM 부족 안내가 있다면 다른 앱을 닫거나 더 작은 모델을 선택하세요.' + (!setupConsent.checked ? ' 파일을 받으려면 위의 이용조건 동의 항목을 선택하세요.' : '');
+        else if (setupLastOperation.restartRequired || setupLastOperation.restartCheckRequired || setupLastOperation.systemInstallationMayContinue) setupHint.textContent = 'Windows 구성요소의 현재 준비 상태를 다시 확인했습니다. 이전 재부팅 안내를 마친 뒤 위의 이용조건 동의 항목을 선택하여 실제 구동을 다시 확인하세요.';
+        else if (setupLastOperation.state === 'failed') setupHint.textContent = '준비된 파일은 유지됩니다. 표시된 오류를 확인하고 이용조건에 다시 동의해 이어서 준비하세요. 모델 로드가 실패했다면 다른 모델 선택에서 더 작은 모델을 고를 수 있습니다.';
+        else if (setupLastOperation.state === 'prepared') setupHint.textContent = '파일 준비를 마쳤습니다. 이용조건을 확인한 뒤 저장된 환경 구동 확인을 눌러 실제 통역을 확인하세요.';
+        else if (currentEnvironmentVerified(setupLastOperation)) setupHint.textContent = '최근 시험에서 음성인식·번역·음성 출력을 확인했습니다. 아래에서 강의실이나 음성노트를 시작하세요.';
+        else if (!setupConsent.checked) setupHint.textContent = '받을 파일과 이용조건을 확인한 뒤 위의 동의 항목을 선택하세요.';
+        else setupHint.textContent = filesMissing ? '환경 준비 시작을 누르면 파일 다운로드부터 실제 통역 확인까지 진행합니다.' : '모델 파일이 있습니다. 저장된 환경 구동 확인을 눌러 이 PC에서 실제 통역을 확인하세요.';
+        renderSetupSteps();
+        updateSetupModelChoice();
     }
     async function fetchSetupPlan() {
+        if (setupPlanPending) return;
+        setupPlanPending = true;
         try {
             const newPlan = await api('/setup/plan');
             if (setupPlan && setupPlan.fingerprint !== newPlan.fingerprint) setupConsent.checked = false;
             setupPlan = newPlan;
+            setupPlanError = '';
             const gigabytes = n => (n / 1000000000).toFixed(2);
             const systemDependencies = setupPlan.systemDependencies || [];
-            const pendingDependencies = systemDependencies.filter(d => !d.status.ready);
-            document.getElementById('setup-summary').textContent = `구성할 항목 ${setupPlan.missing.length + pendingDependencies.length}개 · 다운로드 ${gigabytes(setupPlan.downloadBytes)} GB · 설치 여유 공간 ${gigabytes(setupPlan.requiredDiskBytes)} GB · 여유 RAM ${setupPlan.requiredRAMGB} GB 필요. 이미 설치한 파일은 재사용합니다.`;
+            const pendingDependencies = systemDependencies.filter(d => !dependencyFileReady(d));
+            const metrics = document.getElementById('setup-metrics'); metrics.replaceChildren();
+            for (const [label, value] of [['다운로드', `${gigabytes(setupPlan.downloadBytes)} GB`], ['디스크 여유 필요', `${gigabytes(setupPlan.requiredDiskBytes)} GB`], ['실행에 필요한 여유 RAM', `${setupPlan.requiredRAMGB} GB`]]) {
+                const item = document.createElement('div'), title = document.createElement('span'), detail = document.createElement('strong');
+                title.textContent = label; detail.textContent = value; item.append(title, detail); metrics.append(item);
+            }
+            const selectedTranslation = setupPlan.artifacts?.find(a => a.task === 'translation');
+            const selectedSpeech = setupPlan.artifacts?.find(a => a.task === 'stt');
+            const selectedNames = [selectedTranslation ? `번역: ${selectedTranslation.name}` : '', selectedSpeech ? `음성인식: ${selectedSpeech.name}` : ''].filter(Boolean).join(' · ');
+            document.getElementById('setup-summary').textContent = `${selectedNames ? selectedNames + '. ' : ''}${(setupPlan.missing || []).length + pendingDependencies.length}개 항목을 준비합니다. 이미 준비한 파일은 다시 받지 않습니다.`;
             const speech = setupPlan.speechLanguages;
             if (speech?.supported) {
                 const voiceState = speech.error ? '언어별 음성 점검 미완료' : speech.missing.length ? `로컬 음성 모델 준비 필요: ${speech.missing.join(', ')}` : '선택 언어의 음성 모델 파일 확인';
                 document.getElementById('setup-summary').textContent += ` ${voiceState}.`;
             }
             const list = document.getElementById('setup-assets'); list.replaceChildren();
-            const missing = new Set(setupPlan.missing.map(a => a.id));
-            setupPlan.artifacts.forEach(a => {
+            const missing = new Set((setupPlan.missing || []).map(a => a.id));
+            (setupPlan.artifacts || []).forEach(a => {
                 const item = document.createElement('li');
                 item.append(document.createTextNode(`${a.name} · ${gigabytes(a.bytes)} GB · ${a.license || '이용조건 확인 필요'} · ${missing.has(a.id) ? '받을 파일' : '저장된 파일'} `));
                 const source = setupSourceLink(a);
@@ -157,17 +244,17 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             systemDependencies.forEach(d => {
                 const item = document.createElement('li');
-                item.append(document.createTextNode(`${d.profile.name} ${d.profile.version} · ${(d.profile.bytes / 1000000).toFixed(1)} MB · ${d.status.ready ? 'Windows 준비됨' : d.cached ? '저장된 설치 파일로 구성' : '다운로드 후 Windows 설치'} · 관리자 승인이 필요할 수 있습니다. `));
+                item.append(document.createTextNode(`${d.profile.name} ${d.profile.version} · ${(d.profile.bytes / 1000000).toFixed(1)} MB · ${d.status.ready ? '현재 Windows 실행 기반 확인' : dependencyFileReady(d) ? '설치 파일 준비됨 · 실제 설치·실행 확인 필요' : '설치 파일 다운로드 필요'}${canRun() ? ' · 실제 설치에는 관리자 승인이 필요할 수 있습니다.' : ' · 파일 먼저 준비는 Windows를 설치·변경하지 않습니다.'} `));
                 const terms = new URL(d.profile.termsURL);
                 if (terms.protocol === 'https:' && terms.hostname === 'visualstudio.microsoft.com') {
                     const link = document.createElement('a'); link.href = terms.href; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = 'Microsoft 이용조건'; item.append(link);
                 }
                 list.append(item);
             });
-            document.getElementById('setup-warnings').textContent = (setupPlan.warnings || []).join(' ');
-            setupStart.textContent = setupPlan.missing.length || pendingDependencies.length ? '필요 환경 받기·구성·구동 검증' : '저장된 환경 구동 검증';
-        } catch (e) { setupPlan = null; setupConsent.checked = false; document.getElementById('setup-summary').textContent = e.message; }
-        updateSetupStart();
+            document.getElementById('setup-warnings').textContent = [...new Set([...(setupPlan.warnings || []), ...(setupPlan.runtimeIssues || [])])].join(' ');
+            if (!setupRunning && !setupLastOperation.id) { setupBadge.textContent = canRun() ? '준비 시작 가능' : canPrepare() ? '파일 준비 가능' : 'PC 확인 필요'; setupCard.dataset.state = canPrepare() ? 'idle' : 'blocked'; }
+        } catch (e) { setupPlan = null; setupPlanError = e.message; setupConsent.checked = false; document.getElementById('setup-metrics').replaceChildren(); document.getElementById('setup-summary').textContent = `PC 구성을 확인하지 못했습니다: ${e.message}`; setupBadge.textContent = '연결 확인 필요'; setupCard.dataset.state = 'failed'; }
+        finally { setupPlanPending = false; updateSetupStart(); }
     }
     async function fetchSetupStatus() {
         if (setupQueryRunning) return;
@@ -175,35 +262,78 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const data = await api('/setup/status');
             const op = data.operation || {};
+            setupLastOperation = op;
             setupRunning = op.state === 'running';
             els.btnToggle.disabled = setupRunning;
             setupCancel.disabled = !setupRunning;
             setupConsent.disabled = setupRunning;
-            const names = { running: '진행 중', verified: '기동·기능 연결 확인', failed: '구성 또는 구동 검증 실패', cancelled: '취소됨', interrupted: '중단됨' };
+            const names = { running: '환경 준비 중', prepared: '파일 준비 완료 · 구동 확인 필요', verified: '기능 연결 확인', failed: '준비 확인 필요', cancelled: '준비 중단됨', interrupted: '지난 준비 중단됨' };
             const progress = (data.progress || []).find(p => p.id === op.currentID);
-            const previousEnvironment = op.functionalVerified && setupPlan && (op.environmentFingerprint !== setupPlan.environmentFingerprint || setupPlan.missing.length > 0 || (setupPlan.systemDependencies || []).some(d => !d.status.ready) || (setupPlan.speechLanguages?.supported && (setupPlan.speechLanguages.error || setupPlan.speechLanguages.missing.length > 0)));
-            setupStatus.textContent = op.id ? `${previousEnvironment ? '이전 환경의 시험 기록 · 현재 구성을 다시 확인하세요' : names[op.state] || op.state} · ${op.phase} · 설치 ${op.completed}/${op.artifactIDs.length}${op.currentID ? ` · ${op.currentID}` : ''}${progress ? ` · ${progress.received.toLocaleString()} / ${progress.total.toLocaleString()} 바이트` : ''}${op.error ? ` · ${op.error}` : ''}${op.functionalVerified ? ' · 마지막 시험에서 실제 엔진·PCM 생성을 확인했습니다. 정확도·7초 지연·강의 수용량 검증은 별도입니다.' : ''}` : '직접 선택하기 전에는 모델을 다운로드하지 않습니다. 엔진·세션·접속을 종료한 상태에서 구성하세요.';
+            const previousEnvironment = op.functionalVerified && !currentEnvironmentVerified(op);
+            const artifactName = setupPlan?.artifacts?.find(a => a.id === op.currentID)?.name;
+            setupStatus.textContent = op.id ? `${previousEnvironment ? '이전 환경의 시험 기록 · 현재 구성을 다시 확인하세요' : names[op.state] || op.state}${op.phase ? ` · ${op.phase}` : ''}${op.state === 'running' && op.artifactIDs?.length ? ` · 파일 ${op.completed || 0}/${op.artifactIDs.length}` : ''}${artifactName ? ` · ${artifactName}` : ''}${op.error ? `\n${op.error}` : ''}` : '준비 시작을 누르기 전에는 파일을 다운로드하지 않습니다. 진행 중인 엔진·대화·접속을 종료한 뒤 준비하세요.';
+            setupBadge.textContent = previousEnvironment ? '현재 환경 재확인' : names[op.state] || (canRun() ? '준비 시작 가능' : canPrepare() ? '파일 준비 가능' : 'PC 확인 필요');
+            setupCard.dataset.state = op.state === 'verified' && !currentEnvironmentVerified(op) ? 'stale' : op.state || 'idle';
+            setupProgressWrap.hidden = !(setupRunning && progress);
+            if (setupRunning && progress) {
+                const percent = progress.total > 0 ? Math.min(100, Math.max(0, Math.round(progress.received / progress.total * 100))) : null;
+                const bar = document.getElementById('setup-progress');
+                if (percent === null) bar.removeAttribute('value'); else bar.value = percent;
+                document.getElementById('setup-progress-label').textContent = artifactName || '파일 준비';
+                document.getElementById('setup-progress-value').textContent = percent === null ? '진행 중' : `${percent}% · ${(progress.received / 1000000000).toFixed(2)} / ${(progress.total / 1000000000).toFixed(2)} GB`;
+            }
+            const engineProgress = document.getElementById('setup-engine-progress');
+            const startupStage = data.engine?.startupStage;
+            engineProgress.hidden = !(setupRunning && startupStage);
+            if (setupRunning && startupStage) {
+                const elapsed = Number(data.engine.startupMillis);
+                engineProgress.textContent = `현재 작업: ${startupStage}${Number.isFinite(elapsed) && elapsed >= 0 ? ` · ${Math.floor(elapsed / 1000)}초 경과` : ''}. 첫 구동은 모델과 PC 사양에 따라 시간이 걸립니다. 준비 중단으로 멈출 수 있습니다.`;
+            }
             if (progress?.state === 'awaiting-approval') setupStatus.textContent += ' · Windows 관리자 승인 창에서 Microsoft 설치를 확인하세요.';
             if (op.restartRequired) setupStatus.textContent += ' · PC 재부팅 후 다시 검증하세요.';
             if (op.systemInstallationMayContinue || op.restartCheckRequired) setupStatus.textContent += ' · Microsoft 설치가 계속 진행될 수 있습니다. 설치 완료·재부팅 상태를 확인하고 다시 검증하세요.';
             const checks = document.getElementById('setup-checks'); checks.replaceChildren();
+            const startupChecks = setupRunning ? data.engine?.startupChecks || op.startupChecks || [] : op.startupChecks || [];
+            startupChecks.forEach(c => { const li = document.createElement('li'); li.textContent = `${c.passed ? '확인' : '실패'} · ${c.stage} · ${c.language || ''} · ${(c.millis / 1000).toFixed(1)}초${c.error ? ` · ${c.error}` : ''}`; checks.append(li); });
             (op.checks || []).forEach(c => { const li = document.createElement('li'); li.textContent = `${c.passed ? '확인' : '실패'} · ${c.stage} · ${c.language || ''} · ${c.millis} ms${c.error ? ` · ${c.error}` : ''}`; checks.append(li); });
             if (setupLastState !== op.state) { setupLastState = op.state; if (op.state && op.state !== 'running') { setupConsent.checked = false; await fetchSetupPlan(); } }
             updateSetupStart();
-        } catch (e) { setupStatus.textContent = e.message; }
+        } catch (e) { setupStatus.textContent = `준비 상태를 확인하지 못했습니다: ${e.message}`; setupBadge.textContent = '연결 확인 필요'; setupReadyActions.hidden = true; }
         finally { setupQueryRunning = false; }
     }
     setupConsent.addEventListener('change', updateSetupStart);
     setupStart.addEventListener('click', async () => {
         if (!setupPlan || setupStart.disabled) return;
-        setupStart.disabled = true;
+        setupRequestPending = true;
+        updateSetupStart();
         try {
-            await api('/setup/download', { method: 'POST', body: JSON.stringify({ fingerprint: setupPlan.fingerprint, consent: setupConsent.checked }) });
+            await api('/setup/download', { method: 'POST', body: JSON.stringify({ fingerprint: setupPlan.fingerprint, consent: setupConsent.checked, prepareOnly: !canRun() }) });
             await fetchSetupStatus();
         } catch (e) { setupStatus.textContent = e.message; await fetchSetupPlan(); }
+        finally { setupRequestPending = false; updateSetupStart(); }
     });
     setupCancel.addEventListener('click', async () => { try { const result = await api('/setup/cancel', { method: 'POST' }); setupStatus.textContent = result.state === 'cancel_requested' ? '취소 요청됨. 설치 완료 파일은 보존합니다.' : '이미 종료된 구성 작업입니다.'; await fetchSetupStatus(); } catch (e) { setupStatus.textContent = e.message; } });
-    document.getElementById('setup-refresh').addEventListener('click', async () => { await fetchDiagnostics(); await fetchSetupPlan(); await fetchSetupStatus(); });
+    const refreshSetupEnvironment = async () => { await fetchDiagnostics(); await fetchSetupPlan(); await fetchSetupStatus(); };
+    document.getElementById('setup-refresh').addEventListener('click', refreshSetupEnvironment);
+    document.getElementById('setup-recheck').addEventListener('click', refreshSetupEnvironment);
+    cpuModelButton.addEventListener('click', async () => {
+        if (cpuModelButton.disabled || cpuModelButton.hidden) return;
+        cpuChoicePending = true; updateSetupStart();
+        let choiceSaved = false;
+        try {
+            await fetchStatus();
+            if (!fullConfig || fullConfig.backend !== 'cpu' || !['whisper-turbo', 'whisper-turbo-q5'].includes(fullConfig.sttModel) || !cpuStarterRegistered) throw new Error('현재 CPU 모델 구성을 다시 확인하세요. 모델 · PC 진단에서 직접 선택할 수 있습니다.');
+            if (engineRunning || setupRunning) throw new Error('진행 중인 엔진과 환경 준비를 종료한 뒤 음성인식 모델을 선택하세요.');
+            const nextConfig = { ...fullConfig, sttModel: cpuStarterSTT };
+            const saved = await api('/config', { method: 'POST', body: JSON.stringify(nextConfig) });
+            rememberConfig(saved.config || nextConfig, saved.pinStatus);
+            choiceSaved = true;
+            setupConsent.checked = false;
+            await fetchSetupPlan(); await fetchSetupStatus();
+            setupStatus.textContent = 'CPU 시작용 음성인식 모델을 선택했습니다. 필요한 파일을 받고 이 PC에서 실제 구동을 확인하세요.';
+        } catch (e) { setupStatus.textContent = e.message; }
+        finally { cpuChoicePending = false; updateSetupStart(); if (choiceSaved) await fetchDiagnostics(); }
+    });
     document.getElementById('setup-offline').addEventListener('click', () => document.querySelector('.nav-menu li[data-target="portable"]').click());
     setInterval(fetchSetupStatus, 1500);
     fetchSetupPlan(); fetchSetupStatus();
@@ -283,12 +413,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
             els.engineStatus.textContent = `엔진: ${statusText}`;
             els.queueDepth.textContent = `대기 작업: ${data.queueDepth}`;
-            els.btnToggle.textContent = engineRunning ? '엔진 중지' : '엔진 시작';
+            els.btnToggle.textContent = engineRunning ? '엔진 중지' : !canRun() || (setupPlan?.missing || []).length || (setupPlan?.systemDependencies || []).some(d => !d.status.ready) ? '환경 준비하기' : '엔진 시작';
 
             const nextSession = data.activeSession;
             if (capture && nextSession?.id !== capture.sessionId) stopMic('작업이 변경되어 마이크를 종료했습니다. 새 작업에서 직접 켜세요.');
             activeSession = nextSession;
             publicURL = data.publicURL || '';
+            updateSetupModelChoice();
             document.getElementById('connection-status').textContent = data.lastError ? `마지막 처리 안내: ${data.lastError}` : 'PC 서버 연결됨';
             if (document.getElementById('panel-notes').classList.contains('active')) {
                 updateActiveSessionUI();
@@ -298,6 +429,13 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     els.btnToggle.addEventListener('click', async () => {
+        if (cpuChoicePending) return;
+        if (!engineRunning && (!canRun() || (setupPlan?.missing || []).length || (setupPlan?.systemDependencies || []).some(d => !d.status.ready))) {
+            document.querySelector('.nav-menu li[data-target="dashboard"]').click();
+            setupCard.scrollIntoView({ block: 'start', behavior: 'auto' });
+            setupStart.focus();
+            return;
+        }
         try {
             els.btnToggle.disabled = true;
             if (engineRunning) await stopMic();
@@ -340,6 +478,8 @@ document.addEventListener('DOMContentLoaded', () => {
             renderDiagnostic(d);
 
             const cat = await api('/catalog');
+            cpuStarterRegistered = (cat.artifacts || []).some(m => m.id === cpuStarterSTT && m.task === 'stt');
+            updateSetupModelChoice();
             els.modelsList.replaceChildren();
             const installedMap = cat.installed || {};
             const progressArr = cat.progress || [];
@@ -398,20 +538,25 @@ document.addEventListener('DOMContentLoaded', () => {
                     };
                     actions.appendChild(btn);
                 }
-                if (isInstalled && ['translation', 'stt'].includes(m.task)) {
+                if (['translation', 'stt'].includes(m.task)) {
                     const useButton = document.createElement('button');
-                    useButton.textContent = '이 모델 선택';
+                    const selected = fullConfig?.[m.task === 'stt' ? 'sttModel' : 'translationModel'] === m.id;
+                    useButton.textContent = selected ? '선택된 모델' : isInstalled ? '이 모델 선택' : '이 모델로 환경 준비';
+                    useButton.disabled = selected || setupRunning || engineRunning || cpuChoicePending;
                     useButton.onclick = async () => {
                         useButton.disabled = true;
                         try {
                             await fetchStatus();
+                            if (!fullConfig) throw new Error('현재 설정을 확인하지 못했습니다. PC 서버 연결을 확인하고 다시 시도하세요.');
+                            if (engineRunning || setupRunning || cpuChoicePending) throw new Error('진행 중인 엔진·환경 준비·모델 선택을 완료한 뒤 모델을 선택하세요.');
                             const config = { ...fullConfig, [m.task === 'stt' ? 'sttModel' : 'translationModel']: m.id };
                             await api('/config', { method: 'POST', body: JSON.stringify(config) });
                             fullConfig = config;
                             setupConsent.checked = false;
                             await fetchSetupPlan();
                             await fetchSetupStatus();
-                            document.getElementById('model-message').textContent = '모델을 선택했습니다. 엔진을 중지하고 다시 시작해 실제 구동을 확인하세요.';
+                            document.getElementById('model-message').textContent = '모델을 선택했습니다. 홈 · 환경 준비에서 필요한 파일을 받고 실제 구동을 확인하세요.';
+                            await fetchDiagnostics();
                         } catch (e) { document.getElementById('model-message').textContent = e.message; }
                         finally { useButton.disabled = false; }
                     };
@@ -536,6 +681,7 @@ document.addEventListener('DOMContentLoaded', () => {
             for (const r of rooms) {
                 const card = document.createElement('div');
                 card.className = 'card';
+                card.dataset.roomTitle = r.title.toLocaleLowerCase();
 
                 const title = document.createElement('h4');
                 title.textContent = r.title;
@@ -563,8 +709,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 els.roomsList.appendChild(card);
             }
+            filterRooms();
         } catch (e) { document.getElementById('operation-status').textContent = `강의실 목록 확인 필요: ${e.message}`; }
     }
+    function filterRooms() {
+        const query = document.getElementById('rooms-search').value.trim().toLocaleLowerCase();
+        const cards = [...els.roomsList.children];
+        for (const card of cards) card.hidden = !card.dataset.roomTitle.includes(query);
+        const count = cards.filter(card => !card.hidden).length;
+        document.getElementById('rooms-count').textContent = !cards.length ? '아직 강의실이 없습니다. 강의실을 만들고 강사·학생 초대 QR을 공유하세요.' : !count ? '검색한 강의실이 없습니다. 다른 이름으로 찾아보세요.' : `강의실 ${count}개${query ? ` · 전체 ${cards.length}개 중` : ''} · 공개 발언과 개인 채널은 참여 화면에서 구분합니다.`;
+    }
+    document.getElementById('rooms-search').addEventListener('input', filterRooms);
 
     const modalCreate = document.getElementById('modal-create');
     document.getElementById('btn-show-create').onclick = () => modalCreate.classList.remove('hidden');

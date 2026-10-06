@@ -457,6 +457,91 @@ func TestSetupLocalDownloadsInstallAndExerciseSpeechInterfaces(t *testing.T) {
 	}
 }
 
+func TestSetupLowRAMAllowsExplicitPreparationWithoutClaimingReadiness(t *testing.T) {
+	a, f, e := newSetupTestApp(t, "prepare-low-ram")
+	source := setupTestLocalSource(t, a, f, "ok")
+	a.diagMu.Lock()
+	a.diagnostic.AvailableRAMGB = 1
+	a.diagMu.Unlock()
+	plan := setupTestPlan(t, a)
+	if plan.Compatible || plan.RuntimeCompatible || !plan.PreparationCompatible || len(plan.RuntimeIssues) != 1 {
+		t.Fatalf("RAM shortage still prevents file preparation or claims runtime fit: %+v", plan)
+	}
+	for _, payload := range []map[string]any{
+		{"fingerprint": plan.Fingerprint, "consent": true},
+		{"fingerprint": plan.Fingerprint, "prepareOnly": true},
+	} {
+		w := callAdmin(t, a, http.MethodPost, "/setup/download", classroomJSON(t, payload))
+		if w.Code < 400 {
+			t.Fatal("low-RAM run or unconsented preparation was accepted")
+		}
+	}
+	w := callAdmin(t, a, http.MethodPost, "/setup/download", classroomJSON(t, map[string]any{"fingerprint": plan.Fingerprint, "consent": true, "prepareOnly": true}))
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("explicit file preparation rejected: %d %s", w.Code, w.Body.String())
+	}
+	var queued setupOperation
+	if err := json.Unmarshal(w.Body.Bytes(), &queued); err != nil {
+		t.Fatal(err)
+	}
+	op := setupTestWait(t, a, queued.ID)
+	if op.State != "prepared" || !op.PreparationOnly || op.FunctionalVerified || op.QualityVerified || op.LiveSLAVerified || len(op.Checks) != 0 || op.Completed != 4 || e.starts != 0 {
+		t.Fatalf("file preparation started an engine or claimed verified service: %+v", op)
+	}
+	for _, id := range f.ids[:4] {
+		if source.count(id) != 1 || a.store.assets()[id].ID != id {
+			t.Fatalf("file preparation skipped installation: %s", id)
+		}
+	}
+	// A restart reads the distinct state; only a new explicit full operation
+	// after recovering capacity may run the actual functional validation.
+	a.setupStateMu.Lock()
+	a.setup = nil
+	a.setupStateMu.Unlock()
+	if restored := setupTestStatus(t, a); restored.State != "prepared" || restored.FunctionalVerified {
+		t.Fatal("prepared state was not retained honestly across controller recovery")
+	}
+	// This controlled registry remains a localhost fixture after recovery.
+	a.setupController().validate = func(Artifact) error { return nil }
+	a.diagMu.Lock()
+	a.diagnostic.AvailableRAMGB = 48
+	a.diagMu.Unlock()
+	next := setupTestPlan(t, a)
+	if !next.RuntimeCompatible || len(next.Missing) != 0 {
+		t.Fatal("prepared files were not reused when runtime capacity recovered")
+	}
+	op = setupTestWait(t, a, setupTestStart(t, a, next).ID)
+	if op.State != "verified" || op.PreparationOnly || !op.FunctionalVerified || e.starts != 1 {
+		t.Fatal("explicit subsequent validation failed to publish only actual interface readiness")
+	}
+}
+
+func TestSetupPreparationNeverBypassesPlatformMeasurementOrDiskChecks(t *testing.T) {
+	for _, condition := range []string{"unmeasured", "disk", "os", "arch"} {
+		t.Run(condition, func(t *testing.T) {
+			a, _, _ := newSetupTestApp(t, "prepare-"+condition)
+			switch condition {
+			case "unmeasured":
+				a.diagnostic.Measured = false
+			case "disk":
+				a.diagnostic.FreeDiskGB = 0
+			case "os":
+				a.diagnostic.OS = "darwin"
+			case "arch":
+				a.diagnostic.Arch = "arm64"
+			}
+			plan := setupTestPlan(t, a)
+			if plan.PreparationCompatible || plan.RuntimeCompatible {
+				t.Fatalf("unsafe preparation accepted: %+v", plan)
+			}
+			w := callAdmin(t, a, http.MethodPost, "/setup/download", classroomJSON(t, map[string]any{"fingerprint": plan.Fingerprint, "consent": true, "prepareOnly": true}))
+			if w.Code < 400 || setupTestStatus(t, a).ID != "" {
+				t.Fatal("preparation bypassed a platform/space guard")
+			}
+		})
+	}
+}
+
 // Opt-in UI harness: tiny real downloads and an explicit engine interface
 // fixture. It provides no evidence of Windows/model inference or latency.
 func TestSetupBrowserFixture(t *testing.T) {

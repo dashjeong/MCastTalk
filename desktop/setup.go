@@ -25,14 +25,18 @@ type setupPlan struct {
 	RequiredDiskBytes      int64                   `json:"requiredDiskBytes"`
 	RequiredRAMGB          int                     `json:"requiredRAMGB"`
 	Compatible             bool                    `json:"compatible"`
+	PreparationCompatible  bool                    `json:"preparationCompatible"`
+	RuntimeCompatible      bool                    `json:"runtimeCompatible"`
+	RuntimeIssues          []string                `json:"runtimeIssues"`
 	Warnings               []string                `json:"warnings"`
 	SystemDependencies     []setupSystemDependency `json:"systemDependencies"`
 	SpeechLanguages        SpeechLanguageStatus    `json:"speechLanguages"`
 }
 type setupSystemDependency struct {
-	Profile SystemDependency       `json:"profile"`
-	Status  SystemDependencyStatus `json:"status"`
-	Cached  bool                   `json:"cached"`
+	Profile         SystemDependency       `json:"profile"`
+	Status          SystemDependencyStatus `json:"status"`
+	Cached          bool                   `json:"cached"`
+	InstallerCached bool                   `json:"installerCached"`
 }
 type setupCheck struct {
 	Stage    string `json:"stage"`
@@ -54,6 +58,8 @@ type setupOperation struct {
 	StartedAt                     time.Time                `json:"startedAt"`
 	FinishedAt                    time.Time                `json:"finishedAt,omitempty"`
 	FunctionalVerified            bool                     `json:"functionalVerified"`
+	PreparationOnly               bool                     `json:"preparationOnly"`
+	StartupChecks                 []setupCheck             `json:"startupChecks"`
 	QualityVerified               bool                     `json:"qualityVerified"`
 	LiveSLAVerified               bool                     `json:"liveSLAVerified"`
 	DependencyProgress            DownloadProgress         `json:"dependencyProgress"`
@@ -173,7 +179,12 @@ func (a *App) makeSetupPlan(cfg Config) (setupPlan, error) {
 	a.diagMu.Lock()
 	d := a.diagnostic
 	a.diagMu.Unlock()
-	plan.Compatible = d.Measured && d.OS == "windows" && d.Arch == "amd64" && d.AvailableRAMGB >= float64(plan.RequiredRAMGB) && d.FreeDiskGB*float64(1<<30) >= float64(plan.RequiredDiskBytes)
+	plan.PreparationCompatible = d.Measured && d.OS == "windows" && d.Arch == "amd64" && d.FreeDiskGB*float64(1<<30) >= float64(plan.RequiredDiskBytes)
+	plan.Compatible = plan.PreparationCompatible && d.AvailableRAMGB >= float64(plan.RequiredRAMGB)
+	plan.RuntimeIssues = []string{}
+	if d.Measured && d.AvailableRAMGB < float64(plan.RequiredRAMGB) {
+		plan.RuntimeIssues = append(plan.RuntimeIssues, fmt.Sprintf("현재 여유 RAM %.1fGB, 선택한 구성의 기동 기준 %dGB입니다. 다른 앱을 닫거나 더 작은 음성 인식 모델을 선택하세요. 모델 파일은 지금 준비할 수 있습니다.", d.AvailableRAMGB, plan.RequiredRAMGB))
+	}
 	var systemProfiles []SystemDependency
 	if runtime.GOOS == "windows" && c.validate == nil {
 		plan.SpeechLanguages = bundledSpeechStatus(cfg, installed)
@@ -183,11 +194,12 @@ func (a *App) makeSetupPlan(cfg Config) (setupPlan, error) {
 			plan.Warnings = append(plan.Warnings, "별도 로컬 음성 모델을 준비할 언어: "+strings.Join(plan.SpeechLanguages.Missing, ", ")+". 해당 모델과 음성 런타임을 함께 내려받습니다. OS 음성팩 없이 실제 합성·통번역 구동을 검증합니다.")
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
 		states, checkErr := CheckSystemDependencies(ctx)
+		cancel()
 		if checkErr != nil {
 			plan.Compatible = false
 			plan.Warnings = append(plan.Warnings, "Windows 실행 기반 진단을 완료하지 못했습니다: "+checkErr.Error())
+			plan.RuntimeIssues = append(plan.RuntimeIssues, "Windows 실행 기반 확인이 아직 끝나지 않았습니다. 파일을 먼저 준비할 수 있으며, 실제 구동 검증 전에 실행 기반을 다시 확인합니다.")
 		}
 		for _, profile := range SystemDependencies() {
 			dep := setupSystemDependency{Profile: profile}
@@ -196,26 +208,41 @@ func (a *App) makeSetupPlan(cfg Config) (setupPlan, error) {
 					dep.Status = state
 				}
 			}
-			if !dep.Status.Supported || dep.Status.InstallationInProgress {
+			if checkErr != nil {
+				// Platform compatibility is known from the measured Windows
+				// diagnostic, but incomplete native checks never imply readiness.
+				dep.Status.ID = profile.ID
+				dep.Status.Supported = d.OS == "windows" && d.Arch == "amd64"
+				dep.Status.Ready = false
+				dep.Status.CheckComplete = false
+			}
+			if !dep.Status.Supported || !dep.Status.CheckComplete || dep.Status.InstallationInProgress {
 				plan.Compatible = false
 			}
+			path, pathErr := SystemDependencyInstallerPath(a.store.dir, profile.ID)
+			// A completed/expired native-check context must not make an
+			// already verified installer disappear from the file plan.
+			cacheCtx, cacheCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			dep.InstallerCached = pathErr == nil && portableLocalPath(path, false) == nil && verifyModel(cacheCtx, path, profile.SHA256, profile.Bytes, nil) == nil
+			cacheCancel()
+			dep.Cached = dep.InstallerCached
+			if !dep.InstallerCached {
+				plan.DownloadBytes += profile.Bytes
+				plan.RequiredDiskBytes += profile.Bytes * 2
+			}
 			if !dep.Status.Ready {
-				path, pathErr := SystemDependencyInstallerPath(a.store.dir, profile.ID)
-				dep.Cached = pathErr == nil && portableLocalPath(path, false) == nil && verifyModel(ctx, path, profile.SHA256, profile.Bytes, nil) == nil
-				if !dep.Cached {
-					plan.DownloadBytes += profile.Bytes
-					plan.RequiredDiskBytes += profile.Bytes * 2
-				}
 				plan.RequiredDiskBytes += 512 << 20
-				plan.Warnings = append(plan.Warnings, "Microsoft VC++ 실행 기반을 공식 파일로 설치합니다. Windows 관리자 승인(UAC)이 필요할 수 있으며, 재부팅 필요·거절·취소는 완료로 판정하지 않습니다.")
+				plan.Warnings = append(plan.Warnings, "파일 준비에서는 Microsoft VC++ 공식 설치 파일만 보관합니다. 실제 구동 검증 중 설치가 필요하면 Windows 관리자 승인(UAC)을 요청하며, 재부팅 필요·거절·취소는 완료로 판정하지 않습니다.")
 			}
 			systemProfiles = append(systemProfiles, profile)
 			plan.SystemDependencies = append(plan.SystemDependencies, dep)
 		}
 		if d.FreeDiskGB*float64(1<<30) < float64(plan.RequiredDiskBytes) {
 			plan.Compatible = false
+			plan.PreparationCompatible = false
 		}
 	}
+	plan.RuntimeCompatible = plan.Compatible
 	if !plan.Compatible {
 		plan.Warnings = append(plan.Warnings, fmt.Sprintf("Windows x64 실측 진단, 여유 RAM %dGB·디스크 %.2fGB를 확인하세요. 모델 선택을 바꾸거나 이미 구성한 환경을 가져올 수 있습니다.", plan.RequiredRAMGB, float64(plan.RequiredDiskBytes)/float64(1<<30)))
 	}
@@ -226,13 +253,24 @@ func (a *App) makeSetupPlan(cfg Config) (setupPlan, error) {
 	}{portableConfig{cfg.SourceLanguage, cfg.TargetLanguages, cfg.TranslationModel, cfg.STTModel, cfg.MaxListeners, cfg.Backend}, plan.Artifacts, systemProfiles})
 	envHash := sha256.Sum256(environmentData)
 	plan.EnvironmentFingerprint = hex.EncodeToString(envHash[:])
+	// Consent describes the immutable files/terms and which files are cached.
+	// Native readiness can change during a cold check without changing that
+	// file plan; it is checked separately before a full runtime operation.
+	type dependencyConsent struct {
+		Profile         SystemDependency `json:"profile"`
+		InstallerCached bool             `json:"installerCached"`
+	}
+	consentDependencies := []dependencyConsent{}
+	for _, dependency := range plan.SystemDependencies {
+		consentDependencies = append(consentDependencies, dependencyConsent{dependency.Profile, dependency.InstallerCached})
+	}
 	fingerprintData, _ := json.Marshal(struct {
 		Config  portableConfig
 		Assets  []Artifact
 		Missing []Artifact
-		System  []setupSystemDependency
+		System  []dependencyConsent
 		Speech  SpeechLanguageStatus
-	}{portableConfig{cfg.SourceLanguage, cfg.TargetLanguages, cfg.TranslationModel, cfg.STTModel, cfg.MaxListeners, cfg.Backend}, plan.Artifacts, plan.Missing, plan.SystemDependencies, plan.SpeechLanguages})
+	}{portableConfig{cfg.SourceLanguage, cfg.TargetLanguages, cfg.TranslationModel, cfg.STTModel, cfg.MaxListeners, cfg.Backend}, plan.Artifacts, plan.Missing, consentDependencies, plan.SpeechLanguages})
 	h := sha256.Sum256(fingerprintData)
 	plan.Fingerprint = hex.EncodeToString(h[:])
 	return plan, nil
@@ -282,6 +320,9 @@ func (a *App) verifySetup(ctx context.Context, cfg Config, c *setupController) e
 	startCtx, cancel := context.WithTimeout(ctx, 180*time.Second)
 	err := a.pipeline.engine.Start(startCtx, cfg, a.store.assets())
 	cancel()
+	c.mu.Lock()
+	c.operation.StartupChecks = append([]setupCheck(nil), a.pipeline.engine.Ready().StartupChecks...)
+	c.mu.Unlock()
 	record("엔진 기동·모델 로드", cfg.Backend, start, err)
 	if err != nil {
 		return err
@@ -390,13 +431,14 @@ func (a *App) setupAPI(w http.ResponseWriter, r *http.Request, path string) bool
 		c.mu.Lock()
 		op := c.operation
 		op.Checks = append([]setupCheck(nil), op.Checks...)
+		op.StartupChecks = append([]setupCheck(nil), op.StartupChecks...)
 		op.DependencyResults = append([]SystemDependencyResult(nil), op.DependencyResults...)
 		c.mu.Unlock()
 		progress := a.assets.Progress()
 		if op.DependencyProgress.ID != "" {
 			progress = append(progress, op.DependencyProgress)
 		}
-		jsonReply(w, 200, map[string]any{"operation": op, "progress": progress})
+		jsonReply(w, 200, map[string]any{"operation": op, "progress": progress, "engine": a.pipeline.engine.Ready()})
 		return true
 	}
 	if r.Method == "POST" && path == "/setup/cancel" {
@@ -417,6 +459,7 @@ func (a *App) setupAPI(w http.ResponseWriter, r *http.Request, path string) bool
 	var in struct {
 		Fingerprint string `json:"fingerprint"`
 		Consent     bool   `json:"consent"`
+		PrepareOnly bool   `json:"prepareOnly"`
 	}
 	if e := readJSON(w, r, &in); e != nil {
 		apiError(w, e)
@@ -440,7 +483,7 @@ func (a *App) setupAPI(w http.ResponseWriter, r *http.Request, path string) bool
 		apiError(w, errors.New("모델 구성 또는 설치 상태가 바뀌었습니다. 구성을 다시 확인하세요"))
 		return true
 	}
-	if !plan.Compatible {
+	if !plan.Compatible && !(in.PrepareOnly && plan.PreparationCompatible) {
 		apiError(w, errors.New("대상 PC의 진단·RAM·디스크 조건을 먼저 확인하세요"))
 		return true
 	}
@@ -457,7 +500,7 @@ func (a *App) setupAPI(w http.ResponseWriter, r *http.Request, path string) bool
 	}
 	cfg = a.config()
 	plan, e = a.makeSetupPlan(cfg)
-	if e != nil || plan.Fingerprint != in.Fingerprint || !plan.Compatible {
+	if e != nil || plan.Fingerprint != in.Fingerprint || (!plan.Compatible && !(in.PrepareOnly && plan.PreparationCompatible)) {
 		a.envMu.Unlock()
 		c.mu.Unlock()
 		apiError(w, errors.New("PC 조건 또는 구성이 바뀌었습니다. 진단·구성을 다시 확인하세요"))
@@ -478,9 +521,9 @@ func (a *App) setupAPI(w http.ResponseWriter, r *http.Request, path string) bool
 	}
 	ctx, cancel := context.WithCancel(a.pipeline.ctx)
 	c.cancel = cancel
-	c.operation = setupOperation{ID: newID(), State: "running", Phase: "파일 구성", ArtifactIDs: []string{}, StartedAt: time.Now().UTC(), EnvironmentFingerprint: plan.EnvironmentFingerprint}
+	c.operation = setupOperation{ID: newID(), State: "running", Phase: "파일 구성", ArtifactIDs: []string{}, StartedAt: time.Now().UTC(), EnvironmentFingerprint: plan.EnvironmentFingerprint, PreparationOnly: in.PrepareOnly}
 	for _, dep := range plan.SystemDependencies {
-		if !dep.Status.Ready {
+		if !dep.InstallerCached || (!in.PrepareOnly && !dep.Status.Ready) {
 			c.operation.ArtifactIDs = append(c.operation.ArtifactIDs, dep.Profile.ID)
 		}
 	}
@@ -504,18 +547,34 @@ func (a *App) setupAPI(w http.ResponseWriter, r *http.Request, path string) bool
 		defer cancel()
 		var err error
 		for _, dep := range plan.SystemDependencies {
-			if dep.Status.Ready {
+			if dep.InstallerCached && (in.PrepareOnly || dep.Status.Ready) {
 				continue
 			}
 			c.mu.Lock()
 			c.operation.Phase = "Microsoft 실행 기반 다운로드·설치"
+			if in.PrepareOnly || !dep.InstallerCached {
+				c.operation.Phase = "Microsoft 공식 설치 파일 준비 (설치하지 않음)"
+			}
 			c.operation.CurrentID = dep.Profile.ID
 			c.mu.Unlock()
-			result, depErr := PrepareSystemDependency(ctx, a.store.dir, dep.Profile.ID, func(p DownloadProgress) {
+			progress := func(p DownloadProgress) {
 				c.mu.Lock()
 				c.operation.DependencyProgress = p
 				c.mu.Unlock()
-			})
+			}
+			var result SystemDependencyResult
+			var depErr error
+			if in.PrepareOnly || !dep.InstallerCached {
+				result, depErr = PrepareSystemDependencyFiles(ctx, a.store.dir, dep.Profile.ID, dep.Status, progress)
+			} else {
+				result, depErr = PrepareSystemDependency(ctx, a.store.dir, dep.Profile.ID, progress)
+			}
+			if depErr == nil && !in.PrepareOnly && !dep.Status.Ready && !dep.InstallerCached {
+				c.mu.Lock()
+				c.operation.Phase = "Microsoft 실행 기반 확인·설치"
+				c.mu.Unlock()
+				result, depErr = PrepareSystemDependency(ctx, a.store.dir, dep.Profile.ID, progress)
+			}
 			c.mu.Lock()
 			c.operation.DependencyResults = append(c.operation.DependencyResults, result)
 			c.operation.RestartRequired = c.operation.RestartRequired || result.RestartRequired
@@ -549,7 +608,7 @@ func (a *App) setupAPI(w http.ResponseWriter, r *http.Request, path string) bool
 			c.operation.Completed++
 			c.mu.Unlock()
 		}
-		if err == nil {
+		if err == nil && !in.PrepareOnly {
 			c.mu.Lock()
 			c.operation.Phase = "실제 구동 검증"
 			c.operation.CurrentID = ""
@@ -577,8 +636,12 @@ func (a *App) finishSetup(ctx context.Context, c *setupController, err error) {
 	c.operation.State = "verified"
 	if err == nil {
 		c.operation.Phase = "파일 구성·기동·기능 연결 확인"
+		if c.operation.PreparationOnly {
+			c.operation.State = "prepared"
+			c.operation.Phase = "파일 준비 완료 · PC 조건을 확인한 뒤 실제 구동 검증을 시작하세요"
+		}
 	}
-	c.operation.FunctionalVerified = err == nil
+	c.operation.FunctionalVerified = err == nil && !c.operation.PreparationOnly
 	c.operation.FinishedAt = time.Now().UTC()
 	if err != nil {
 		c.operation.Error = err.Error()

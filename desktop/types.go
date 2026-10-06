@@ -2,7 +2,7 @@ package main
 
 import "time"
 
-const Version = "0.2.48-desktop"
+const Version = "0.2.49-desktop"
 
 type Config struct {
 	PublicBind       string       `json:"publicBind"`
@@ -29,7 +29,7 @@ type OnlineConfig struct {
 }
 
 func defaultConfig() Config {
-	return Config{PublicBind: "127.0.0.1:8787", MaxListeners: 512, Access: "qr", SourceLanguage: "ko", TargetLanguages: []string{"ko", "en", "ja", "zh", "es"}, TranslationModel: "qwen3-4b-q4", STTModel: "whisper-turbo", Backend: "cpu", AutoResume: true}
+	return Config{PublicBind: "127.0.0.1:8787", MaxListeners: 512, Access: "qr", SourceLanguage: "ko", TargetLanguages: []string{"ko", "en", "ja", "zh", "es"}, TranslationModel: "qwen3-4b-q4", STTModel: "whisper-small-q5", Backend: "cpu", AutoResume: true}
 }
 
 type Artifact struct {
@@ -87,11 +87,15 @@ type Diagnostic struct {
 	CheckedAt        time.Time             `json:"checkedAt"`
 }
 type EngineStatus struct {
-	TranslationReady bool   `json:"translationReady"`
-	STTReady         bool   `json:"sttReady"`
-	TTSReady         bool   `json:"ttsReady"`
-	Backend          string `json:"backend"`
-	Error            string `json:"error"`
+	TranslationReady bool         `json:"translationReady"`
+	STTReady         bool         `json:"sttReady"`
+	TTSReady         bool         `json:"ttsReady"`
+	Backend          string       `json:"backend"`
+	Error            string       `json:"error"`
+	StartupStage     string       `json:"startupStage,omitempty"`
+	StartupStartedAt time.Time    `json:"startupStartedAt,omitempty"`
+	StartupMillis    int64        `json:"startupMillis,omitempty"`
+	StartupChecks    []setupCheck `json:"startupChecks,omitempty"`
 }
 type GlossaryTerm struct {
 	Source   string `json:"source"`

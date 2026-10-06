@@ -119,6 +119,77 @@ func TestSystemDependencyPinnedDescriptorAndVersion(t *testing.T) {
 	}
 }
 
+func TestSystemDependencyFilePreparationDoesNotCheckOrInstallNativeRuntime(t *testing.T) {
+	for _, mode := range []string{"unknown", "missing", "in-progress", "already-ready"} {
+		t.Run(mode, func(t *testing.T) {
+			dep, payload := systemDependencyTestFixture()
+			status := SystemDependencyStatus{ID: dep.ID, Supported: true, DLLVersions: map[string]string{}, MissingDLLs: []string{}}
+			switch mode {
+			case "missing":
+				status.CheckComplete = true
+				status.MissingDLLs = append(status.MissingDLLs, dep.RequiredDLLs...)
+			case "in-progress":
+				status.InstallationInProgress = true
+			case "already-ready":
+				status.CheckComplete, status.Ready = true, true
+			}
+			dir := systemDependencyTestDir(t)
+			calls := 0
+			var progress []DownloadProgress
+			result, err := prepareSystemDependencyFiles(context.Background(), dir, dep, status, func(p DownloadProgress) { progress = append(progress, p) }, systemDependencyTestClient(payload, &calls))
+			if err != nil || calls != 1 || result.InstallerPath == "" || result.ExitCode != -1 || result.SignatureVerified || result.RestartRequired || result.InstallationMayContinue || !reflect.DeepEqual(result.Status, status) {
+				t.Fatalf("file preparation installed/check-masked/changed runtime state: %+v %v", result, err)
+			}
+			if err := verifyModel(context.Background(), result.InstallerPath, dep.SHA256, dep.Bytes, nil); err != nil {
+				t.Fatal("prepared installer did not retain exact payload identity")
+			}
+			if len(progress) < 2 || progress[len(progress)-1].State != "done" || progress[len(progress)-1].Received != dep.Bytes {
+				t.Fatal("file progress did not report verified cache completion")
+			}
+			// Reusing the cache requires no network and still cannot claim that
+			// the installer was executed or an unknown DLL check completed.
+			again, err := prepareSystemDependencyFiles(context.Background(), dir, dep, status, nil, systemDependencyTestClient(payload, &calls))
+			if err != nil || calls != 1 || again.InstallerPath != result.InstallerPath || again.SignatureVerified || !reflect.DeepEqual(again.Status, status) {
+				t.Fatal("cache retry fetched again or invented native readiness")
+			}
+		})
+	}
+}
+
+func TestSystemDependencyFilePreparationCancellationAndHashFailureStayUnprepared(t *testing.T) {
+	for _, mode := range []string{"cancelled", "bad-hash"} {
+		t.Run(mode, func(t *testing.T) {
+			dep, payload := systemDependencyTestFixture()
+			status := SystemDependencyStatus{ID: dep.ID, Supported: true}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			wantCalls := 1
+			if mode == "cancelled" {
+				cancel()
+				wantCalls = 0
+			} else {
+				payload = bytes.Repeat([]byte{'x'}, len(payload))
+			}
+			calls := 0
+			var progress []DownloadProgress
+			result, err := prepareSystemDependencyFiles(ctx, systemDependencyTestDir(t), dep, status, func(p DownloadProgress) { progress = append(progress, p) }, systemDependencyTestClient(payload, &calls))
+			if err == nil || calls != wantCalls || result.InstallerPath != "" || result.SignatureVerified || result.Status.Ready || result.Status.CheckComplete || result.ExitCode != -1 {
+				t.Fatal("cancelled/corrupt file preparation claimed success or native readiness")
+			}
+			state := "failed"
+			if mode == "cancelled" {
+				state = "cancelled"
+				if !errors.Is(err, context.Canceled) {
+					t.Fatal("file preparation lost cancellation")
+				}
+			}
+			if len(progress) == 0 || progress[len(progress)-1].State != state || progress[len(progress)-1].Error == "" {
+				t.Fatal("file preparation failure was not exposed")
+			}
+		})
+	}
+}
+
 func TestSystemDependencyCacheVerifiedReuseAndRepair(t *testing.T) {
 	d, b := systemDependencyTestFixture()
 	dir := systemDependencyTestDir(t)

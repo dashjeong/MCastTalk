@@ -151,10 +151,14 @@ func (e *Engine) finishStartup(ctx context.Context, cfg Config, startErrs []stri
 		startErrs = append(startErrs, "모델 준비 시험을 완료하지 못했습니다")
 	}
 	message := strings.Join(startErrs, "; ")
+	e.readyMu.RLock()
+	checks := append([]setupCheck(nil), e.ready.StartupChecks...)
+	e.readyMu.RUnlock()
 	e.stopUnlocked()
 	e.readyMu.Lock()
 	e.ready.Error = message
 	e.ready.Backend = cfg.Backend
+	e.ready.StartupChecks = checks
 	e.readyMu.Unlock()
 	return errors.New(message)
 }
@@ -165,7 +169,9 @@ func (e *Engine) startLlama(ctx, engineCtx context.Context, cfg Config, assets m
 		return errors.New("translation model not installed")
 	}
 
-	if err := verifyModel(ctx, asset.Path, asset.SHA256, asset.Bytes, []byte{0x47, 0x47, 0x55, 0x46}); err != nil {
+	if err := e.startupStep("번역 모델 해시 확인", "", func() error {
+		return verifyModel(ctx, asset.Path, asset.SHA256, asset.Bytes, []byte{0x47, 0x47, 0x55, 0x46})
+	}); err != nil {
 		return fmt.Errorf("model verification failed: %v", err)
 	}
 
@@ -281,7 +287,9 @@ func (e *Engine) startLlama(ctx, engineCtx context.Context, cfg Config, assets m
 		e.readyMu.Unlock()
 	}()
 
-	if err := waitForProcessHealth(ctx, url+"/health", key, done); err != nil {
+	if err := e.startupStep("번역 모델 로드", "", func() error {
+		return waitForProcessHealth(ctx, url+"/health", key, done)
+	}); err != nil {
 		return fmt.Errorf("llama-server 준비 확인 실패: %w", err)
 	}
 	select {
@@ -293,7 +301,9 @@ func (e *Engine) startLlama(ctx, engineCtx context.Context, cfg Config, assets m
 	e.readyMu.RLock()
 	prompt := e.profile.Prompt
 	e.readyMu.RUnlock()
-	return e.warmLlama(ctx, url, key, cfg.TranslationModel, prompt, generation, done)
+	return e.startupStep("번역 모델 첫 추론", "", func() error {
+		return e.warmLlama(ctx, url, key, cfg.TranslationModel, prompt, generation, done)
+	})
 }
 
 // This uses the same local request protocol as TranslatePrivate without
@@ -329,7 +339,9 @@ func (e *Engine) startWhisper(ctx, engineCtx context.Context, cfg Config, assets
 		return errors.New("STT model not installed")
 	}
 
-	if err := verifyModel(ctx, asset.Path, asset.SHA256, asset.Bytes, []byte{'l', 'm', 'g', 'g'}); err != nil {
+	if err := e.startupStep("음성 인식 모델 해시 확인", "", func() error {
+		return verifyModel(ctx, asset.Path, asset.SHA256, asset.Bytes, []byte{'l', 'm', 'g', 'g'})
+	}); err != nil {
 		return fmt.Errorf("model verification failed: %v", err)
 	}
 
@@ -400,13 +412,21 @@ func (e *Engine) startWhisper(ctx, engineCtx context.Context, cfg Config, assets
 		e.readyMu.Unlock()
 	}()
 
-	if err := waitForProcessHealth(ctx, url+"/health", "", done); err != nil {
+	if err := e.startupStep("음성 인식 모델 로드", "", func() error {
+		return waitForProcessHealth(ctx, url+"/health", "", done)
+	}); err != nil {
 		return fmt.Errorf("whisper-server 준비 확인 실패: %w", err)
 	}
 
 	// Warmup
 	wavData := makeSilenceWAV()
-	if _, err := transcribeRequest(ctx, url, wavData, "en"); err != nil && err.Error() != "empty transcription" {
+	if err := e.startupStep("음성 인식 모델 첫 추론", "", func() error {
+		_, err := transcribeRequest(ctx, url, wavData, "en")
+		if err != nil && err.Error() == "empty transcription" {
+			return nil
+		}
+		return err
+	}); err != nil {
 		return fmt.Errorf("음성 인식 준비 시험 실패: %w", err)
 	}
 	e.readyMu.Lock()
@@ -636,7 +656,12 @@ func (e *Engine) Stop() {
 func (e *Engine) Ready() EngineStatus {
 	e.readyMu.RLock()
 	defer e.readyMu.RUnlock()
-	return e.ready
+	status := e.ready
+	status.StartupChecks = append([]setupCheck(nil), status.StartupChecks...)
+	if status.StartupStage != "" && !status.StartupStartedAt.IsZero() {
+		status.StartupMillis = time.Since(status.StartupStartedAt).Milliseconds()
+	}
+	return status
 }
 
 func (e *Engine) Translate(ctx context.Context, text, source, target, contextText string, glossary []GlossaryTerm) (string, error) {
@@ -910,38 +935,49 @@ func (e *Engine) SynthesizePrivate(ctx context.Context, text, language string) (
 func (e *Engine) startBundledTTS(ctx context.Context, cfg Config, assets map[string]InstalledAsset) error {
 	init := nativeTTSInit{DataDir: e.dataDir, Threads: 2}
 	languages := append([]string{cfg.SourceLanguage}, cfg.TargetLanguages...)
-	for _, id := range bundledTTSAssetIDs(languages) {
-		asset, ok := assets[id]
-		folder := "models"
-		if id == "runtime-sherpa-tts" {
-			folder = "runtimes"
-		}
-		if !ok || !engineManagedPath(e.dataDir, folder, asset.Path) {
-			return fmt.Errorf("관리 경로의 음성 패키지가 필요합니다: %s", id)
-		}
-		var profile Artifact
-		for _, p := range Catalog() {
-			if p.ID == id {
-				profile = p
-				break
+	err := e.startupStep("음성 모델·런타임 해시 확인", "", func() error {
+		for _, id := range bundledTTSAssetIDs(languages) {
+			asset, ok := assets[id]
+			folder := "models"
+			if id == "runtime-sherpa-tts" {
+				folder = "runtimes"
+			}
+			if !ok || !engineManagedPath(e.dataDir, folder, asset.Path) {
+				return fmt.Errorf("관리 경로의 음성 패키지가 필요합니다: %s", id)
+			}
+			var profile Artifact
+			for _, p := range Catalog() {
+				if p.ID == id {
+					profile = p
+					break
+				}
+			}
+			if profile.ID == "" || profile.SHA256 != asset.SHA256 || profile.Bytes != asset.Bytes || verifyPinnedArtifactBundle(ctx, asset.Path, profile) != nil {
+				return errors.New("로컬 음성 패키지 검증 실패")
+			}
+			switch id {
+			case "runtime-sherpa-tts":
+				init.RuntimeDir = asset.Path
+			case "tts-supertonic3":
+				init.SupertonicDir = asset.Path
+			case "tts-kokoro-zh":
+				init.KokoroDir = asset.Path
 			}
 		}
-		if profile.ID == "" || profile.SHA256 != asset.SHA256 || profile.Bytes != asset.Bytes || verifyPinnedArtifactBundle(ctx, asset.Path, profile) != nil {
-			return errors.New("로컬 음성 패키지 검증 실패")
-		}
-		switch id {
-		case "runtime-sherpa-tts":
-			init.RuntimeDir = asset.Path
-		case "tts-supertonic3":
-			init.SupertonicDir = asset.Path
-		case "tts-kokoro-zh":
-			init.KokoroDir = asset.Path
-		}
+		return nil
+	})
+	if err != nil {
+		return err
 	}
 	if init.RuntimeDir == "" {
 		return errors.New("선택한 언어에 사용할 로컬 음성 모델이 없습니다")
 	}
-	worker, err := startTTSWorker(ctx, init)
+	var worker *ttsWorker
+	err = e.startupStep("언어별 음성 모델 로드", "", func() error {
+		var err error
+		worker, err = startTTSWorker(ctx, init)
+		return err
+	})
 	if err != nil {
 		return err
 	}
@@ -953,7 +989,10 @@ func (e *Engine) startBundledTTS(ctx context.Context, cfg Config, assets map[str
 		}
 		warmed[language] = true
 		warmCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		_, err = worker.Synthesize(warmCtx, setupSample(language), language)
+		err = e.startupStep("언어별 음성 첫 합성", language, func() error {
+			_, err := worker.Synthesize(warmCtx, setupSample(language), language)
+			return err
+		})
 		cancel()
 		if err != nil {
 			worker.Close()

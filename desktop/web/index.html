@@ -9,20 +9,29 @@
 <body>
     <div id="admin-app">
         <aside class="sidebar" aria-label="관리 메뉴">
-            <h1 class="brand">MCastTalk PC</h1>
+            <h1 class="brand">MCastTalk <span>Desktop</span></h1>
+            <button class="sidebar-create" data-open-panel="rooms" type="button">＋ 강의실 · 대화 시작</button>
+            <p class="nav-label">소통</p>
             <ul class="nav-menu">
-                <li data-target="dashboard" class="active" tabindex="0" role="button">홈</li>
+                <li data-target="dashboard" class="active" tabindex="0" role="button" aria-current="page">홈 · 환경 준비</li>
+                <li data-target="rooms" tabindex="0" role="button">강의실 · 개인대화</li>
                 <li data-target="notes" tabindex="0" role="button">방송 · 음성노트</li>
                 <li data-target="files" tabindex="0" role="button">파일 전사</li>
                 <li data-target="history" tabindex="0" role="button">이력 · 내보내기</li>
+            </ul>
+            <p class="nav-label">대화 자료</p>
+            <ul class="nav-menu">
                 <li data-target="glossary" tabindex="0" role="button">용어집</li>
                 <li data-target="scripts" tabindex="0" role="button">대본</li>
                 <li data-target="lessons" tabindex="0" role="button">교정 · 검토</li>
-                <li data-target="rooms" tabindex="0" role="button">강의실 · 개인대화</li>
+            </ul>
+            <p class="nav-label">환경 관리</p>
+            <ul class="nav-menu">
                 <li data-target="models" tabindex="0" role="button">모델 · PC 진단</li>
                 <li data-target="settings" tabindex="0" role="button">설정</li>
                 <li data-target="portable" tabindex="0" role="button">오프라인 환경 옮기기</li>
             </ul>
+            <p class="sidebar-footnote">내 PC에서 연결되는 대화<br>개인 채널은 당사자에게만 전달</p>
         </aside>
 
         <main class="main-content">
@@ -35,26 +44,40 @@
             </header><p id="connection-status" role="status" aria-live="polite"></p><p id="operation-status" role="alert"></p>
 
             <div id="panel-dashboard" class="panel active">
-                <h2>PC 통역 관리</h2><p class="card-meta">0.2.48-desktop · 실제 모델의 품질·7초 지연·대형 강의 성능은 대상 PC에서 따로 확인하세요.</p><div class="quick-actions"><button data-open-panel="notes">방송·노트 시작</button><button data-open-panel="files">파일 전사</button><button data-open-panel="history">저장 자료</button><button data-open-panel="rooms">강의실·개인대화</button><button data-open-panel="models">모델·진단</button></div>
-                <p>로컬 통역과 강의실을 관리합니다. 개인대화는 지정된 두 당사자에게만 전달합니다.</p>
-                <div id="diagnostic-summary">PC 상태 확인 중</div>
-                <section id="setup-card" class="card" aria-labelledby="setup-title">
-                    <h3 id="setup-title">첫 실행 · 환경 일괄 구성</h3>
-                    <p>선택한 번역·음성인식 모델, 실행 엔진, CPU 대체 엔진을 함께 준비합니다. 파일을 받은 뒤 로컬 엔진 기동 → 언어별 WAV 음성인식 → 양방향 번역·음성합성을 자동 확인합니다.</p>
+                <div class="page-heading"><div><p class="eyebrow">나의 통역 공간</p><h2>각자의 언어로, 함께 대화하세요.</h2><p>PC가 통역을 맡고, 강사와 학생은 익숙한 기기로 참여합니다.</p></div><span class="release-label">0.2.49-desktop · 미리보기</span></div>
+                <section id="setup-card" class="card setup-card" aria-labelledby="setup-title" data-state="checking">
+                    <div class="setup-heading"><div><p class="eyebrow">처음 한 번 준비</p><h3 id="setup-title">이 PC의 통역 환경을 준비하세요</h3></div><span id="setup-state-badge" class="status-badge">PC 확인 중</span></div>
+                    <p class="setup-intro">필요한 모델과 실행 엔진을 함께 받습니다. 저장된 파일은 재사용하고, 실제 통역이 되는지 차례로 확인합니다.</p>
+                    <ol id="setup-steps" class="setup-steps" aria-label="통역 환경 준비 단계">
+                        <li data-step="diagnosis" class="current" aria-current="step"><span class="step-number">1</span><span>PC 확인<small>모델과 필요한 공간</small></span></li>
+                        <li data-step="download"><span class="step-number">2</span><span>파일 준비<small>다운로드 · 설치</small></span></li>
+                        <li data-step="engine"><span class="step-number">3</span><span>실제 구동<small>모델 로드</small></span></li>
+                        <li data-step="verification"><span class="step-number">4</span><span>통역 확인<small>음성 · 번역 연결</small></span></li>
+                    </ol>
+                    <div id="setup-metrics" class="setup-metrics" aria-label="준비에 필요한 PC 자원"></div>
                     <p id="setup-summary" role="status" aria-live="polite">PC 진단·구성을 확인하고 있습니다.</p>
-                    <ul id="setup-assets"></ul>
-                    <p id="setup-warnings"></p>
-                    <label><input id="setup-consent" type="checkbox" style="width:auto"> 표시된 용량과 모델·엔진·Microsoft 실행 구성요소 이용조건을 확인했고 다운로드·설치·구동 시험에 동의합니다.</label>
+                    <p id="setup-model-note" class="card-meta" hidden></p>
+                    <button id="setup-cpu-model" class="secondary" type="button" hidden>CPU 시작용 음성인식 모델 선택</button>
+                    <p id="setup-warnings" class="setup-warning"></p>
+                    <details class="setup-details"><summary>받을 파일과 이용조건 확인</summary><ul id="setup-assets"></ul></details>
+                    <label class="setup-consent"><input id="setup-consent" type="checkbox"> 표시된 용량과 모델·엔진·Microsoft 구성요소 이용조건을 확인했고 다운로드·설치에 동의합니다. 가능한 경우 실제 구동도 확인합니다.</label>
                     <div class="card-actions">
-                        <button id="setup-start" type="button" disabled>필요 환경 받기·구성·구동 검증</button>
-                        <button id="setup-cancel" type="button" disabled>구성 작업 취소</button>
-                        <button id="setup-refresh" type="button">PC 진단·구성 새로고침</button>
-                        <button id="setup-offline" type="button">오프라인 환경 가져오기</button>
+                        <button id="setup-start" type="button" disabled>환경 준비 시작</button>
+                        <button id="setup-cancel" class="secondary" type="button" disabled>준비 중단</button>
+                        <button id="setup-refresh" class="secondary" type="button">PC 다시 확인</button>
                     </div>
+                    <p id="setup-action-hint" class="setup-action-hint">PC 확인이 끝나면 준비 방법을 안내합니다.</p>
+                    <div id="setup-progress-wrap" hidden><label id="setup-progress-label" for="setup-progress">파일 준비</label><progress id="setup-progress" max="100" value="0"></progress><span id="setup-progress-value"></span></div>
+                    <p id="setup-engine-progress" class="setup-action-hint" role="status" aria-live="polite" hidden></p>
                     <p id="setup-status" role="status" aria-live="polite"></p>
-                    <ul id="setup-checks"></ul>
-                    <p>선택한 로컬 음성 모델과 GPU/NPU 드라이버의 준비 상태를 확인합니다. 다운로드 완료, 기능 연결 확인, 정확도·실시간 지연·대형 강의 검증은 각각 표시합니다.</p>
+                    <div id="setup-staged-actions" class="card-actions" hidden><button id="setup-export" class="secondary" data-open-panel="portable" type="button">준비한 환경 내보내기</button><button id="setup-recheck" class="secondary" type="button">PC 실행 조건 다시 확인</button></div>
+                    <div id="setup-ready-actions" class="card-actions" hidden><button data-open-panel="rooms" type="button">강의실 시작</button><button data-open-panel="notes" type="button">음성노트 시작</button></div>
+                    <details class="setup-details"><summary>구동 시험 결과 보기</summary><ul id="setup-checks"></ul><p class="card-meta">기능 연결 확인 후에도 번역 정확도·7초 지연·대형 강의 수용량은 대상 PC에서 별도로 시험해야 합니다.</p></details>
+                    <div class="setup-alternatives"><button id="setup-models" class="text-button" data-open-panel="models" type="button">다른 모델 선택</button><button id="setup-offline" class="text-button" type="button">이미 받은 오프라인 환경 가져오기</button></div>
                 </section>
+                <h3 class="home-section-title">오늘 무엇을 할까요?</h3>
+                <div class="home-actions"><button data-open-panel="rooms" type="button"><strong>강의실 · 대화</strong><span>강사와 학생을 QR로 초대</span></button><button data-open-panel="notes" type="button"><strong>방송 · 음성노트</strong><span>목소리와 번역을 함께 기록</span></button><button data-open-panel="files" type="button"><strong>파일 전사</strong><span>저장한 음성 파일을 문장으로</span></button></div>
+                <details class="home-diagnostics"><summary>이 PC의 진단 요약</summary><div id="diagnostic-summary">PC 상태 확인 중</div></details>
             </div>
 
             <div id="panel-notes" class="panel hidden">
@@ -185,7 +208,8 @@
             <div id="panel-rooms" class="panel hidden">
                 <h2>강의실 · 개인대화</h2>
                 <p>30명 이상·5개 언어 이상으로 시험을 시작하고 100명 → 300명 이상으로 확장합니다. 등록 정원은 설정값이며 실제 통역 처리 성능을 보증하지 않습니다. 강사·학생은 서로 다른 초대 주소에서 참여하며, 개인대화는 지정된 당사자에게만 전달됩니다.</p>
-                <button id="btn-show-create">강의실 만들기</button>
+                <div class="rooms-toolbar"><label for="rooms-search" class="visually-hidden">강의실 검색</label><input id="rooms-search" type="search" placeholder="강의실 이름으로 검색" autocomplete="off"><button id="btn-show-create">＋ 강의실 만들기</button></div>
+                <p id="rooms-count" class="card-meta" role="status" aria-live="polite"></p>
                 <div id="rooms-list" class="card-grid"></div>
             </div>
 
