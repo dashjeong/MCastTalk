@@ -65,7 +65,8 @@ internal fun applyVoiceNoteFindings(note: VoiceNote, findings: List<VoiceNoteFin
         var text = current.original
         changes.asReversed().forEach { text = text.replaceRange(it.start, it.end, it.after) }
         require(text.isNotBlank() && text.length <= 65_536)
-        val result = current.archiveTranslation(note.targetLanguage).corrected(text, current.translation, false)
+        require(text.none { it == '\u0000' || it.code < 32 && it !in "\n\r\t" })
+        val result = current.archiveTranslation(note.targetLanguage).copy(original = text, translation = "", edited = true)
         result.copy(translation = result.translations[note.targetLanguage]
             ?.takeIf { result.translationIsCurrent(note.targetLanguage) }?.text.orEmpty())
     }

@@ -60,6 +60,12 @@ class VoiceNoteProcessingTest {
         assertEquals("됬다. 됐다.", applyVoiceNoteFindings(initial, candidates).lines[0].original)
     }
 
+    @Test fun selectedCorrectionPreservesWhitespaceOutsideItsRange() {
+        val initial = note("  됬다.\n")
+        val candidates = voiceNoteFindings(0, initial.lines[0].original, "  됐다.\n")
+        assertEquals("  됐다.\n", applyVoiceNoteFindings(initial, candidates).lines[0].original)
+    }
+
     @Test fun undoRestoresWorkingTextAndItsTranslationWhileKeepingNewLanguageResults() {
         val initial = note("Raw")
         val corrected = initial.copy(lines = initial.lines.map { line -> line.archiveTranslation("en-US")
