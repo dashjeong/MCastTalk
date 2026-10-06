@@ -150,6 +150,9 @@ func (t *ttsImpl) Generate(text, language string) ([]float32, int, error) {
 }
 
 func newNativeTTSSynthesizer(init nativeTTSInit) (nativeTTSSynthesizer, error) {
+	if err := reportNativeTTSPhase(init, ttsPhaseDLLLoad); err != nil {
+		return nil, err
+	}
 	var dllPath string
 	err := filepath.WalkDir(init.RuntimeDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -189,6 +192,10 @@ func newNativeTTSSynthesizer(init nativeTTSInit) (nativeTTSSynthesizer, error) {
 
 	cleanup := func() {
 		windows.FreeLibrary(lib)
+	}
+	if err := reportNativeTTSPhase(init, ttsPhaseDLLVersion); err != nil {
+		cleanup()
+		return nil, err
 	}
 
 	pSherpaOnnxVersion, err := windows.GetProcAddress(lib, "SherpaOnnxGetVersionStr")
@@ -287,6 +294,12 @@ func newNativeTTSSynthesizer(init nativeTTSInit) (nativeTTSSynthesizer, error) {
 		pDestroyAudio: pDestroyAudio,
 	}
 
+	if init.SupertonicDir != "" {
+		if err := reportNativeTTSPhase(init, ttsPhaseSuperLoad); err != nil {
+			impl.Close()
+			return nil, err
+		}
+	}
 	baseSup, err := findBase(init.SupertonicDir, "tts.json")
 	if err != nil {
 		impl.Close()
@@ -321,6 +334,12 @@ func newNativeTTSSynthesizer(init nativeTTSInit) (nativeTTSSynthesizer, error) {
 		}
 	}
 
+	if init.KokoroDir != "" {
+		if err := reportNativeTTSPhase(init, ttsPhaseKokoroLoad); err != nil {
+			impl.Close()
+			return nil, err
+		}
+	}
 	baseKok, err := findBase(init.KokoroDir, "model.int8.onnx")
 	if err != nil {
 		impl.Close()

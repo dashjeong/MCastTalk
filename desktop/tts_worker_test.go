@@ -38,19 +38,28 @@ func ttsHelperRun(mode string) {
 	}
 	_, _ = io.WriteString(os.Stderr, ttsPrivateCanary)
 	writer := json.NewEncoder(os.Stdout)
-	switch mode {
-	case "handshake-id":
-		_ = writer.Encode(ttsWorkerResponse{ID: 1})
-	case "handshake-error":
-		_ = writer.Encode(ttsWorkerResponse{Error: ttsPrivateCanary})
-	case "handshake-pcm":
-		_ = writer.Encode(ttsWorkerResponse{PCM: make([]byte, 320)})
-	case "handshake-malformed":
-		_, _ = io.WriteString(os.Stdout, "{\n")
-	case "handshake-hang":
-		time.Sleep(time.Hour)
-	default:
-		_ = writer.Encode(ttsWorkerResponse{})
+	if strings.HasPrefix(mode, "phase-") && mode != "phase-in-generation" {
+		if !ttsHelperPhases(writer, init, mode) {
+			_, _ = io.Copy(io.Discard, reader)
+			return
+		}
+	} else {
+		switch mode {
+		case "handshake-id":
+			_ = writer.Encode(ttsWorkerResponse{ID: 1})
+		case "handshake-error":
+			_ = writer.Encode(ttsWorkerResponse{Error: ttsPrivateCanary})
+		case "handshake-pcm":
+			_ = writer.Encode(ttsWorkerResponse{PCM: make([]byte, 320)})
+		case "handshake-malformed":
+			_, _ = io.WriteString(os.Stdout, "{\n")
+		case "handshake-eof":
+			return
+		case "handshake-hang":
+			time.Sleep(time.Hour)
+		default:
+			_ = writer.Encode(ttsWorkerResponse{})
+		}
 	}
 	if strings.HasPrefix(mode, "handshake-") {
 		_, _ = io.Copy(io.Discard, reader)
@@ -82,6 +91,12 @@ func ttsHelperRun(mode string) {
 			_ = writer.Encode(ttsWorkerResponse{ID: request.ID + 1, PCM: pcm})
 		case "malformed":
 			_, _ = io.WriteString(os.Stdout, "{\n")
+		case "unknown-field":
+			_, _ = io.WriteString(os.Stdout, `{"id":1,"`+ttsPrivateCanary+`":true}`+"\n")
+		case "trailing-json":
+			_, _ = io.WriteString(os.Stdout, `{"id":1} {"private":"`+ttsPrivateCanary+`"}`+"\n")
+		case "phase-in-generation":
+			_ = writer.Encode(ttsWorkerResponse{ID: request.ID, PCM: pcm, Phase: ttsPhaseSuperLoad})
 		case "invalid-utf8":
 			_, _ = os.Stdout.Write([]byte{'{', '"', 'e', 'r', 'r', 'o', 'r', '"', ':', '"', 0xff, '"', '}', '\n'})
 		case "eof":
@@ -113,6 +128,67 @@ func ttsHelperRun(mode string) {
 			_ = writer.Encode(ttsWorkerResponse{ID: request.ID, PCM: pcm})
 		}
 	}
+}
+
+func ttsHelperPhases(writer *json.Encoder, init nativeTTSInit, mode string) bool {
+	phases := expectedTTSStartupPhases(init)
+	if len(phases) != 7 {
+		os.Exit(4)
+	}
+	if mode == "phase-early-ready" {
+		_ = writer.Encode(ttsWorkerResponse{})
+		return false
+	}
+	if mode == "phase-unknown-field" {
+		_, _ = io.WriteString(os.Stdout, `{"id":0,"`+ttsPrivateCanary+`":true}`+"\n")
+		return false
+	}
+	if mode == "phase-trailing-json" {
+		_, _ = io.WriteString(os.Stdout, `{"id":0} {"private":"`+ttsPrivateCanary+`"}`+"\n")
+		return false
+	}
+	for i, phase := range phases {
+		response := ttsWorkerResponse{Phase: phase}
+		if i == 0 {
+			switch mode {
+			case "phase-unknown":
+				response.Phase = ttsStartupPhase(ttsPrivateCanary)
+			case "phase-skip":
+				response.Phase = phases[1]
+			case "phase-id":
+				response.ID = 1
+			case "phase-error":
+				response.Error = ttsPrivateCanary
+			case "phase-pcm":
+				response.PCM = make([]byte, 320)
+			}
+		}
+		_ = writer.Encode(response)
+		if mode == "phase-drip" {
+			time.Sleep(100 * time.Millisecond)
+		}
+		if i == 0 {
+			switch mode {
+			case "phase-hang":
+				time.Sleep(time.Hour)
+			case "phase-duplicate":
+				_ = writer.Encode(response)
+				return false
+			case "phase-unknown", "phase-skip", "phase-id", "phase-error", "phase-pcm":
+				return false
+			}
+		}
+		if mode == "phase-native-error" && phase == ttsPhaseSuperLoad {
+			_ = writer.Encode(ttsWorkerResponse{Error: ttsPrivateCanary})
+			return false
+		}
+	}
+	if mode == "phase-extra" {
+		_ = writer.Encode(ttsWorkerResponse{Phase: phases[0]})
+		return false
+	}
+	_ = writer.Encode(ttsWorkerResponse{})
+	return true
 }
 
 func ttsHelperCommand(t *testing.T, mode string) (*exec.Cmd, context.CancelFunc, string) {
@@ -194,6 +270,85 @@ func TestTTSWorkerHandshakeRejectsInvalidPeer(t *testing.T) {
 	}
 }
 
+func TestTTSWorkerStartupFailuresRemainTypedAndPrivate(t *testing.T) {
+	for _, tc := range []struct {
+		mode string
+		code string
+	}{
+		{"handshake-id", "VOICE_WORKER_PROTOCOL"},
+		{"handshake-pcm", "VOICE_WORKER_PROTOCOL"},
+		{"handshake-malformed", "VOICE_WORKER_PROTOCOL"},
+		{"handshake-error", "VOICE_WORKER_NATIVE_INIT"},
+		{"handshake-eof", "VOICE_WORKER_EXITED"},
+		{"handshake-hang", "VOICE_WORKER_DEADLINE"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			cmd, cancel, dir := ttsHelperCommand(t, tc.mode)
+			cancelled := make(chan struct{})
+			cancelChild := func() { cancel(); close(cancelled) }
+			duration := 3 * time.Second
+			if tc.mode == "handshake-hang" {
+				duration = 250 * time.Millisecond
+			}
+			ctx, done := context.WithTimeout(context.Background(), duration)
+			defer done()
+			worker, err := startTTSWorkerCommand(ctx, cmd, cancelChild, nativeTTSInit{DataDir: dir, Threads: 2})
+			var failure *ttsWorkerStartupError
+			if worker != nil || !errors.As(err, &failure) || failure.code() != tc.code {
+				t.Fatalf("startup result should identify %s without exposing a ready worker: %v", tc.code, err)
+			}
+			if strings.Contains(err.Error(), ttsPrivateCanary) {
+				t.Fatal("native/private error escaped the startup boundary")
+			}
+			if errors.Is(err, context.DeadlineExceeded) != (tc.code == "VOICE_WORKER_DEADLINE") {
+				t.Fatal("startup deadline identity was lost or invented")
+			}
+			select {
+			case <-cancelled:
+			default:
+				t.Fatal("failed startup did not cancel its child")
+			}
+		})
+	}
+}
+
+func TestTTSWorkerCancelledStartupRemainsTyped(t *testing.T) {
+	cmd, cancel, dir := ttsHelperCommand(t, "handshake-hang")
+	cancelled := make(chan struct{})
+	cancelChild := func() { cancel(); close(cancelled) }
+	ctx, stop := context.WithCancel(context.Background())
+	stop()
+	worker, err := startTTSWorkerCommand(ctx, cmd, cancelChild, nativeTTSInit{DataDir: dir, Threads: 2})
+	var failure *ttsWorkerStartupError
+	if worker != nil || !errors.As(err, &failure) || failure.code() != "VOICE_WORKER_CANCELLED" || !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled initialization should not become generic failure or ready: %v", err)
+	}
+	select {
+	case <-cancelled:
+	default:
+		t.Fatal("cancelled startup did not cancel its child")
+	}
+}
+
+func TestTTSWorkerStartupContextFailureWinsKilledChildEOF(t *testing.T) {
+	deadlineCtx, endDeadline := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer endDeadline()
+	cancelledCtx, endCancelled := context.WithCancel(context.Background())
+	endCancelled()
+	for _, tc := range []struct {
+		ctx  context.Context
+		want error
+	}{
+		{deadlineCtx, context.DeadlineExceeded},
+		{cancelledCtx, context.Canceled},
+	} {
+		err := ttsStartupReceiveError(tc.ctx, errors.Join(io.EOF, errors.New(ttsPrivateCanary)))
+		if !errors.Is(err, tc.want) || strings.Contains(err.Error(), ttsPrivateCanary) {
+			t.Fatalf("killed-child EOF replaced context cause or disclosed arbitrary text: %v", err)
+		}
+	}
+}
+
 func TestTTSWorkerResidentRequestsAndPrivateError(t *testing.T) {
 	w, dir := ttsStartHelper(t, "error-once")
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -233,7 +388,7 @@ func TestTTSWorkerCancellationAfterSuccessPreservesResidentChild(t *testing.T) {
 }
 
 func TestTTSWorkerInvalidResponsesFailClosed(t *testing.T) {
-	for _, mode := range []string{"mismatch", "malformed", "invalid-utf8", "eof", "unterminated", "odd", "short", "overlong-pcm", "overlong-error", "error-and-pcm", "overlong-line"} {
+	for _, mode := range []string{"mismatch", "malformed", "unknown-field", "trailing-json", "phase-in-generation", "invalid-utf8", "eof", "unterminated", "odd", "short", "overlong-pcm", "overlong-error", "error-and-pcm", "overlong-line"} {
 		t.Run(mode, func(t *testing.T) {
 			w, _ := ttsStartHelper(t, mode)
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

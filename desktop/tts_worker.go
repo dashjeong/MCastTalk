@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -19,6 +20,7 @@ import (
 type nativeTTSInit struct {
 	DataDir, RuntimeDir, SupertonicDir, KokoroDir string
 	Threads                                       int
+	progress                                      func(ttsStartupPhase) error
 }
 type nativeTTSSynthesizer interface {
 	Generate(text, language string) ([]float32, int, error)
@@ -30,9 +32,10 @@ type ttsWorkerRequest struct {
 	Language string `json:"language"`
 }
 type ttsWorkerResponse struct {
-	ID    uint64 `json:"id"`
-	PCM   []byte `json:"pcm,omitempty"`
-	Error string `json:"error,omitempty"`
+	ID    uint64          `json:"id"`
+	PCM   []byte          `json:"pcm,omitempty"`
+	Error string          `json:"error,omitempty"`
+	Phase ttsStartupPhase `json:"phase,omitempty"`
 }
 type ttsWorker struct {
 	cmd    *exec.Cmd
@@ -48,53 +51,101 @@ type ttsWorker struct {
 // The same executable runs a resident, isolated native worker. No conversation
 // text, audio, credentials or temporary WAV is written to the filesystem.
 func startTTSWorker(ctx context.Context, init nativeTTSInit) (*ttsWorker, error) {
+	return startTTSWorkerWithProgress(ctx, init, nil)
+}
+
+func startTTSWorkerWithProgress(ctx context.Context, init nativeTTSInit, progress func(ttsStartupPhase)) (*ttsWorker, error) {
 	exe, err := os.Executable()
 	if err != nil {
-		return nil, err
+		return nil, &ttsWorkerStartupError{failure: ttsStartupProcessStart}
 	}
 	workerCtx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(workerCtx, exe, "--tts-worker")
-	return startTTSWorkerCommand(ctx, cmd, cancel, init)
+	return startTTSWorkerCommandWithProgress(ctx, cmd, cancel, init, progress)
 }
 
 func startTTSWorkerCommand(ctx context.Context, cmd *exec.Cmd, cancel context.CancelFunc, init nativeTTSInit) (*ttsWorker, error) {
+	return startTTSWorkerCommandWithProgress(ctx, cmd, cancel, init, nil)
+}
+
+func startTTSWorkerCommandWithProgress(ctx context.Context, cmd *exec.Cmd, cancel context.CancelFunc, init nativeTTSInit, progress func(ttsStartupPhase)) (*ttsWorker, error) {
 	cmd.Stderr = io.Discard
 	input, err := cmd.StdinPipe()
 	if err != nil {
 		cancel()
-		return nil, err
+		return nil, &ttsWorkerStartupError{failure: ttsStartupProcessStart}
 	}
 	output, err := cmd.StdoutPipe()
 	if err != nil {
 		cancel()
 		input.Close()
-		return nil, err
+		return nil, &ttsWorkerStartupError{failure: ttsStartupProcessStart}
 	}
 	w := &ttsWorker{cmd: cmd, cancel: cancel, input: input, output: bufio.NewReaderSize(output, 64<<10), gate: make(chan struct{}, 1), done: make(chan struct{})}
 	if err = cmd.Start(); err != nil {
 		cancel()
 		input.Close()
-		return nil, errors.New("로컬 음성 작업 프로세스를 시작하지 못했습니다")
+		return nil, &ttsWorkerStartupError{failure: ttsStartupProcessStart}
 	}
 	go func() { cmd.Wait(); close(w.done) }()
 	waitCtx, waitCancel := context.WithTimeout(ctx, 45*time.Second)
 	defer waitCancel()
 	stopWatching := watchTTSContext(waitCtx, w)
 	defer stopWatching()
+	if err := waitCtx.Err(); err != nil {
+		w.Close()
+		return nil, ttsStartupReceiveError(waitCtx, err)
+	}
 	raw, err := json.Marshal(init)
 	if err == nil {
 		_, err = input.Write(append(raw, '\n'))
 	}
 	if err != nil {
 		w.Close()
-		return nil, errors.New("로컬 음성 환경을 전달하지 못했습니다")
+		if waitCtx.Err() != nil {
+			return nil, ttsStartupReceiveError(waitCtx, err)
+		}
+		return nil, &ttsWorkerStartupError{failure: ttsStartupInitWrite}
 	}
-	response, err := w.receive(waitCtx)
-	if err != nil || response.ID != 0 || response.Error != "" || len(response.PCM) != 0 {
+	expected := expectedTTSStartupPhases(init)
+	position := 0
+	var lastPhase ttsStartupPhase
+	fail := func(err error) (*ttsWorker, error) {
 		w.Close()
-		return nil, errors.New("다운로드한 로컬 음성 모델을 기동하지 못했습니다. 실행 기반·파일 검증과 진단을 확인하세요")
+		return nil, withTTSStartupPhase(err, lastPhase)
 	}
-	return w, nil
+	for {
+		response, err := w.receive(waitCtx)
+		if err != nil {
+			return fail(ttsStartupReceiveError(waitCtx, err))
+		}
+		if err := waitCtx.Err(); err != nil {
+			return fail(ttsStartupReceiveError(waitCtx, err))
+		}
+		if response.ID != 0 || len(response.PCM) != 0 {
+			return fail(&ttsWorkerStartupError{failure: ttsStartupProtocol})
+		}
+		if response.Phase != "" {
+			// Progress cannot extend the original 45-second deadline, carry
+			// audio/error text, skip verification, repeat or invent a phase.
+			if response.Error != "" || position >= len(expected) || response.Phase != expected[position] {
+				return fail(&ttsWorkerStartupError{failure: ttsStartupProtocol})
+			}
+			position++
+			lastPhase = response.Phase
+			if progress != nil {
+				progress(lastPhase)
+			}
+			continue
+		}
+		if response.Error != "" {
+			return fail(&ttsWorkerStartupError{failure: ttsStartupNativeInit})
+		}
+		if position != len(expected) {
+			return fail(&ttsWorkerStartupError{failure: ttsStartupProtocol})
+		}
+		return w, nil
+	}
 }
 func (w *ttsWorker) Close() { w.stop.Do(func() { w.cancel(); w.input.Close() }) }
 
@@ -135,7 +186,13 @@ func (w *ttsWorker) receive(ctx context.Context) (ttsWorkerResponse, error) {
 			err = errors.New("음성 응답 UTF-8 형식 오류")
 		}
 		if err == nil {
-			err = json.Unmarshal(raw, &response)
+			decoder := json.NewDecoder(bytes.NewReader(raw))
+			decoder.DisallowUnknownFields()
+			if decoder.Decode(&response) != nil || decoder.Decode(&struct{}{}) != io.EOF {
+				// Unknown fields and trailing frames may include private text;
+				// neither decoder errors nor raw messages cross this boundary.
+				err = errors.New("음성 응답 JSON 형식 오류")
+			}
 		}
 		ch <- result{response, err}
 	}()
@@ -187,6 +244,10 @@ func (w *ttsWorker) Synthesize(ctx context.Context, text, language string) ([]by
 	if response.ID != req.ID {
 		w.Close()
 		return nil, errors.New("로컬 음성 응답 순서가 잘못되었습니다")
+	}
+	if response.Phase != "" {
+		w.Close()
+		return nil, errors.New("음성 요청에 기동 단계 응답이 포함되었습니다")
 	}
 	if response.Error != "" {
 		if len(response.Error) > 512 || !utf8.ValidString(response.Error) || len(response.PCM) != 0 {
@@ -262,16 +323,25 @@ func runNativeTTSWorker() error {
 	if json.Unmarshal(raw, &init) != nil {
 		return errors.New("음성 작업 환경 형식 오류")
 	}
-	for _, entry := range []struct{ dir, folder string }{{init.RuntimeDir, "runtimes"}, {init.SupertonicDir, "models"}, {init.KokoroDir, "models"}} {
+	writer := json.NewEncoder(os.Stdout)
+	init.progress = func(phase ttsStartupPhase) error {
+		return writer.Encode(ttsWorkerResponse{Phase: phase})
+	}
+	for _, entry := range []struct {
+		dir, folder string
+		phase       ttsStartupPhase
+	}{{init.RuntimeDir, "runtimes", ttsPhaseRuntimeVerify}, {init.SupertonicDir, "models", ttsPhaseSuperVerify}, {init.KokoroDir, "models", ttsPhaseKokoroVerify}} {
 		if entry.dir == "" {
 			continue
+		}
+		if err := reportNativeTTSPhase(init, entry.phase); err != nil {
+			return err
 		}
 		if !engineManagedPath(init.DataDir, entry.folder, entry.dir) || verifyInstalledBundle(context.Background(), entry.dir) != nil {
 			return errors.New("관리 경로의 검증된 음성 패키지가 필요합니다")
 		}
 	}
 	synth, err := newNativeTTSSynthesizer(init)
-	writer := json.NewEncoder(os.Stdout)
 	if err != nil {
 		_ = writer.Encode(ttsWorkerResponse{Error: "로컬 음성 모델 초기화 실패"})
 		return err

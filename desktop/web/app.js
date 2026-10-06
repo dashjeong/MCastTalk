@@ -134,6 +134,15 @@ document.addEventListener('DOMContentLoaded', () => {
     const cpuModelButton = document.getElementById('setup-cpu-model');
     const cpuModelNote = document.getElementById('setup-model-note');
     const cpuStarterSTT = 'whisper-small-q5';
+    const voiceStartupTitles = new Map([
+        ['VOICE_CHILD_RUNTIME_VERIFY', '음성 실행 파일 확인'],
+        ['VOICE_CHILD_SUPERTONIC_VERIFY', '한국어·다국어 음성 파일 확인'],
+        ['VOICE_CHILD_KOKORO_VERIFY', '중국어 음성 파일 확인'],
+        ['VOICE_CHILD_DLL_LOAD', '음성 기능 시작'],
+        ['VOICE_CHILD_DLL_VERSION', '음성 실행 환경 확인'],
+        ['VOICE_CHILD_SUPERTONIC_LOAD', '한국어·다국어 음성 준비'],
+        ['VOICE_CHILD_KOKORO_LOAD', '중국어 음성 준비']
+    ]);
     const canPrepare = () => Boolean(setupPlan && (setupPlan.preparationCompatible ?? setupPlan.compatible));
     const canRun = () => Boolean(setupPlan && (setupPlan.runtimeCompatible ?? setupPlan.compatible));
     const dependencyFileReady = dependency => Boolean(dependency.installerCached || dependency.cached || dependency.status?.ready);
@@ -287,7 +296,10 @@ document.addEventListener('DOMContentLoaded', () => {
             engineProgress.hidden = !(setupRunning && startupStage);
             if (setupRunning && startupStage) {
                 const elapsed = Number(data.engine.startupMillis);
-                engineProgress.textContent = `현재 작업: ${startupStage}${Number.isFinite(elapsed) && elapsed >= 0 ? ` · ${Math.floor(elapsed / 1000)}초 경과` : ''}. 첫 구동은 모델과 PC 사양에 따라 시간이 걸립니다. 준비 중단으로 멈출 수 있습니다.`;
+                const voiceTitle = voiceStartupTitles.get(data.engine.voiceStartupPhase);
+                const voiceElapsed = Number(data.engine.voiceStartupMillis);
+                const voiceProgress = voiceTitle ? ` 세부 작업: ${voiceTitle}${Number.isFinite(voiceElapsed) && voiceElapsed >= 0 ? ` · ${Math.floor(voiceElapsed / 1000)}초 경과` : ''}.` : '';
+                engineProgress.textContent = `현재 작업: ${startupStage}${Number.isFinite(elapsed) && elapsed >= 0 ? ` · ${Math.floor(elapsed / 1000)}초 경과` : ''}.${voiceProgress} 첫 구동은 모델과 PC 사양에 따라 시간이 걸립니다. 준비 중단으로 멈출 수 있습니다.`;
             }
             if (progress?.state === 'awaiting-approval') setupStatus.textContent += ' · Windows 관리자 승인 창에서 Microsoft 설치를 확인하세요.';
             if (op.restartRequired) setupStatus.textContent += ' · PC 재부팅 후 다시 검증하세요.';

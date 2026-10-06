@@ -661,6 +661,9 @@ func (e *Engine) Ready() EngineStatus {
 	if status.StartupStage != "" && !status.StartupStartedAt.IsZero() {
 		status.StartupMillis = time.Since(status.StartupStartedAt).Milliseconds()
 	}
+	if status.VoiceStartupPhase != "" && !status.VoiceStartupStartedAt.IsZero() {
+		status.VoiceStartupMillis = time.Since(status.VoiceStartupStartedAt).Milliseconds()
+	}
 	return status
 }
 
@@ -975,7 +978,7 @@ func (e *Engine) startBundledTTS(ctx context.Context, cfg Config, assets map[str
 	var worker *ttsWorker
 	err = e.startupStep("언어별 음성 모델 로드", "", func() error {
 		var err error
-		worker, err = startTTSWorker(ctx, init)
+		worker, err = e.startTTSWorkerTracked(ctx, init)
 		return err
 	})
 	if err != nil {

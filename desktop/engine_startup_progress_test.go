@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -40,5 +41,60 @@ func TestEngineStartupProgressShowsActiveStageAndIndependentReceipts(t *testing.
 	status = e.Ready()
 	if err == nil || len(status.StartupChecks) != 1 || status.STTReady || status.TranslationReady || status.TTSReady {
 		t.Fatal("failed startup discarded actionable evidence or retained false readiness")
+	}
+}
+
+func TestEngineStartupReceiptRetainsOnlyClosedWorkerFailure(t *testing.T) {
+	e := NewEngine(t.TempDir())
+	failure := &ttsWorkerStartupError{failure: ttsStartupDeadline, cause: context.DeadlineExceeded}
+	err := e.startupStep("언어별 음성 모델 로드", "", func() error {
+		return errors.Join(errors.New(ttsPrivateCanary), failure)
+	})
+	status := e.Ready()
+	if !errors.Is(err, context.DeadlineExceeded) || len(status.StartupChecks) != 1 || status.StartupChecks[0].Passed || status.TTSReady {
+		t.Fatal("typed worker deadline was lost or treated as readiness")
+	}
+	if status.StartupChecks[0].Error != failure.Error() || strings.Contains(status.StartupChecks[0].Error, ttsPrivateCanary) {
+		t.Fatal("startup receipt lost fixed failure code or exposed arbitrary error text")
+	}
+}
+
+func TestEngineVoiceProgressKeepsOverallStageAndNoFalseReadiness(t *testing.T) {
+	e := NewEngine(t.TempDir())
+	entered, release := make(chan struct{}), make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- e.startupStep("언어별 음성 모델 로드", "", func() error {
+			progress, finish := e.ttsStartupProgress()
+			progress(ttsPhaseRuntimeVerify)
+			progress(ttsPhaseSuperVerify)
+			close(entered)
+			<-release
+			err := &ttsWorkerStartupError{failure: ttsStartupDeadline, cause: context.DeadlineExceeded, phase: ttsPhaseSuperVerify}
+			finish(err)
+			return err
+		})
+	}()
+	<-entered
+	time.Sleep(2 * time.Millisecond)
+	active := e.Ready()
+	if active.StartupStage != "언어별 음성 모델 로드" || active.VoiceStartupPhase != string(ttsPhaseSuperVerify) || active.VoiceStartupMillis <= 0 || active.VoiceStartupStartedAt.IsZero() || active.TTSReady {
+		t.Fatalf("voice phase hid overall stage, lacked timing or invented readiness: %+v", active)
+	}
+	if len(active.StartupChecks) != 1 || !active.StartupChecks[0].Passed || active.StartupChecks[0].Stage != ttsPhaseRuntimeVerify.title() {
+		t.Fatal("completed child verification phase did not retain its independent receipt")
+	}
+	close(release)
+	if !errors.Is(<-done, context.DeadlineExceeded) {
+		t.Fatal("voice phase lost typed failure")
+	}
+	status := e.Ready()
+	if status.VoiceStartupPhase != "" || status.StartupStage != "" || len(status.StartupChecks) != 3 || status.TTSReady {
+		t.Fatal("voice failure retained live phase or invented readiness")
+	}
+	for _, check := range status.StartupChecks[1:] {
+		if check.Passed || !strings.Contains(check.Error, "VOICE_WORKER_DEADLINE") || !strings.Contains(check.Error, ttsPhaseSuperVerify.title()) {
+			t.Fatal("failed child phase or overall load lost its safe diagnostic")
+		}
 	}
 }

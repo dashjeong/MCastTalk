@@ -87,15 +87,18 @@ type Diagnostic struct {
 	CheckedAt        time.Time             `json:"checkedAt"`
 }
 type EngineStatus struct {
-	TranslationReady bool         `json:"translationReady"`
-	STTReady         bool         `json:"sttReady"`
-	TTSReady         bool         `json:"ttsReady"`
-	Backend          string       `json:"backend"`
-	Error            string       `json:"error"`
-	StartupStage     string       `json:"startupStage,omitempty"`
-	StartupStartedAt time.Time    `json:"startupStartedAt,omitempty"`
-	StartupMillis    int64        `json:"startupMillis,omitempty"`
-	StartupChecks    []setupCheck `json:"startupChecks,omitempty"`
+	TranslationReady      bool         `json:"translationReady"`
+	STTReady              bool         `json:"sttReady"`
+	TTSReady              bool         `json:"ttsReady"`
+	Backend               string       `json:"backend"`
+	Error                 string       `json:"error"`
+	StartupStage          string       `json:"startupStage,omitempty"`
+	StartupStartedAt      time.Time    `json:"startupStartedAt,omitempty"`
+	StartupMillis         int64        `json:"startupMillis,omitempty"`
+	StartupChecks         []setupCheck `json:"startupChecks,omitempty"`
+	VoiceStartupPhase     string       `json:"voiceStartupPhase,omitempty"`
+	VoiceStartupStartedAt time.Time    `json:"voiceStartupStartedAt,omitempty"`
+	VoiceStartupMillis    int64        `json:"voiceStartupMillis,omitempty"`
 }
 type GlossaryTerm struct {
 	Source   string `json:"source"`
