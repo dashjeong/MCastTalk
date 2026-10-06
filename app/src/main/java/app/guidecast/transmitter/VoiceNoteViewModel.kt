@@ -300,6 +300,8 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
                 notice = result.warnings.joinToString("\n").ifBlank { null })
             // Commit the source before any translation/model preparation can fail.
             saveSelected(updated)
+            correctionHistory.clear()
+            mutableState.update { it.copy(findings = emptyList(), canUndoCorrection = false) }
             translateSaved(updated, target)
         }
     }
@@ -434,13 +436,7 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
         if (last.id != state.value.selected?.id) return
         task {
             val current = state.value.selected ?: return@task
-            saveSelected(current.copy(lines = current.lines.mapIndexed { index, line ->
-                val before = last.lines.getOrNull(index) ?: return@mapIndexed line
-                val restored = line.archiveTranslation(current.targetLanguage).copy(original = before.original,
-                    edited = before.edited, translations = before.translations + line.archiveTranslation(current.targetLanguage).translations)
-                restored.copy(translation = restored.translations[current.targetLanguage]
-                    ?.takeIf { restored.translationIsCurrent(current.targetLanguage) }?.text.orEmpty())
-            })); correctionHistory.removeLast()
+            saveSelected(restoreVoiceNoteCorrection(current, last)); correctionHistory.removeLast()
             mutableState.update { it.copy(findings = emptyList(), canUndoCorrection = correctionHistory.isNotEmpty(), message = "마지막 교정을 되돌렸습니다. 원문과 녹음은 유지됩니다.") }
         }
     }

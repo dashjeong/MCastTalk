@@ -60,6 +60,27 @@ class VoiceNoteProcessingTest {
         assertEquals("됬다. 됐다.", applyVoiceNoteFindings(initial, candidates).lines[0].original)
     }
 
+    @Test fun undoRestoresWorkingTextAndItsTranslationWhileKeepingNewLanguageResults() {
+        val initial = note("Raw")
+        val corrected = initial.copy(lines = initial.lines.map { line -> line.archiveTranslation("en-US")
+            .corrected("Corrected", "", false).copy(translations = mapOf(
+                "en-US" to VoiceNoteTranslatedText("New working translation", voiceNoteSourceFingerprint("Corrected")),
+                "ja-JP" to VoiceNoteTranslatedText("原文訳", voiceNoteSourceFingerprint("Raw"), fromOriginal = true))) })
+        val restored = restoreVoiceNoteCorrection(corrected, initial)
+        assertEquals("Raw", restored.lines[0].original)
+        assertEquals("Raw", restored.lines[0].originalTranscript)
+        assertEquals("Old translation", restored.lines[0].translation)
+        assertEquals("原文訳", restored.lines[0].translations["ja-JP"]!!.text)
+    }
+
+    @Test fun rawSourceTranslationsStayCurrentWhenOnlyTheWorkingCopyChanges() {
+        val initial = note().let { it.copy(lines = it.lines.map { line -> line.copy(translations = mapOf(
+            "en-US" to VoiceNoteTranslatedText(line.translation, voiceNoteSourceFingerprint(line.originalTranscript), fromOriginal = true))) }) }
+        val changed = applyVoiceNoteFindings(initial, voiceNoteFindings(0, initial.lines[0].original, "됐습니다. 안녕 하세요."))
+        assertEquals("Old translation", changed.lines[0].translation)
+        assertTrue(changed.lines[0].translationIsCurrent("en-US"))
+    }
+
     @Test fun languageSwitchesRestoreCachedResultsAndKeepTheRawText() = runTest {
         val initial = note()
         var saved = initial

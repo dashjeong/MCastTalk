@@ -65,7 +65,28 @@ internal fun applyVoiceNoteFindings(note: VoiceNote, findings: List<VoiceNoteFin
         var text = current.original
         changes.asReversed().forEach { text = text.replaceRange(it.start, it.end, it.after) }
         require(text.isNotBlank() && text.length <= 65_536)
-        current.archiveTranslation(note.targetLanguage).corrected(text, current.translation, false)
+        val result = current.archiveTranslation(note.targetLanguage).corrected(text, current.translation, false)
+        result.copy(translation = result.translations[note.targetLanguage]
+            ?.takeIf { result.translationIsCurrent(note.targetLanguage) }?.text.orEmpty())
     }
     return note.copy(lines = lines)
+}
+
+/** Undo working text without discarding translations made in other languages since the edit. */
+internal fun restoreVoiceNoteCorrection(current: VoiceNote, before: VoiceNote): VoiceNote {
+    require(current.id == before.id && current.lines.size == before.lines.size)
+    return current.copy(lines = current.lines.mapIndexed { index, line ->
+        val old = before.lines[index].archiveTranslation(before.targetLanguage)
+        val archived = line.archiveTranslation(current.targetLanguage)
+        var restored = archived.copy(original = old.original, edited = old.edited,
+            translations = old.translations + archived.translations)
+        val variants = restored.translations.mapValues { (language, recent) ->
+            if (restored.translationIsCurrent(language)) recent else old.translations[language]
+                ?.takeIf { it.sourceFingerprint == voiceNoteSourceFingerprint(if (it.fromOriginal) restored.originalTranscript else restored.original) }
+                ?: recent
+        }
+        restored = restored.copy(translations = variants)
+        restored.copy(translation = variants[current.targetLanguage]
+            ?.takeIf { restored.translationIsCurrent(current.targetLanguage) }?.text.orEmpty())
+    })
 }

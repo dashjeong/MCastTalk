@@ -551,7 +551,7 @@ private fun GuideCastScreen(
                         Text(if (broadcast.inputPhase == InputPhase.STARTING) "입력 시작 취소" else "$inputName 중지")
                     }
                 }
-                Text("입력만 제어합니다. 방송 연결은 유지됩니다.",
+                Text("입력만 제어합니다. 방송 상태는 유지됩니다.",
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
             }
