@@ -202,7 +202,7 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
                 Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).toggleable(checked, enabled = !busy,
                     role = Role.Checkbox, onValueChange = {
                         val result = toggleTranslationLanguageSelection(targetDraft.toSet(), option.languageTag,
-                            sourceLanguageTag = relay.source)
+                            maximum = 5, sourceLanguageTag = relay.source)
                         targetDraft = result.selectedLanguageTags.toCollection(arrayListOf())
                         targetSelectionMessage = result.message
                     }), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {

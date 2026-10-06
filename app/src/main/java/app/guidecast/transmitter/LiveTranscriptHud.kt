@@ -96,7 +96,7 @@ internal fun LiveTranscriptHud(
             if (rows.isEmpty()) Text("아직 표시할 스크립트가 없습니다. 원문·통역문을 수신하면 여기에 표시합니다.",
                 color = Color.White, style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.align(Alignment.Center).padding(24.dp))
-            LazyColumn(state = list, reverseLayout = true,
+            else LazyColumn(state = list, reverseLayout = true,
                 modifier = Modifier.fillMaxSize().pointerInput(Unit) {
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false)
@@ -126,9 +126,15 @@ internal fun LiveTranscriptHud(
                     }
                 }
             }
-            if (!controls) TextButton(onClick = { controls = true },
-                modifier = Modifier.align(Alignment.TopEnd).safeDrawingPadding()) {
-                Text("HUD 설정", color = Color.White)
+            if (!controls) {
+                TextButton(onClick = onBack,
+                    modifier = Modifier.align(Alignment.TopStart).safeDrawingPadding()) {
+                    Text("HUD 닫기", color = Color.White)
+                }
+                TextButton(onClick = { controls = true },
+                    modifier = Modifier.align(Alignment.TopEnd).safeDrawingPadding()) {
+                    Text("HUD 설정", color = Color.White)
+                }
             }
             if (controls) Surface(Modifier.align(Alignment.TopCenter).fillMaxWidth().safeDrawingPadding(),
                 color = Color(0xFF202020), contentColor = Color.White) {
