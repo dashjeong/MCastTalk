@@ -395,14 +395,16 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
             const data = await api('/status');
             rememberConfig(data.config, data.pinStatus);
-            engineReady = data.engine && data.engine.translationReady && data.engine.sttReady && data.engine.ttsReady;
-            engineRunning = data.engine && (data.engine.translationReady || data.engine.sttReady);
+            engineReady = Boolean(data.engine && data.engine.translationReady && data.engine.sttReady && data.engine.ttsReady && !data.engine.startupStage);
+            engineRunning = Boolean(data.engine && (data.engine.translationReady || data.engine.sttReady || data.engine.ttsReady || data.engine.startupStage));
 
             let statusText = '중지됨';
             els.engineStatus.className = 'status-badge';
             if (engineReady) {
                 statusText = '기능 준비됨';
                 els.engineStatus.classList.add('ready');
+            } else if (data.engine?.startupStage) {
+                statusText = `모델 준비 중: ${data.engine.startupStage}`;
             } else if (data.engine && data.engine.error) {
                 statusText = `엔진 안내: ${data.engine.error}`;
                 els.engineStatus.classList.add('error');

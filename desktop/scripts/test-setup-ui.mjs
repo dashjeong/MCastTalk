@@ -31,6 +31,7 @@ const cpuStarter = { ...smallSTT, id: 'whisper-small-q5', name: 'Whisper Small (
 let config = { publicBind: '127.0.0.1:8787', publicURL: '', tlsCert: '', tlsKey: '', maxListeners: 30, access: 'qr', listenerPin: '', speakerPin: '', sourceLanguage: 'ko', targetLanguages: ['ko', 'en', 'ja', 'zh', 'es'], translationModel: model.id, sttModel: 'stt-large-fixture', backend: 'cpu', autoResume: false, online: { endpoint: '', model: '', apiKey: '', consent: false } };
 let plan = { fingerprint: 'request-a', environmentFingerprint: 'environment-a', artifacts: [model], missing: [model], downloadBytes: 2000000000, requiredDiskBytes: 5000000000, requiredRAMGB: 12, compatible: false, preparationCompatible: true, runtimeCompatible: false, runtimeIssues: ['실행에 필요한 여유 RAM이 부족합니다.'], warnings: [], systemDependencies: [], speechLanguages: { supported: true, missing: ['ko'], error: '' } };
 let operation = {}, engine = {}, progress = [];
+let statusEngine = {};
 let rooms = [{ id: 'room-a', title: '세계 언어 수업', mode: 'lecture', capacity: 30, languages: ['ko', 'en', 'ja', 'zh', 'es'], teacherURL: '/room/teacher-fixture', studentURL: '/room/student-fixture' }, { id: 'room-b', title: '대화 연습', mode: 'conversation', capacity: 30, languages: ['ko', 'en'], teacherURL: '/room/teacher-b', studentURL: '/room/student-b' }];
 let failPlan = false;
 await page.route('http://127.0.0.1:18896/**', async route => {
@@ -61,7 +62,7 @@ await page.route('http://127.0.0.1:18896/**', async route => {
         return reply(plan);
     }
     if (path === '/admin/api/setup/status') return reply({ operation, engine, progress });
-    if (path === '/admin/api/status') return reply({ config, engine: {}, activeSession: null, publicURL: '', queueDepth: 0, pinStatus: { listenerSet: false, speakerSet: false } });
+    if (path === '/admin/api/status') return reply({ config, engine: statusEngine, activeSession: null, publicURL: '', queueDepth: 0, pinStatus: { listenerSet: false, speakerSet: false } });
     if (path === '/admin/api/diagnostics') return reply({ os: 'windows', arch: 'amd64', cpu: 'route fixture', cores: 4, ramGB: 16, availableRamGB: 4, freeDiskGB: 30, measured: true, devices: [], warnings: [], recommendations: [] });
     if (path === '/admin/api/catalog') return reply({ artifacts: [model, smallSTT, cpuStarter], installed: {}, progress: [] });
     if (path === '/admin/api/rooms') return reply(rooms);
@@ -269,6 +270,31 @@ try {
         assert.equal(await page.locator('#setup-cpu-model').isVisible(), false);
         assert.equal(posts.filter(p => p.path === '/admin/api/config').length, customSaves);
         assert.equal(config.sttModel, smallSTT.id);
+    });
+    await check('MODEL-04-autoresume-startup-blocks-model-configuration', async () => {
+        config = { ...config, backend: 'cpu', sttModel: 'whisper-turbo' };
+        statusEngine = { translationReady: false, sttReady: false, ttsReady: false, startupStage: '번역 모델 해시 확인', startupMillis: 1200 };
+        const saves = posts.filter(p => p.path === '/admin/api/config').length;
+        await page.reload();
+        await eventually(() => page.locator('#setup-cpu-model').isVisible());
+        assert.equal(await page.locator('#setup-cpu-model').isDisabled(), true);
+        assert.equal(await page.locator('#engine-status').evaluate(element => element.classList.contains('ready')), false);
+        assert.ok((await page.locator('#engine-status').textContent()).includes('모델 준비 중'));
+        await page.locator('#setup-cpu-model').evaluate(button => button.click());
+        assert.equal(posts.filter(p => p.path === '/admin/api/config').length, saves);
+        await nav('models');
+        const manual = page.locator('#models-list .card').filter({ has: page.getByRole('heading', { name: smallSTT.name, exact: true }) });
+        assert.equal(await manual.getByRole('button', { name: '이 모델로 환경 준비', exact: true }).isDisabled(), true);
+        assert.equal(posts.filter(p => p.path === '/admin/api/config').length, saves);
+        statusEngine = { translationReady: false, sttReady: false, ttsReady: true };
+        await page.reload();
+        await eventually(() => page.locator('#setup-cpu-model').isVisible());
+        assert.equal(await page.locator('#setup-cpu-model').isDisabled(), true);
+        assert.equal(await page.locator('#engine-status').evaluate(element => element.classList.contains('ready')), false);
+        statusEngine = {};
+        await page.reload();
+        await eventually(() => page.locator('#setup-cpu-model').isEnabled());
+        assert.equal(posts.filter(p => p.path === '/admin/api/config').length, saves);
     });
     await check('ROOM-01-search-empty-state-and-safe-dom', async () => {
         const canary = '<img src=x onerror="window.__unsafe=1">';
