@@ -176,7 +176,7 @@ internal fun RelayContextLibraryScreen(app: GuideCastApplication, onBack: () -> 
     LazyColumn(Modifier.fillMaxSize().semantics { paneTitle = "전문 통역 자료" },
         contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            TextButton(enabled = controlsEnabled, onClick = { requestEditorAction("BACK_LIBRARY") }) { Text("통역 중계 설정으로") }
+            TextButton(enabled = controlsEnabled, onClick = { requestEditorAction("BACK_LIBRARY") }) { Text("On-통 Live(AI 통역) 설정으로") }
             Text("전문 통역 자료", style = MaterialTheme.typography.headlineMedium)
             Text("강의 대본·참고 글·용어 메모를 기기에 보관합니다. 사용할 자료를 켠 뒤 중계 설정에서 참고 자료 전송에 동의하세요.")
             Text("지원 모델에는 용어·예문·대본의 짧은 발췌만, 전체 합계 최대 600자로 전달합니다. 긴 대본 전체를 보낸다는 뜻은 아닙니다. 변경은 다음 중계 시작부터 반영됩니다.")

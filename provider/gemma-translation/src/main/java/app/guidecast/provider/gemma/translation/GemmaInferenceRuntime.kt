@@ -81,8 +81,9 @@ internal class GemmaInferenceRuntime(context: Context) : Closeable {
         val target = if (targetLanguageTag.equals("zh-TW", ignoreCase = true)) {
             "Traditional Chinese (Taiwan Mandarin; use Traditional Chinese characters)"
         } else targetBase
-        require(sourceCode != targetCode) {
-            "Gemma Translator source and target must be different"
+        require(if (translationStyle == app.guidecast.core.translation.SourceProofreadingContext.IPC_MODE)
+            sourceCode == targetCode else sourceCode != targetCode) {
+            "Gemma language pair does not match the requested processing mode"
         }
         val startedAt = SystemClock.elapsedRealtime()
         Log.i(LOG_TAG, "Gemma translation started: target=$targetLanguageTag, chars=${text.length}")
@@ -159,7 +160,10 @@ internal class GemmaInferenceRuntime(context: Context) : Closeable {
                 } else null,
             ),
         ).use { conversation ->
-            val rawPrompt = if (reviewDraft.isNotEmpty()) {
+            val sourceReview = translationStyle == app.guidecast.core.translation.SourceProofreadingContext.IPC_MODE
+            val rawPrompt = if (sourceReview) {
+                GemmaSourceProofreadingPrompt.build(text, contextBefore)
+            } else if (reviewDraft.isNotEmpty()) {
                 GemmaTranslationReviewPrompt.build(
                     source,
                     target,
@@ -180,8 +184,8 @@ internal class GemmaInferenceRuntime(context: Context) : Closeable {
                     sessionMemory = sessionMemory,
                 )
             }
-            val basePrompt = applyOptionalDomainReference(rawPrompt, domainHints)
-            val prompt = GemmaTranslationStylePrompt.apply(basePrompt, translationStyle)
+            val basePrompt = if (sourceReview) rawPrompt else applyOptionalDomainReference(rawPrompt, domainHints)
+            val prompt = if (sourceReview) basePrompt else GemmaTranslationStylePrompt.apply(basePrompt, translationStyle)
             // Arming failure occurs before JNI submission, so it must fail normally rather than
             // enter the ambiguous-submission bridge without a live safety deadline.
             val deadline = GemmaWorkerDeadline.arm(applicationContext.packageName)
@@ -386,7 +390,8 @@ internal class GemmaInferenceRuntime(context: Context) : Closeable {
 
 /** Validate the IPC enum before any native model work; never accept arbitrary instructions. */
 internal fun requireKnownGemmaTranslationStyle(style: String) {
-    require(style in setOf("", "AUTO", "FORMAL", "CONVERSATIONAL")) { "GEMMA_UNSUPPORTED_TRANSLATION_STYLE" }
+    require(style in setOf("", "AUTO", "FORMAL", "CONVERSATIONAL",
+        app.guidecast.core.translation.SourceProofreadingContext.IPC_MODE)) { "GEMMA_UNSUPPORTED_TRANSLATION_STYLE" }
 }
 
 internal fun StringBuilder.mergeLiteRtChunk(chunk: String) {

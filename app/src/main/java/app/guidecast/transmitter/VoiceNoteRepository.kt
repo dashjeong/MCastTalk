@@ -89,8 +89,11 @@ internal class VoiceNoteRepository(private val root: File) {
         require(note.sourceLanguage == null || note.sourceLanguage in VOICE_NOTE_LANGUAGES)
         require(note.targetLanguage in VOICE_NOTE_LANGUAGES)
         require(note.lines.all { it.original.length <= 65_536 && it.translation.length <= 65_536 && it.speaker.length <= 80 })
+        require(note.lines.all { it.originalTranscript.length <= 65_536 && it.translations.size <= VOICE_NOTE_LANGUAGES.size &&
+            it.translations.all { (language, value) -> language in VOICE_NOTE_LANGUAGES && value.text.length in 1..65_536 &&
+                value.sourceFingerprint.matches(Regex("[a-f0-9]{64}")) && value.model.length <= 160 } })
         // Reject obviously oversized input before allocating its JSON representation.
-        val textCharacters = note.lines.sumOf { it.original.length.toLong() + it.translation.length + it.speaker.length }
+        val textCharacters = note.lines.sumOf(::voiceNoteStoredCharacters)
         if (textCharacters > 4 * 1024 * 1024) throw noteSizeLimit()
         val json = JSONObject().apply {
             put("version", 1); put("id", note.id); put("title", note.title); put("created", note.createdAt)
@@ -102,6 +105,7 @@ internal class VoiceNoteRepository(private val root: File) {
                 put("language", line.language ?: JSONObject.NULL); put("translation", line.translation); put("speaker", line.speaker)
                 put("edited", line.edited)
                 put("timingEstimated", line.timingEstimated)
+                putVoiceNoteProcessingMetadata(this, line)
             }) } })
         }.toString().toByteArray(Charsets.UTF_8)
         if (json.size > 4 * 1024 * 1024) throw noteSizeLimit()
@@ -125,9 +129,9 @@ internal class VoiceNoteRepository(private val root: File) {
             value.optionalString("source"), value.getString("target"), value.getLong("duration"),
             value.getBoolean("interrupted"), List(rows.length()) { index ->
                 val row = rows.getJSONObject(index)
-                VoiceNoteLine(row.getLong("start"), row.getLong("end"), row.getString("original"),
+                readVoiceNoteProcessingMetadata(row, VoiceNoteLine(row.getLong("start"), row.getLong("end"), row.getString("original"),
                     row.optionalString("language"), row.optString("translation"), row.optString("speaker"), row.optBoolean("edited"),
-                    row.optBoolean("timingEstimated", true))
+                    row.optBoolean("timingEstimated", true)))
             }, value.optionalString("notice"))
     }
     /** Read only summaries into the library screen. Interrupted audio can be recovered explicitly. */

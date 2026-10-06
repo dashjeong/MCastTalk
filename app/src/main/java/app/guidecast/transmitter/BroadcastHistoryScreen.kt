@@ -262,7 +262,7 @@ import java.util.Date
         }
     }
     pendingPlayback?.let { segments -> AlertDialog(onDismissRequest = { pendingPlayback = null }, title = { Text("입력을 일시정지하고 다시 듣기") },
-        text = { Text("재생 소리가 마이크에 다시 들어가지 않도록 입력을 먼저 일시정지합니다. 통역 중계는 연결도 일시정지합니다. 다시 중계하려면 운영 화면에서 직접 시작하세요.") },
+        text = { Text("재생 소리가 마이크에 다시 들어가지 않도록 입력을 먼저 일시정지합니다. On-통 Live(AI 통역)는 연결도 일시정지합니다. 다시 중계하려면 운영 화면에서 직접 시작하세요.") },
         confirmButton = { TextButton(onClick = { pendingPlayback = null; scope.launch {
             if (runtime.translationTestActive) { message = "시험을 마친 뒤 다시 들어주세요."; return@launch }
             if (runtime.isInterpreterRelay) BroadcastService.pauseBroadcast(context) else BroadcastService.pauseInput(context)

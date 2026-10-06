@@ -199,7 +199,7 @@ fun DomainCorpusScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text("통번역 스트리밍의 문장 번역에 적용됩니다. 통역 중계에는 이 자료가 자동 적용되지 않습니다. 중계 설정의 분야 안내는 별도로 입력하세요.",
+                    Text("On-통의 문장 번역에 적용됩니다. On-통 Live(AI 통역)에는 이 자료가 자동 적용되지 않습니다. 중계 설정의 분야 안내는 별도로 입력하세요.",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }

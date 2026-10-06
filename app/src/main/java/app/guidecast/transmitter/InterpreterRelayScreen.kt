@@ -124,7 +124,7 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
         Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).semantics { paneTitle = "전문 분야·내 통역 지침" },
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
             TextButton(onClick = { guardedAction("CLOSE_PROFESSIONAL") }, modifier = Modifier.padding(horizontal = 16.dp)) {
-                Text("통역 중계로")
+                Text("On-통 Live(AI 통역)로")
             }
             Box(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 RelayProfessionalSettingsCard(app, broadcast, busy, domainDraft, instructionDraft,
@@ -169,10 +169,10 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
                 closePickers()
             }
         } }, confirmButton = { TextButton(onClick = { closePickers() }) { Text("닫기") } })
-    LazyColumn(Modifier.fillMaxSize().semantics { paneTitle = "통역 중계" }, contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    LazyColumn(Modifier.fillMaxSize().semantics { paneTitle = "On-통 Live(AI 통역)" }, contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item {
             TextButton(onClick = { guardedAction("BACK") }) { Text("서비스 목록") }
-            Text("통역 중계", style = MaterialTheme.typography.headlineMedium)
+            Text("On-통 Live(AI 통역)", style = MaterialTheme.typography.headlineMedium)
             Text("마이크 → 선택한 Live API → 통역 음성·자막. 로컬 음성 모델이나 음성팩 준비 없이 사용합니다.")
             Text("원음·통역 음성과 스크립트는 이 기기에 저장됩니다. 방송 이력에서 다시 듣기·삭제·내려받기·공유할 수 있습니다.")
             broadcast.recordingWarning?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -180,7 +180,7 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
         if (busy) stickyHeader {
             Surface(Modifier.fillMaxWidth()) {
                 Column {
-                    Text("통역 중계 · ${broadcast.relayPhase.shortLabel}")
+                    Text("On-통 Live(AI 통역) · ${broadcast.relayPhase.shortLabel}")
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (broadcast.phase == BroadcastPhase.PAUSED) Button(onClick = onResume, modifier = Modifier.weight(1f)) { Text("재개") }
                         else OutlinedButton(onClick = onPause, modifier = Modifier.weight(1f)) { Text("일시정지") }

@@ -1080,7 +1080,7 @@ class BroadcastService : Service() {
                         "기기 재생 또는 LAN 방송을 켜 주세요."
                     }
                     check(translationLanguages.size == 1 && app.translationApiSettings.state.value.usesNativeLiveAudio) {
-                        "통역 중계는 Live 음성 서비스와 출력 언어 하나를 선택하세요."
+                        "On-통 Live(AI 통역)는 Live 음성 서비스와 출력 언어 하나를 선택하세요."
                     }
                 }
                 runBroadcastServer(

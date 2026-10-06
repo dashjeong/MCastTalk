@@ -40,7 +40,16 @@ internal fun writeVoiceNoteExport(
                 .name("startMs").value(line.startMs).name("endMs").value(line.endMs)
                 .name("timingEstimated").value(line.timingEstimated).name("language").value(line.language)
                 .name("original").value(line.original).name("edited").value(line.edited)
-            if (options.translations) json.name("translation").value(line.translation)
+                .name("originalTranscript").value(line.originalTranscript)
+            if (options.translations) {
+                json.name("translation").value(line.translation).name("translations").beginObject()
+                line.archiveTranslation(note.targetLanguage).translations.forEach { (language, variant) ->
+                    json.name(language).beginObject().name("text").value(variant.text)
+                        .name("sourceFingerprint").value(variant.sourceFingerprint).name("model").value(variant.model)
+                        .name("manuallyEdited").value(variant.manuallyEdited).name("fromOriginal").value(variant.fromOriginal).endObject()
+                }
+                json.endObject()
+            }
             if (options.speakers) json.name("speaker").value(line.speaker)
             json.endObject()
         }

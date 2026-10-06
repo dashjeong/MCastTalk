@@ -15,7 +15,7 @@ class NativeComparisonPolicyTest {
             val selected = nativeComparisonPresentation(gemini(model), true)
             assertFalse(selected.supported); assertFalse(selected.checked)
             assertEquals("비교 학습 · 현재 모델에서 미지원", selected.status)
-            assertTrue(selected.detail.contains("음성 통역 중계는 이용"))
+            assertTrue(selected.detail.contains("음성 On-통 Live(AI 통역)는 이용"))
         }
         assertTrue(nativeComparisonPresentation(openAi, true).checked)
     }

@@ -172,7 +172,10 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
         require(target in SUPPORTED_LANGUAGES) {
             "Gemma Translator target is not supported: $targetLanguageTag"
         }
-        require(source != target) { "Gemma Translator source and target must be different" }
+        val proofreading = currentCoroutineContext()[app.guidecast.core.translation.SourceProofreadingContext] != null
+        require(if (proofreading) source == target else source != target) {
+            "Gemma language pair does not match the requested processing mode"
+        }
         return modelManager.withSelectedModel {
             val selectedModelId = modelManager.selectedVariant.id
             gemmaEvaluationResponseSchema(selectedModelId, jsonResponseFormat)
@@ -236,7 +239,9 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
         val glossaryHints = currentCoroutineContext()[TranslationGlossaryContext]?.hints.orEmpty()
         val domainHints = currentCoroutineContext()[app.guidecast.core.translation.DomainTranslationContext]?.hints.orEmpty()
         val review = currentCoroutineContext()[TranslationReviewContext]
-        val translationStyle = currentCoroutineContext()[TranslationStyleContext]?.style?.name.orEmpty()
+        val translationStyle = if (currentCoroutineContext()[app.guidecast.core.translation.SourceProofreadingContext] != null)
+            app.guidecast.core.translation.SourceProofreadingContext.IPC_MODE
+            else currentCoroutineContext()[TranslationStyleContext]?.style?.name.orEmpty()
         // Only the local E4B worker receives this ephemeral history. Cloud providers and E2B
         // retain their existing request contracts; history is never written to diagnostics.
         val sessionMemory = if (selectedModelId == GemmaModelVariant.E4B_IT.id) {
@@ -613,6 +618,7 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
             val target = targetLanguageTag.normalizedGemmaLanguage()
             return source in SUPPORTED_LANGUAGES && target in SUPPORTED_LANGUAGES && source != target
         }
+        fun supportsProofreading(languageTag: String): Boolean = languageTag.normalizedGemmaLanguage() in SUPPORTED_LANGUAGES
     }
 }
 
