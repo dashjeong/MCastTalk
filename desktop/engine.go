@@ -270,6 +270,7 @@ func (e *Engine) startLlama(ctx, engineCtx context.Context, cfg Config, assets m
 		cmd.Env = append(cmd.Env, "GGML_OPENVINO_DEVICE=NPU", "GGML_OPENVINO_STATEFUL_EXECUTION=0")
 	}
 
+	hideBackgroundModelWindow(cmd)
 	if err := cmd.Start(); err != nil {
 		return err
 	}
@@ -395,6 +396,7 @@ func (e *Engine) startWhisper(ctx, engineCtx context.Context, cfg Config, assets
 	cmd.Env = os.Environ()
 	cmd.Env = append(cmd.Env, "PATH="+filepath.Dir(exePath)+string(os.PathListSeparator)+os.Getenv("PATH"))
 
+	hideBackgroundModelWindow(cmd)
 	if err := cmd.Start(); err != nil {
 		return err
 	}
