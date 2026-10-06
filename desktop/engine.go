@@ -225,7 +225,9 @@ func (e *Engine) startLlama(ctx, engineCtx context.Context, cfg Config, assets m
 	args := []string{"-m", asset.Path, "--port", fmt.Sprintf("%d", port), "--host", "127.0.0.1", "--api-key", key, "--jinja", "--parallel", "2", "--ctx-size", fmt.Sprint(contextPerSlot * 2)}
 
 	if backend == "cpu" {
-		args = append(args, "--n-gpu-layers", "0")
+		// CPU readiness still requires the authenticated translation warmup below.
+		// Avoid an additional native empty-input warmup before health becomes ready.
+		args = append(args, "--n-gpu-layers", "0", "--no-warmup")
 	} else if backend == "cuda" || backend == "vulkan" {
 		args = append(args, "--n-gpu-layers", "99")
 	}
