@@ -1,7 +1,10 @@
 # Security and privacy
 
 This policy describes the current source. The latest downloadable prerelease is
-0.2.47-beta; changes on `main` are not a completed release or a security certification.
+[0.2.48-beta](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.48-beta),
+for field testing. Publication is not full service acceptance or a security certification.
+Actual interpretation, LAN listening, five-second latency, continuous operation and
+domain-quality improvement remain pending acceptance; see [follow-up #24](https://github.com/dashjeong/MCastTalk/issues/24).
 
 ## Offline and online processing
 
