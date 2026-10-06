@@ -1,6 +1,6 @@
 # Security and privacy
 
-This policy describes the 0.2.49-beta feature preview (versionCode 61) for Android 11
+This policy describes the 0.2.50-beta feature preview (versionCode 62) for Android 11
 and later on ARM64. A preview is not a completed release or a security certification.
 Actual microphone interpretation, LAN audio delivery, continuous operation and
 domain-quality improvement remain pending final acceptance.

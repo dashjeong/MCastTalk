@@ -35,6 +35,7 @@ import app.guidecast.core.audio.PcmSineWaveGenerator
 import app.guidecast.core.audio.WebAudioInputBridge
 import app.guidecast.core.audio.pcmS16LeSignalStats
 import app.guidecast.core.server.BroadcastAccess
+import app.guidecast.core.server.ReplayCaptionSnapshot
 import app.guidecast.core.server.GuideCastLocalServer
 import app.guidecast.core.server.GuideCastServerConfig
 import app.guidecast.core.server.LocalNetworkAddressResolver
@@ -395,6 +396,8 @@ class BroadcastService : Service() {
     private var listenerJob: Job? = null
     private var recordingCaptionJob: Job? = null
     private var translationPreparationJob: Job? = null
+    @Volatile private var relayMicrophoneRequested = false
+    private var relayArchiveSessionId: Long? = null
     private var translationSupportPreparationJob: Job? = null
     private var selectiveRefinementRecovery: SelectiveRefinementRecovery? = null
     private var translationHealthJob: Job? = null
@@ -495,7 +498,7 @@ class BroadcastService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         latestDeliveredStartId = startId
         val action = intent?.action
-        val foregroundStart = action == ACTION_START_INPUT || action == ACTION_START_BROADCAST
+        val foregroundStart = action == ACTION_START_INPUT || action == ACTION_START_BROADCAST || action == ACTION_START_RELAY_MICROPHONE
         foregroundStartDispatch = foregroundStart
         try {
             // Satisfy Android's foreground deadline before archive IO, validation, deferred
@@ -504,11 +507,15 @@ class BroadcastService : Service() {
                 val beforePromotion = SystemClock.elapsedRealtime()
                 startForegroundForBroadcast()
                 RuntimeDiagnosticLog.durableRecord("service_foreground", "stage=PROMOTED action=" +
-                    (if (action == ACTION_START_INPUT) "INPUT_START" else "BROADCAST_START") +
+                    (if (action in setOf(ACTION_START_INPUT, ACTION_START_RELAY_MICROPHONE)) "INPUT_START" else "BROADCAST_START") +
                     " elapsed_ms=${SystemClock.elapsedRealtime() - beforePromotion}")
             }
             when (action) {
                 ACTION_START_INPUT -> startInput(intent)
+                ACTION_START_RELAY_MICROPHONE -> {
+                    val current = app.broadcastRuntime.state.value
+                    if (relayMicrophoneRequestMatches(intent.getStringExtra(EXTRA_RECORDING_ID), current)) startRelayMicrophone()
+                }
                 ACTION_PAUSE_INPUT -> pauseInput()
                 ACTION_RESUME_INPUT -> resumeInput()
                 ACTION_STOP_INPUT -> stopInput()
@@ -539,7 +546,7 @@ class BroadcastService : Service() {
         Log.e(LOG_TAG, "Service action failed: $action", error)
         val message = error.message ?: error.javaClass.simpleName
         when (action) {
-            ACTION_START_INPUT -> failInput("입력을 시작하지 못했습니다: $message")
+            ACTION_START_INPUT, ACTION_START_RELAY_MICROPHONE -> failInput("입력을 시작하지 못했습니다: $message")
             ACTION_START_BROADCAST -> {
                 releaseBroadcastResources()
                 app.recordings.finish(failed = true)
@@ -619,6 +626,46 @@ class BroadcastService : Service() {
     }
 
     private fun startInput(intent: Intent) {
+        val current = app.broadcastRuntime.state.value
+        if (current.isInterpreterRelay && current.phase in setOf(BroadcastPhase.LIVE, BroadcastPhase.PAUSED)) {
+            startRelayMicrophone()
+            return
+        }
+        startInputCapture(intent)
+    }
+
+    private fun startRelayMicrophone() {
+        if (inputJob != null || translationPreparationJob?.isActive == true) return
+        val current = app.broadcastRuntime.state.value
+        val stream = broadcastStreamSession ?: return
+        if (!current.isInterpreterRelay || current.phase !in setOf(BroadcastPhase.LIVE, BroadcastPhase.PAUSED)) return
+        val api = app.translationApiSettings.state.value
+        val input = app.audioInputRepository.selectedDevice.value
+        val permission = ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        val issue = relayInputIssue(input?.kind, permission, runCatching { audioManager.isMicrophoneMute }.getOrNull())
+        if (issue != null || !api.usesNativeLiveAudio || !app.translationApiSettings.authorized(api) || !api.allowLiveAudio) {
+            app.broadcastRuntime.update { it.copy(inputPhase = InputPhase.FAILED,
+                inputErrorMessage = issue?.message ?: "통역 AI 설정과 음성 전송 동의를 확인한 뒤 마이크를 켜세요.") }
+            return
+        }
+        val publication = broadcastAudioPublicationCoordinator ?: return
+        relayMicrophoneRequested = true
+        val sessionId = beginTranslationSession()
+        app.broadcastRuntime.update { it.copy(inputPhase = InputPhase.STARTING, relayPhase = InterpreterRelayPhase.CONNECTING,
+            inputErrorMessage = null, translationWarning = "마이크 통역 연결을 준비하고 있습니다. 방송 주소는 유지됩니다.") }
+        app.translationDiagnostics.begin()
+        val relay = app.interpreterRelaySettings.state.value
+        createTranslationPreparationJob(
+            translationLanguages = current.translationChannels.map { it.languageTag },
+            sourceLanguageTag = relay.source, useGemma = false, selectiveTranslationRefinement = false,
+            sessionId = sessionId, archiveSessionId = relayArchiveSessionId,
+            broadcastSession = broadcastGeneration.get(), streamSession = stream,
+            audioPublicationCoordinator = publication,
+        ).also { translationPreparationJob = it }.start()
+    }
+
+    private fun startInputCapture(intent: Intent) {
         if (inputJob != null) return
         val input = app.audioInputRepository.selectedDevice.value
         if (input == null) {
@@ -722,9 +769,8 @@ class BroadcastService : Service() {
             physicalMicFrames = {
                 app.audioCaptureEngine.frames(
                     preferredDeviceId = input.platformId,
-                    config = AudioCaptureConfig(sampleRateHz = SAMPLE_RATE_HZ,
-                        noiseMode = app.microphoneNoiseSettings.profileFor(input.kind).noiseMode,
-                        nearSpeakerFocus = app.microphoneNoiseSettings.profileFor(input.kind).nearSpeakerFocus),
+                    config = relayMicrophoneCaptureConfig(app.microphoneNoiseSettings.profileFor(input.kind),
+                        app.broadcastRuntime.state.value.isInterpreterRelay, app.interpreterRelaySettings.state.value.localPlayback),
                 )
             },
             playbackFrames = {
@@ -803,7 +849,7 @@ class BroadcastService : Service() {
         val current = app.broadcastRuntime.state.value
         if (testToneActive.get()) return
         val pcm = PcmAudioFrame(frame.bytes, frame.capturedAtElapsedRealtimeNanos)
-        if (current.translationTestActive || current.phase == BroadcastPhase.LIVE) nativeRelayConnections.forEach { (target, connection) ->
+        if (relayInputProcessingEnabled(current)) nativeRelayConnections.forEach { (target, connection) ->
             if (nativeRelayLifecycle?.accepts(target) == true) connection.offer(pcm)
         }
         val recognitionInput = recognitionFrames.takeIf {
@@ -812,11 +858,11 @@ class BroadcastService : Service() {
         // Output congestion never stops this capture frame from reaching speech recognition.
         if (!publishSourceThenForwardRecognitionFrame(
                 frame = pcm,
-                publishSource = current.phase == BroadcastPhase.LIVE,
+            publishSource = relayInputProcessingEnabled(current) && current.phase in setOf(BroadcastPhase.LIVE, BroadcastPhase.PAUSED),
                 publication = broadcastAudioPublicationCoordinator,
                 publish = { captured ->
                     val latest = app.broadcastRuntime.state.value
-                    if (!testToneActive.get() && latest.phase == BroadcastPhase.LIVE) {
+                    if (!testToneActive.get() && relayInputProcessingEnabled(latest)) {
                         broadcastStreamSession?.tryPublish("source", captured)
                     }
                 },
@@ -831,6 +877,12 @@ class BroadcastService : Service() {
     }
 
     private fun pauseInput() {
+        if (app.broadcastRuntime.state.value.isInterpreterRelay) {
+            if (app.broadcastRuntime.state.value.inputPhase !in setOf(InputPhase.ACTIVE, InputPhase.STARTING)) return
+            stopInput()
+            app.broadcastRuntime.update { it.copy(inputPhase = InputPhase.PAUSED) }
+            return
+        }
         if (app.broadcastRuntime.state.value.inputPhase != InputPhase.ACTIVE) return
         recordInputControl(ServiceFlowAction.PAUSE_REQUEST, InputPhase.ACTIVE, InputPhase.PAUSED)
         inputPaused.set(true)
@@ -849,6 +901,10 @@ class BroadcastService : Service() {
     }
 
     private fun resumeInput() {
+        if (app.broadcastRuntime.state.value.isInterpreterRelay) {
+            startRelayMicrophone()
+            return
+        }
         if (app.broadcastRuntime.state.value.inputPhase != InputPhase.PAUSED) return
         if (inputJob == null || selectedInput == null) {
             failInput("입력 스트림이 종료됐습니다. 입력 시작을 다시 누르세요.")
@@ -864,6 +920,13 @@ class BroadcastService : Service() {
     }
 
     private fun stopInput() {
+        if (app.broadcastRuntime.state.value.isInterpreterRelay) {
+            relayMicrophoneRequested = false
+            translationPreparationJob?.cancel()
+            translationPreparationJob = null
+            releaseTranslationTestResources()
+            app.broadcastRuntime.update { it.copy(relayPhase = InterpreterRelayPhase.PAUSED) }
+        }
         recordInputControl(ServiceFlowAction.STOP_REQUEST, app.broadcastRuntime.state.value.inputPhase, InputPhase.IDLE)
         if (app.broadcastRuntime.state.value.translationTestActive) {
             stopTranslationTest(preservePass = true)
@@ -948,7 +1011,7 @@ class BroadcastService : Service() {
     }
 
     private fun startBroadcast(intent: Intent) {
-        if (intent.getBooleanExtra(EXTRA_INTERPRETER_RELAY, false) && app.broadcastRuntime.state.value.phase !in
+        if (intent.getBooleanExtra(EXTRA_INTERPRETER_RELAY, false) && !intent.getBooleanExtra(EXTRA_DEFER_RELAY_INPUT, false) && app.broadcastRuntime.state.value.phase !in
             setOf(BroadcastPhase.STARTING, BroadcastPhase.LIVE, BroadcastPhase.PAUSED)) {
             val input = app.audioInputRepository.selectedDevice.value
             val permission = ContextCompat.checkSelfPermission(this, android.Manifest.permission.RECORD_AUDIO) ==
@@ -1019,6 +1082,8 @@ class BroadcastService : Service() {
         if (app.broadcastRuntime.state.value.phase != BroadcastPhase.PAUSED) app.recordings.finish(app.broadcastRuntime.state.value.phase == BroadcastPhase.FAILED)
         val relay = intent.getBooleanExtra(EXTRA_INTERPRETER_RELAY, false)
         if (relay) stopInput()
+        relayMicrophoneRequested = relay && !intent.getBooleanExtra(EXTRA_DEFER_RELAY_INPUT, false)
+        val broadcastTitle = intent.getStringExtra(EXTRA_BROADCAST_TITLE).orEmpty()
         val runMode = intent.getStringExtra(EXTRA_RUN_MODE)
             ?.let { runCatching { BroadcastRunMode.valueOf(it) }.getOrNull() }
             ?: BroadcastRunMode.NETWORK
@@ -1029,9 +1094,10 @@ class BroadcastService : Service() {
         app.broadcastRuntime.update { current ->
             current.copy(
                 phase = BroadcastPhase.STARTING,
+                broadcastTitle = broadcastTitle,
                 recordingWarning = null,
                 isInterpreterRelay = relay,
-                relayPhase = if (relay) InterpreterRelayPhase.CONNECTING else InterpreterRelayPhase.IDLE,
+                relayPhase = if (relay && relayMicrophoneRequested) InterpreterRelayPhase.CONNECTING else InterpreterRelayPhase.IDLE,
                 relayPlayedBytes = 0,
                 relayReferenceCharacters = 0,
                 relayReferenceEntries = 0,
@@ -1991,7 +2057,7 @@ class BroadcastService : Service() {
         val streamSession = app.audioStreams.configure(channelDescriptors)
         val recordingId = synchronized(broadcastResourceLock) {
             if (broadcastGeneration.get() != generation) throw CancellationException("Recording start superseded")
-            app.recordings.startPart(streamSession)
+            app.recordings.startPart(streamSession, app.broadcastRuntime.state.value.broadcastTitle)
         }
         val captionJob = serviceScope.launch(start = CoroutineStart.LAZY) {
             var previous: List<TranslationTranscriptLine>? = null
@@ -2015,11 +2081,13 @@ class BroadcastService : Service() {
             archiveSnapshot = { app.transcriptArchive.snapshot.value },
             runtimeSnapshot = { app.broadcastRuntime.state.value },
         )
+        if (app.broadcastRuntime.state.value.isInterpreterRelay) relayArchiveSessionId = archiveSessionId
         val server = try {
             if (runMode == BroadcastRunMode.STANDALONE) null else GuideCastLocalServer(
                 context = this,
                 streams = app.audioStreams,
                 bindAllInterfacesForDebug = BuildConfig.DEBUG,
+                isLiveAudioBroadcastEnabled = { app.broadcastRuntime.state.value.phase == BroadcastPhase.LIVE },
                 isSpeakerInputReady = {
                     val state = app.broadcastRuntime.state.value
                     app.audioInputRepository.selectedDevice.value?.kind == AudioInputKind.WEB_SPEAKER &&
@@ -2053,13 +2121,16 @@ class BroadcastService : Service() {
                 },
                 transcriptSnapshotProvider = transcriptPublication::snapshot,
                 replayProvider = { app.recordings.audio.snapshot(recordingId) },
-                replayCaptionsProvider = { part, sequence ->
+                replayCaptionSnapshotProvider = {
+                    val committedLength = app.recordings.committedCaptionLength(recordingId)
+                    ReplayCaptionSnapshot(committedLength) { part, sequence ->
                     val after = if (part != null && sequence != null) part to sequence else null
-                    org.json.JSONArray(app.recordings.captions(recordingId, after).map { row ->
+                    org.json.JSONArray(app.recordings.captions(recordingId, after, committedLength = committedLength).map { row ->
                         org.json.JSONObject().put("part", row.part).put("sequence", row.sequence).put("sourceText", row.original)
                             .put("isFinal", row.final).put("translations", org.json.JSONObject(row.translations))
                             .put("capturedAtElapsedRealtimeNanos", row.monotonicNanos).put("alignment", row.alignment)
                     }).toString()
+                    }
                 },
             ).start(
                 bindAddress = requireNotNull(network).address,
@@ -2105,7 +2176,7 @@ class BroadcastService : Service() {
                                 displayName = requireNotNull(TRANSLATION_LANGUAGES[languageTag]),
                                 listenerUrl = server?.listenerUrlFor(channelId),
                                 translationProvider = when {
-                                    app.broadcastRuntime.state.value.isInterpreterRelay -> "Live API 연결 중"
+                                    app.broadcastRuntime.state.value.isInterpreterRelay -> if (relayMicrophoneRequested) "Live API 연결 중" else "마이크 꺼짐"
                                     useGemmaForPriority && GemmaTranslationProvider.supportsTranslation(sourceLanguageTag, languageTag) -> "공유 Gemma → ML Kit"
                                     else -> "ML Kit"
                                 },
@@ -2133,7 +2204,8 @@ class BroadcastService : Service() {
                             null
                         } else {
                             if (app.broadcastRuntime.state.value.isInterpreterRelay) {
-                                "Live API 연결 중 · 준비가 완료되면 마이크 입력을 시작합니다."
+                                if (relayMicrophoneRequested) "Live API 연결 중 · 준비가 완료되면 마이크 입력을 시작합니다."
+                                else "방송 준비됨 · 마이크 켜기를 누르면 통역을 시작합니다."
                             } else if (runMode == BroadcastRunMode.STANDALONE) {
                                 "통역 엔진을 준비 중입니다. 이 기기 안에서만 처리하며 네트워크 방송은 열지 않습니다."
                             } else "통역 엔진을 준비 중입니다. 방송 서버는 운영자 제어에 따라 이미 열렸습니다."
@@ -2143,7 +2215,7 @@ class BroadcastService : Service() {
                 }
                 updateNotification()
 
-                if (translationLanguages.isNotEmpty()) {
+                if (translationLanguages.isNotEmpty() && (!app.broadcastRuntime.state.value.isInterpreterRelay || relayMicrophoneRequested)) {
                     val sessionId = beginTranslationSession()
                     app.translationDiagnostics.begin()
                     prepareJob = createTranslationPreparationJob(
@@ -2284,7 +2356,7 @@ class BroadcastService : Service() {
                 }
                 if (app.broadcastRuntime.state.value.isInterpreterRelay) {
                     Handler(Looper.getMainLooper()).post {
-                        if (broadcastGeneration.get() == broadcastSession && isTranslationSessionCurrent(sessionId) &&
+                        if (relayMicrophoneRequested && broadcastGeneration.get() == broadcastSession && isTranslationSessionCurrent(sessionId) &&
                             app.broadcastRuntime.state.value.relayPhase in setOf(InterpreterRelayPhase.READY, InterpreterRelayPhase.RECEIVING) &&
                             app.translationApiSettings.state.value.let { app.translationApiSettings.authorized(it) && it.allowLiveAudio }) {
                             if (app.interpreterRelaySettings.state.value.localPlayback) {
@@ -2296,7 +2368,7 @@ class BroadcastService : Service() {
                                 else app.broadcastRuntime.update { state -> state.copy(translationWarning =
                                     "$monitorTarget 기기 청취 연결이 준비되지 않았습니다. 준비된 다른 언어의 LAN 중계는 계속됩니다.") }
                             }
-                            startInput(Intent())
+                            startInputCapture(Intent())
                         }
                     }
                 }
@@ -2321,6 +2393,7 @@ class BroadcastService : Service() {
                         app.broadcastRuntime.update { current ->
                             current.copy(
                                 relayPhase = if (current.isInterpreterRelay) InterpreterRelayPhase.FAILED else current.relayPhase,
+                                inputPhase = if (current.isInterpreterRelay) InputPhase.FAILED else current.inputPhase,
                                 translationWarning = "통역 음원 준비 안 됨 · " +
                                     (error.message ?: error.javaClass.simpleName) +
                                     " · 방송 시작/중지는 운영자가 결정합니다.",
@@ -2346,9 +2419,7 @@ class BroadcastService : Service() {
     private fun pauseBroadcast() {
         if (app.broadcastRuntime.state.value.phase != BroadcastPhase.LIVE) return
         if (app.broadcastRuntime.state.value.isInterpreterRelay) {
-            stopInput()
-            releaseBroadcastResources()
-            app.broadcastRuntime.update { it.copy(phase = BroadcastPhase.PAUSED, relayPhase = InterpreterRelayPhase.PAUSED) }
+            app.broadcastRuntime.update { it.copy(phase = BroadcastPhase.PAUSED) }
         } else {
             stopGeminiLiveForPause()
             app.recordings.activeId?.let { app.recordings.audio.markPaused(it, true) }
@@ -2360,11 +2431,7 @@ class BroadcastService : Service() {
     private fun resumeBroadcast() {
         if (app.broadcastRuntime.state.value.phase != BroadcastPhase.PAUSED) return
         if (app.broadcastRuntime.state.value.isInterpreterRelay) {
-            val relay = app.interpreterRelaySettings.state.value
-            startBroadcast(Intent().putExtra(EXTRA_INTERPRETER_RELAY, true)
-                .putExtra(EXTRA_TRANSLATION_LANGUAGES, relay.targetLanguageTags.toTypedArray())
-                .putExtra(EXTRA_SOURCE_LANGUAGE, relay.source)
-                .putExtra(EXTRA_RUN_MODE, if (relay.networkBroadcast) BroadcastRunMode.NETWORK.name else BroadcastRunMode.STANDALONE.name))
+            app.broadcastRuntime.update { it.copy(phase = BroadcastPhase.LIVE) }
         } else {
             app.recordings.activeId?.let { app.recordings.audio.markPaused(it, false) }
             app.broadcastRuntime.update { it.copy(phase = BroadcastPhase.LIVE) }
@@ -2376,12 +2443,14 @@ class BroadcastService : Service() {
         if (app.broadcastRuntime.state.value.isInterpreterRelay) stopInput()
         releaseBroadcastResources()
         app.recordings.finish()
+        relayArchiveSessionId = null
         app.broadcastRuntime.update { current ->
             current.copy(
                 phase = BroadcastPhase.IDLE,
                 relayPhase = InterpreterRelayPhase.IDLE,
                 isInterpreterRelay = false,
                 recordingId = null,
+                broadcastTitle = "",
                 accessMode = null,
                 listenerUrl = null,
                 speakerUrl = null,
@@ -2528,7 +2597,7 @@ class BroadcastService : Service() {
         val connections = targets.distinct().mapIndexed { index, tag ->
             val timing = timings.getValue(tag)
             val retiredTurns = retirements.getValue(tag.lowercase(Locale.ROOT))
-            val segments = GeminiLiveSegments(tag, source, 1_000_000_000L + index * 100_000_000L, sessionId)
+            val segments = GeminiLiveSegments(tag, source, relayNativeSequenceBase(sessionId, index), sessionId)
             GeminiLiveSession(serviceScope, options, tag, app.translationApiSettings, app.geminiLiveMonitor,
                 allowed = { isTranslationSessionCurrent(sessionId) && session.isActive() && lifecycle.accepts(tag) },
                 onEvent = { event ->
@@ -2558,7 +2627,7 @@ class BroadcastService : Service() {
                                 state.relayPhase != InterpreterRelayPhase.FAILED) state.copy(relayPhase = InterpreterRelayPhase.RECEIVING) else state
                         }
                         var result: app.guidecast.core.stream.StreamPublishResult? = null
-                        if (current.translationTestActive || current.phase == BroadcastPhase.LIVE) {
+                        if (relayInputProcessingEnabled(current)) {
                             val lease = publication?.tryAcquireChannel(tag.lowercase(Locale.ROOT))
                             if (publication == null || lease != null) try {
                                 ensureTranslationSessionCurrent(sessionId)
@@ -2636,7 +2705,7 @@ class BroadcastService : Service() {
         val channelId = tag.lowercase(Locale.ROOT)
         val references = referencesByTarget.getValue(tag)
         check(session.descriptor(channelId)?.sampleRateHz == 24_000) { "Native audio channel format mismatch" }
-        val sequenceBase = 2_000_000_000L + index * 1_000_000_000L
+        val sequenceBase = relayNativeSequenceBase(sessionId, index)
         val segments = OpenAiAudioSegments(tag, source, sessionId, sequenceBase = sequenceBase)
         val sessionEnded = java.util.concurrent.atomic.AtomicReference<NativeAudioEndReason?>(null)
         val learning = if (app.broadcastRuntime.state.value.isInterpreterRelay && tag == monitorTarget)
@@ -2675,7 +2744,7 @@ class BroadcastService : Service() {
                                 state.relayPhase != InterpreterRelayPhase.FAILED) state.copy(relayPhase = InterpreterRelayPhase.RECEIVING) else state
                         }
                 var result: app.guidecast.core.stream.StreamPublishResult? = null
-                if (current.translationTestActive || current.phase == BroadcastPhase.LIVE) {
+                if (relayInputProcessingEnabled(current)) {
                     val lease = publication?.tryAcquireChannel(channelId)
                     if (publication == null || lease != null) try {
                         ensureTranslationSessionCurrent(sessionId)
@@ -4593,6 +4662,7 @@ class BroadcastService : Service() {
 
     companion object {
         private const val ACTION_START_INPUT = "app.guidecast.action.START_INPUT"
+        private const val ACTION_START_RELAY_MICROPHONE = "app.guidecast.action.START_RELAY_MICROPHONE"
         private const val LOG_TAG = "GuideCastService"
         private const val ACTION_PAUSE_INPUT = "app.guidecast.action.PAUSE_INPUT"
         private const val ACTION_RESUME_INPUT = "app.guidecast.action.RESUME_INPUT"
@@ -4613,6 +4683,9 @@ class BroadcastService : Service() {
         private const val EXTRA_ACCESS_MODE = "access_mode"
         private const val EXTRA_RUN_MODE = "run_mode"
         private const val EXTRA_INTERPRETER_RELAY = "interpreter_relay"
+        private const val EXTRA_DEFER_RELAY_INPUT = "defer_relay_input"
+        private const val EXTRA_BROADCAST_TITLE = "broadcast_title"
+        private const val EXTRA_RECORDING_ID = "recording_id"
         private const val EXTRA_PIN = "pin"
         private const val EXTRA_SPEAKER_PIN = "speaker_pin"
         private const val EXTRA_TRANSLATION_LANGUAGES = "translation_languages"
@@ -4721,12 +4794,16 @@ class BroadcastService : Service() {
             selectiveTranslationRefinement: Boolean = false,
             runMode: BroadcastRunMode = BroadcastRunMode.NETWORK,
             interpreterRelay: Boolean = false,
+            deferRelayInput: Boolean = false,
+            broadcastTitle: String = "",
         ) {
             val intent = Intent(context, BroadcastService::class.java)
                 .setAction(ACTION_START_BROADCAST)
                 .putExtra(EXTRA_ACCESS_MODE, accessMode.name)
                 .putExtra(EXTRA_RUN_MODE, runMode.name)
                 .putExtra(EXTRA_INTERPRETER_RELAY, interpreterRelay)
+                .putExtra(EXTRA_DEFER_RELAY_INPUT, deferRelayInput)
+                .putExtra(EXTRA_BROADCAST_TITLE, broadcastTitle)
                 .putExtra(EXTRA_TRANSLATION_LANGUAGES, translationLanguages)
                 .putExtra(EXTRA_SOURCE_LANGUAGE, sourceLanguageTag)
                 .putExtra(EXTRA_USE_GEMMA, useGemma)
@@ -4734,6 +4811,11 @@ class BroadcastService : Service() {
             if (pin != null) intent.putExtra(EXTRA_PIN, pin)
             if (speakerPin != null) intent.putExtra(EXTRA_SPEAKER_PIN, speakerPin)
             ContextCompat.startForegroundService(context, intent)
+        }
+
+        fun startRelayMicrophone(context: Context, recordingId: String) {
+            ContextCompat.startForegroundService(context, Intent(context, BroadcastService::class.java)
+                .setAction(ACTION_START_RELAY_MICROPHONE).putExtra(EXTRA_RECORDING_ID, recordingId))
         }
 
         fun pauseBroadcast(context: Context) = sendAction(context, ACTION_PAUSE_BROADCAST)

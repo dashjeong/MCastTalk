@@ -106,6 +106,7 @@ enum class InterpreterRelayPhase { IDLE, CONNECTING, READY, RECEIVING, PAUSED, F
 
 data class BroadcastSnapshot(
     val recordingId: String? = null,
+    val broadcastTitle: String = "",
     val recordingWarning: String? = null,
     val isInterpreterRelay: Boolean = false,
     val relayPhase: InterpreterRelayPhase = InterpreterRelayPhase.IDLE,

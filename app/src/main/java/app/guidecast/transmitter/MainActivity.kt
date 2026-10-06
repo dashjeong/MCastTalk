@@ -690,6 +690,8 @@ private fun GuideCastScreen(
                             onRequestMicrophone = { onRequestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO)) },
                             onStart = onStartRelay, onPause = onPauseBroadcast, onResume = onResumeBroadcast,
                             onStop = onStopBroadcast, onBack = { service = null }, onOpenHud = { showLiveHud = true },
+                            onStartMicrophone = { broadcast.recordingId?.let { BroadcastService.startRelayMicrophone(app, it) } },
+                            onStopMicrophone = onStopInput,
                             settingsRequest = relaySettingsRequest, onSettingsRequestHandled = { relaySettingsRequest = 0 })
                     }
                     service == MCastService.HISTORY -> serviceScreens.SaveableStateProvider("broadcast-history") {
@@ -818,6 +820,11 @@ private fun GuideCastScreen(
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text("입력 · ${state.selectedDevice?.label ?: "선택 필요"}", style = MaterialTheme.typography.titleMedium)
                                 InputLevel(broadcast, state.selectedDevice?.kind, state.playbackCaptureDiagnostics)
+                                broadcast.inputProcessingSummary?.let { summary ->
+                                    Text(summary, style = MaterialTheme.typography.bodySmall,
+                                        color = if ("미지원" in summary || "지원하지" in summary || "일부만" in summary)
+                                            GuideCastWarning else MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                                 broadcast.inputErrorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                                 TextButton(onClick = { openStreamingSettings("input") }) { Text("입력 설정") }
                             }

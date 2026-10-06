@@ -25,7 +25,7 @@ internal fun RelayListenerAccessCard(listenerUrl: String?, broadcasting: Boolean
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                     QrCode(listenerUrl, description = "공통 청취 웹페이지 QR 코드")
                 }
-                SelectionContainer { Text(listenerUrl) }
+                SelectionContainer { Text(listenerDisplayAddress(listenerUrl), style = MaterialTheme.typography.titleMedium) }
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { clipboard.setText(AnnotatedString(listenerUrl)) }, modifier = Modifier.weight(1f)) { Text("주소 복사") }
                     Button(onClick = {
@@ -36,6 +36,8 @@ internal fun RelayListenerAccessCard(listenerUrl: String?, broadcasting: Boolean
                     }, modifier = Modifier.weight(1f)) { Text("공유") }
                 }
                 Text("청취자는 접속한 뒤 듣기와 스크립트의 언어를 각각 고를 수 있습니다. 현재 방송에서 제공하는 언어만 표시합니다.")
+                Text("QR·복사·공유에 접속 권한을 포함합니다. 같은 방송에서 마이크를 껐다 켜거나 송출을 재개해도 유지됩니다.",
+                    style = MaterialTheme.typography.bodySmall)
             }
         }
     }

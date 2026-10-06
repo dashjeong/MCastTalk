@@ -3,6 +3,7 @@ package app.guidecast.transmitter
 import android.net.Uri
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
@@ -54,12 +55,23 @@ import java.util.Date
     var pendingPlayback by remember { mutableStateOf<List<RecordedPcmSegment>?>(null) }
     var pendingDownloadName by rememberSaveable { mutableStateOf<String?>(null) }
     val savedDocument = downloadState.takeIf { it.recordingId == selected }?.savedUri?.let { uri -> downloadState.mime?.let { uri to it } }
-    var deleting by remember { mutableStateOf<String?>(null) }
+    var deleting by remember { mutableStateOf<List<String>?>(null) }
+    var selectionMode by rememberSaveable { mutableStateOf(false) }
+    var selectedHistoryIds by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    var renaming by remember { mutableStateOf<RecordedBroadcast?>(null) }
+    var renameError by remember(renaming?.id) { mutableStateOf<String?>(null) }
+    var managementBusy by remember { mutableStateOf(false) }
     var includeScript by remember { mutableStateOf(false) }
     var exportExpanded by remember(selected) { mutableStateOf(false) }
     val snapshot = history.firstOrNull { it.id == selected }
     val choices = snapshot?.let { recordedAudioChoices(it.segments) }.orEmpty()
     val audioChoice = choice?.takeIf { it in choices } ?: choices.firstOrNull { it.channel == "source" } ?: choices.firstOrNull()
+    val activeRecordingId = app.recordings.activeId
+    val manageableHistory = history.filter { recordingCanBeDeleted(it, activeRecordingId) }
+    val manageableSelection = availableRecordingSelections(selectedHistoryIds, history, activeRecordingId)
+    LaunchedEffect(history, activeRecordingId, selectedHistoryIds) {
+        if (selectedHistoryIds != manageableSelection) selectedHistoryIds = manageableSelection
+    }
     LaunchedEffect(selected, pageAfter) {
         while (true) {
             history = withContext(Dispatchers.IO) { app.recordings.history() }
@@ -80,6 +92,11 @@ import java.util.Date
         }
     }
     fun stopPlayback() { playback?.cancel(); playback = null; playbackPaused = false; message = "재생 중지됨" }
+    BackHandler(enabled = selectionMode || selected != null || managementBusy) {
+        if (managementBusy) Unit
+        else if (selectionMode) { selectionMode = false; selectedHistoryIds = emptyList() }
+        else { stopPlayback(); selected = null; message = null }
+    }
     fun play(segments: List<RecordedPcmSegment>) {
         playback?.cancel()
         val epoch = ++playbackEpoch
@@ -137,27 +154,40 @@ import java.util.Date
     LazyColumn(Modifier.fillMaxSize().semantics { paneTitle = if (selected == null) "방송 이력" else "저장한 방송" },
         contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            TextButton(onClick = { stopPlayback(); onBack() }) { Text("서비스 목록") }
+            TextButton(enabled = !managementBusy, onClick = { stopPlayback(); onBack() }) { Text("서비스 목록") }
             Text(if (snapshot == null) "방송 이력" else "저장한 방송", style = MaterialTheme.typography.headlineMedium)
             message?.let { Text(it) }
             downloadState.message?.let { Text(it) }
             if (busy) { LinearProgressIndicator(Modifier.fillMaxWidth()); Text("파일 준비·저장 중 · $saveProgress%"); TextButton(onClick = { if (downloadState.active) downloadModel.cancelCopy() else savingJob?.cancel() }) { Text(if (downloadState.active) "파일 저장 취소" else "파일 준비 취소") } }
         }
         if (snapshot == null) {
+            item {
+                BroadcastHistoryManagementBar(selectionMode, manageableSelection.size, manageableHistory.size, busy || managementBusy,
+                    onStartSelection = { selectionMode = true; message = null },
+                    onSelectAll = { selectedHistoryIds = manageableHistory.map { it.id } },
+                    onCancel = { selectionMode = false; selectedHistoryIds = emptyList() },
+                    onDelete = { deleting = manageableSelection.takeIf { it.isNotEmpty() } },
+                    onRename = { manageableSelection.singleOrNull()?.let { id -> history.firstOrNull { it.id == id }?.let { renaming = it } } })
+                if (selectionMode) Text("삭제할 방송을 선택하세요. 운영 중인 방송은 종료한 뒤 삭제할 수 있습니다.", style = MaterialTheme.typography.bodySmall)
+            }
             if (history.isEmpty()) item { Text(if (historyLoading) "방송 목록을 불러오는 중입니다." else "저장된 방송이 없습니다. 방송을 시작하면 음성과 스크립트를 기기에 보관합니다.") }
             items(history, key = { it.id }) { session ->
-                Card(onClick = { selected = session.id; message = null }, shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant), modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(DateFormat.getDateTimeInstance().format(Date(session.startedAtMillis)))
-                        Text(recordedSessionState(session)); Text("음성과 스크립트 확인 · 다시 듣기")
-                        if (session.failure != null || session.droppedRecordingFrames > 0) Text("녹음에 공백이 있습니다", color = MaterialTheme.colorScheme.error)
-                    }
-                }
+                RecordingHistoryRow(session, selectionMode, session.id in manageableSelection,
+                    recordingCanBeDeleted(session, activeRecordingId), busy || managementBusy, recordedSessionState(session),
+                    onOpen = { selected = session.id; message = null },
+                    onSelect = {
+                        if (recordingCanBeDeleted(session, app.recordings.activeId)) {
+                            selectionMode = true; message = null
+                            selectedHistoryIds = if (session.id in selectedHistoryIds) selectedHistoryIds - session.id else selectedHistoryIds + session.id
+                        }
+                    }, onRename = { renaming = session })
             }
         } else {
             item {
-                TextButton(onClick = { stopPlayback(); selected = null; message = null }) { Text("전체 방송 목록") }
-                Text(DateFormat.getDateTimeInstance().format(Date(snapshot.startedAtMillis)), style = MaterialTheme.typography.titleLarge)
+                TextButton(enabled = !managementBusy, onClick = { stopPlayback(); selected = null; message = null }) { Text("전체 방송 목록") }
+                Text(recordingDisplayTitle(snapshot), style = MaterialTheme.typography.titleLarge)
+                Text(DateFormat.getDateTimeInstance().format(Date(snapshot.startedAtMillis)))
+                TextButton(enabled = !busy && !managementBusy, onClick = { renaming = snapshot }) { Text("이름 변경") }
                 Text(recordedSessionState(snapshot))
                 Text("먼저 내용을 읽고 들어보세요. 다시 듣기에는 AI를 호출하지 않습니다.")
                 if (snapshot.failure != null || snapshot.droppedRecordingFrames > 0) Text("녹음 공백 ${snapshot.droppedRecordingFrames}회 · 저장 오류 ${snapshot.failure ?: "없음"}", color = MaterialTheme.colorScheme.error)
@@ -257,7 +287,7 @@ import java.util.Date
                     }, modifier = Modifier.fillMaxWidth()) { Text("선택 음원 MP3 공유") }
                     Text("공유한 복사본과 내려받은 파일은 직접 관리하세요. 앱의 공유 임시 파일은 24시간 후 읽기 권한이 만료됩니다.", style = MaterialTheme.typography.bodySmall)
                 }
-                OutlinedButton(enabled = !busy && (snapshot.endedAtMillis != null || snapshot.state == "INTERRUPTED"), onClick = { deleting = snapshot.id }) { Text("이 방송 삭제") }
+                OutlinedButton(enabled = !busy && !managementBusy && recordingCanBeDeleted(snapshot, activeRecordingId), onClick = { deleting = listOf(snapshot.id) }) { Text("이 방송 삭제") }
             }
         }
     }
@@ -270,11 +300,37 @@ import java.util.Date
             try { withTimeout(8000) { app.broadcastRuntime.state.first { it.inputPhase !in setOf(InputPhase.ACTIVE, InputPhase.STARTING) } }; play(segments) }
             catch (_: Exception) { message = "입력 일시정지를 확인하지 못했습니다. 운영 화면에서 중지한 뒤 재생하세요." }
         } }) { Text("일시정지 후 재생") } }, dismissButton = { TextButton(onClick = { pendingPlayback = null }) { Text("취소") } }) }
-    deleting?.let { id -> AlertDialog(onDismissRequest = { deleting = null }, title = { Text("방송 기록 삭제") },
-        text = { Text("기기 내 음성·스크립트와 앱의 공유 임시 파일을 삭제합니다. 내려받은 파일과 수신 앱의 복사본은 직접 삭제해야 합니다.") },
+    renaming?.let { recording -> RecordingRenameDialog(recording, managementBusy,
+        errorMessage = renameError, onDraftChanged = { renameError = null },
+        onCancel = { renaming = null }, onSave = { title -> scope.launch {
+            managementBusy = true; renameError = null
+            try {
+                val saved = withContext(Dispatchers.IO) { app.recordings.rename(recording.id, title) }
+                if (saved) {
+                    history = withContext(Dispatchers.IO) { app.recordings.history() }
+                    renaming = null; message = "방송 이름을 변경했습니다."
+                } else renameError = "이름을 저장하지 못했습니다. 방송이 남아 있는지와 저장 공간을 확인하고 다시 시도하세요."
+            } catch (cancel: CancellationException) { throw cancel }
+            catch (_: Exception) { renameError = "이름을 저장하지 못했습니다. 잠시 후 다시 시도하세요." }
+            finally { managementBusy = false }
+        } }) }
+    deleting?.let { ids -> AlertDialog(onDismissRequest = { deleting = null }, title = { Text("방송 ${ids.size}개 삭제") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (ids.size == 1) history.firstOrNull { it.id == ids.single() }?.let { Text(recordingDisplayTitle(it)) }
+            Text("기기 내 음성·스크립트와 앱의 공유 임시 파일을 삭제합니다. 내려받은 파일과 수신 앱의 복사본은 직접 삭제해야 합니다.")
+        } },
         confirmButton = { TextButton(onClick = { deleting = null; scope.launch {
-            try { withContext(Dispatchers.IO) { app.recordings.delete(id) }; selected = null }
-            catch (_: Exception) { message = "일부 파일을 삭제하지 못했습니다. 저장 공간을 확인하고 다시 시도하세요." }
+            managementBusy = true; stopPlayback()
+            try {
+                val failed = withContext(Dispatchers.IO) { ids.filter { id -> runCatching { app.recordings.delete(id) }.isFailure } }
+                val removed = ids - failed.toSet()
+                if (selected in removed) selected = null
+                selectedHistoryIds = selectedHistoryIds - removed.toSet()
+                history = withContext(Dispatchers.IO) { app.recordings.history() }
+                if (failed.isEmpty()) { selectionMode = false; selectedHistoryIds = emptyList(); message = "방송 ${removed.size}개를 삭제했습니다." }
+                else { selectionMode = true; message = "${removed.size}개 삭제 · ${failed.size}개를 삭제하지 못했습니다. 운영 중인 방송을 종료하거나 저장 공간을 확인한 뒤 다시 시도하세요." }
+            } catch (_: Exception) { message = "방송 목록을 새로 불러오지 못했습니다. 잠시 후 다시 확인하세요." }
+            finally { managementBusy = false }
         } }) { Text("삭제") } }, dismissButton = { TextButton(onClick = { deleting = null }) { Text("취소") } }) }
 }
 

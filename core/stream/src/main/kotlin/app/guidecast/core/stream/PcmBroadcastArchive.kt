@@ -22,8 +22,17 @@ data class RecordedPcmSegment(
 data class RecordedBroadcast(
     val id: String, val startedAtMillis: Long, val endedAtMillis: Long?, val state: String,
     val droppedRecordingFrames: Long, val failure: String?, val segments: List<RecordedPcmSegment>,
+    val title: String = "",
 )
 data class RecordingHealth(val state: String, val droppedFrames: Long, val failure: String?)
+
+const val RECORDING_TITLE_MAX_CODE_POINTS = 120
+
+/** A human-readable label, kept separate from the recording ID and file paths. */
+fun normalizedRecordingTitle(value: String): String? {
+    val title = value.replace(Regex("[\\p{Cc}\\p{Cf}\\s]+"), " ").trim()
+    return title.takeIf { it.isNotBlank() && it.codePointCount(0, it.length) <= RECORDING_TITLE_MAX_CODE_POINTS }
+}
 
 /** Disk-backed recording copies, independent of capture, listeners, and cloud requests.
  * Admission only copies into a finite queue. All disk/index writes run on one IO worker.
@@ -45,10 +54,11 @@ class PcmBroadcastArchive(
         worker.scheduleWithFixedDelay({ drain() }, 20, 100, TimeUnit.MILLISECONDS)
     }
 
-    fun begin(): String {
+    fun begin(title: String = ""): String {
         check(!closed.get())
+        val label = if (title.isBlank()) "" else requireNotNull(normalizedRecordingTitle(title))
         val id = UUID.randomUUID().toString()
-        val state = Session(id, clockMillis())
+        val state = Session(id, clockMillis()).apply { this.title = label }
         sessions[id] = state
         worker.execute { persist(state) }
         return id
@@ -141,7 +151,26 @@ class PcmBroadcastArchive(
         return (stored ?: RecordedBroadcast(id, current.started, current.ended, current.status,
             current.dropped.get(), current.failure, emptyList())).copy(
             endedAtMillis = current.ended, state = current.status,
-            droppedRecordingFrames = current.dropped.get(), failure = current.failure)
+            droppedRecordingFrames = current.dropped.get(), failure = current.failure, title = current.title)
+    }
+
+    /** The same IO worker owns titles and audio metadata, including stopped legacy recordings. */
+    fun rename(id: String, title: String): Boolean {
+        if (!ID.matches(id) || closed.get()) return false
+        val label = normalizedRecordingTitle(title) ?: return false
+        return worker.submit<Boolean> {
+            val folder = File(directory, id)
+            val current = sessions[id]
+            if (current == null && load(folder) == null) return@submit false
+            runCatching {
+                val metadata = File(folder, "session.properties")
+                val properties = Properties().apply { metadata.inputStream().use(::load) }
+                properties.setProperty("title", label)
+                writeProperties(folder, properties)
+                current?.title = label
+                true
+            }.getOrDefault(false)
+        }.get(10, TimeUnit.SECONDS)
     }
 
     /** User-controlled removal, never silently deletes the beginning of an active recording. */
@@ -184,6 +213,7 @@ class PcmBroadcastArchive(
                 setProperty("state", session.status)
                 setProperty("dropped", session.dropped.get().toString())
                 setProperty("failure", session.failure.orEmpty())
+                setProperty("title", session.title)
                 session.parts.values.forEach { part -> part.tracks.values.forEach { track ->
                     val prefix = "track.${part.id}.${track.channel.id}"
                     setProperty("$prefix.language", track.channel.languageTag)
@@ -191,10 +221,14 @@ class PcmBroadcastArchive(
                     track.committed.forEach { (n, size) -> setProperty("$prefix.$n.bytes", size.toString()) }
                 } }
             }
-            val staging = File(folder, "session.properties.tmp")
-            staging.outputStream().use { p.store(it, "MCastTalk local broadcast recording") }
-            check(staging.renameTo(File(folder, "session.properties")))
+            writeProperties(folder, p)
         } catch (_: Exception) { session.failure = "STORAGE_METADATA_FAILED" }
+    }
+
+    private fun writeProperties(folder: File, properties: Properties) {
+        val staging = File(folder, "session.properties.tmp")
+        staging.outputStream().use { properties.store(it, "MCastTalk local broadcast recording") }
+        check(staging.renameTo(File(folder, "session.properties")))
     }
 
     private fun load(folder: File): RecordedBroadcast? = runCatching {
@@ -211,7 +245,8 @@ class PcmBroadcastArchive(
         val ended = p.getProperty("ended").takeIf(String::isNotBlank)?.toLong()
         RecordedBroadcast(folder.name, p.getProperty("started").toLong(), ended,
             if (ended == null && !sessions.containsKey(folder.name)) "INTERRUPTED" else p.getProperty("state"),
-            p.getProperty("dropped").toLong(), p.getProperty("failure").takeIf(String::isNotBlank), segments)
+            p.getProperty("dropped").toLong(), p.getProperty("failure").takeIf(String::isNotBlank), segments,
+            normalizedRecordingTitle(p.getProperty("title", "")) ?: "")
     }.getOrNull()
 
     override fun close() {
@@ -222,6 +257,7 @@ class PcmBroadcastArchive(
     }
 
     private class Session(val id: String, val started: Long) {
+        @Volatile var title: String = ""
         @Volatile var ended: Long? = null
         @Volatile var status = "PREPARING"
         @Volatile var failure: String? = null

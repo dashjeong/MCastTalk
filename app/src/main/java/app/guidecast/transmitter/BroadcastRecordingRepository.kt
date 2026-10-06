@@ -33,9 +33,9 @@ internal class BroadcastRecordingRepository(context: Context,
         shareCleanup.scheduleWithFixedDelay({ runCatching { shares.cleanup() } }, 0, 1, TimeUnit.HOURS)
     }
 
-    @Synchronized fun startPart(stream: StreamSession): String {
+    @Synchronized fun startPart(stream: StreamSession, title: String? = null): String {
         closePart()
-        val id = activeId ?: audio.begin().also { activeId = it }
+        val id = activeId ?: audio.begin(title.orEmpty()).also { activeId = it }
         subscription = audio.attach(id, stream)
         activePart = stream.generation
         return id
@@ -142,6 +142,7 @@ internal class BroadcastRecordingRepository(context: Context,
 
     fun captionIncomplete(id: String): Boolean = audio.snapshot(id) != null && (id in captionGaps || File(directory, "$id/caption-gap").exists())
     fun history(): List<RecordedBroadcast> = audio.snapshots()
+    fun rename(id: String, title: String): Boolean = audio.rename(id, title)
     fun flush() { worker.submit { drainCaptions() }.get(10, TimeUnit.SECONDS); audio.flush() }
     fun captionFile(id: String): File? = if (audio.snapshot(id) != null) File(directory, "$id/captions.ndjson").takeIf { it.isFile } else null
     fun committedCaptionLength(id: String): Long = captionLengths.getOrPut(id) {
@@ -184,7 +185,8 @@ internal class BroadcastRecordingRepository(context: Context,
                 }
             }
         }
-    fun delete(id: String) {
+    @Synchronized fun delete(id: String) {
+        check(id != activeId) { "Stop broadcast before deleting" }
         flush()
         val recording = audio.snapshot(id)
         check(recording == null || recording.endedAtMillis != null || recording.state == "INTERRUPTED")

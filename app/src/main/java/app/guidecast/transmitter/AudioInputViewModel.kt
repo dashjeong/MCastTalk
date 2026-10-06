@@ -974,7 +974,7 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
         BroadcastService.start(getApplication(), OperatorAccessMode.QR_TOKEN,
             translationLanguages = relay.targetLanguageTags.toTypedArray(), sourceLanguageTag = relay.source,
             runMode = if (relay.networkBroadcast) BroadcastRunMode.NETWORK else BroadcastRunMode.STANDALONE,
-            interpreterRelay = true)
+            interpreterRelay = true, deferRelayInput = true, broadcastTitle = relay.broadcastTitle)
     }
 
     fun pauseBroadcast() = BroadcastService.pauseBroadcast(getApplication())

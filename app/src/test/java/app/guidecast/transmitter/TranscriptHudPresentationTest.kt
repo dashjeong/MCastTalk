@@ -20,4 +20,23 @@ class TranscriptHudPresentationTest {
         assertEquals(setOf("source", "ja"),
             transcriptHudSelection(setOf("source", "ja", "fr"), listOf("en", "ja")))
     }
+    @Test fun hudTranslationViewDefaultsToAllAndUsesLanguageLabels() {
+        assertEquals(listOf("en", "ja", "zh"), relayCaptionDisplayLanguages(listOf("en", "ja", "zh"), null))
+        assertEquals(listOf("ja"), relayCaptionDisplayLanguages(listOf("en", "ja", "zh"), "ja"))
+        assertEquals("영어", relayCaptionLanguageLabel("en"))
+        assertEquals("일본어", relayCaptionLanguageLabel("ja"))
+        assertEquals("중국어(간체)", relayCaptionLanguageLabel("zh"))
+    }
+
+    @Test fun individualLanguageViewDoesNotRepeatUnrelatedNativeSourceRows() {
+        val en = TranslationTranscriptLine(1, "첫 발화", 1,
+            translations = mapOf("en" to "English"), liveSegmentLanguage = "en", nativeAudioSessionId = 1)
+        val ja = TranslationTranscriptLine(2, "다른 발화", 2,
+            translations = mapOf("ja" to "Japanese"), liveSegmentLanguage = "ja", nativeAudioSessionId = 1)
+        val groups = relayCaptionPresentation(listOf(en, ja))
+        assertEquals(2, relayCaptionDisplayGroups(groups, null).size)
+        assertEquals("첫 발화", relayCaptionDisplayGroups(groups, "en").single().sourceText)
+        assertEquals(mapOf("en" to "English"), en.translations)
+        assertEquals(mapOf("ja" to "Japanese"), ja.translations)
+    }
 }
