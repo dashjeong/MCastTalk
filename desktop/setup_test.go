@@ -434,10 +434,63 @@ func setupTestLocalSource(t *testing.T, a *App, f *portableTestFixture, mode str
 		}
 		return delegate.RoundTrip(r)
 	}}
-	t.Cleanup(func() { http.DefaultClient.Transport = originalTransport })
+	t.Cleanup(func() {
+		// This cleanup runs before newSetupTestApp's cleanup (LIFO). Stop
+		// and drain the setup goroutine before restoring the global transport
+		// that a retry or the next artifact download could still read.
+		a.pipeline.cancel()
+		a.envMu.Lock()
+		a.envMu.Unlock()
+		http.DefaultClient.Transport = originalTransport
+	})
 	// Only local fixture profiles use this hook. Production validates immutable sources.
 	a.setup.validate = func(Artifact) error { return nil }
 	return s
+}
+
+func TestSetupFixtureCleanupDrainsActiveDownloadBeforeTransportRestore(t *testing.T) {
+	a, f, e := newSetupTestApp(t, "fixture-cleanup-active")
+	originalTransport := http.DefaultClient.Transport
+	observeActive := false
+	// Register before the source fixture so this observation runs after its
+	// transport restoration but before the original App/pipeline cleanup.
+	// Returning below simulates an early test exit with an unfinished download.
+	t.Cleanup(func() {
+		if !observeActive {
+			return // Fixture construction/entry itself failed; no active source.
+		}
+		if !errors.Is(a.pipeline.ctx.Err(), context.Canceled) || a.assetTasks.Load() != 0 {
+			t.Error("fixture transport was restored before active setup cancellation/drain")
+		}
+		if !a.envMu.TryLock() {
+			t.Error("fixture transport was restored while setup still owned the environment")
+		} else {
+			a.envMu.Unlock()
+		}
+		if http.DefaultClient.Transport != originalTransport {
+			t.Error("fixture transport was not restored")
+		}
+		c := a.setupController()
+		c.mu.Lock()
+		op := c.operation
+		c.mu.Unlock()
+		if op.State != "cancelled" || op.FunctionalVerified || op.Completed != 1 {
+			t.Error("early fixture teardown lost cancellation or claimed readiness")
+		}
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		if e.starts != 0 || e.ready {
+			t.Error("early fixture teardown started or retained an engine")
+		}
+	})
+	source := setupTestLocalSource(t, a, f, "cancel")
+	setupTestStart(t, a, setupTestPlan(t, a))
+	select {
+	case <-source.blocked:
+		observeActive = true
+	case <-time.After(5 * time.Second):
+		t.Fatal("fixture second download did not remain active")
+	}
 }
 
 func TestSetupLocalDownloadsInstallAndExerciseSpeechInterfaces(t *testing.T) {
