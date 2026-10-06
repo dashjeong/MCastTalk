@@ -436,7 +436,7 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
                                         }
                                     }
                                     VoiceNoteExportPanel(note, transcriptQuery, enabled, exportDocument)
-                                    Text("원문 (번역문) · 화자 이름은 직접 지정할 수 있습니다. 자동 화자 분리는 제공하지 않습니다. 구간 시각은 추정값일 수 있습니다.", style = MaterialTheme.typography.bodySmall)
+                                    Text("교정본 (번역문) · 받아쓴 원문은 ‘문장 검사·언어별 번역’에서 확인합니다. 화자 이름은 직접 지정하며, 구간 시각은 추정값일 수 있습니다.", style = MaterialTheme.typography.bodySmall)
                                     OutlinedTextField(transcriptQuery, { transcriptQuery = it.take(200) }, label = { Text("이 노트에서 문장·화자 찾기") },
                                         singleLine = true, modifier = Modifier.fillMaxWidth())
                                     if (transcriptQuery.isNotBlank()) {

@@ -352,8 +352,9 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
             saveSelected(updated.copy(notice = (updated.notice.orEmpty().lines() + qualityNotes).filter { it.isNotBlank() }.distinct().joinToString("\n")))
             mutableState.update { it.copy(message = "${VOICE_NOTE_LANGUAGES[target]} 번역을 저장했습니다. 원문·교정본·다른 언어 번역은 유지됩니다.") }
         } catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: Exception) {
-            mutableState.update { it.copy(message = "번역을 완료하지 못했습니다. 녹음·원문과 저장된 번역은 유지됩니다. 인터넷·저장 공간·언어 설정을 확인한 뒤 ‘남은 구간 번역’으로 이어가세요.") }
+        catch (error: Exception) {
+            mutableState.update { it.copy(message = if (error is FileTranscriptionException) error.message else
+                "번역을 완료하지 못했습니다. 녹음·원문과 저장된 번역은 유지됩니다. 인터넷·저장 공간·언어 설정을 확인한 뒤 ‘번역·미완료 이어하기’로 이어가세요.") }
         }
     }
 
