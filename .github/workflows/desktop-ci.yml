@@ -1,0 +1,52 @@
+name: Desktop candidate checks
+
+on:
+  push:
+    branches: [codex/mcasttalk-desktop]
+    paths: [desktop/**, core/server/src/main/assets/**, .github/workflows/desktop-ci.yml]
+  pull_request:
+    paths: [desktop/**, core/server/src/main/assets/**, .github/workflows/desktop-ci.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: desktop/go.mod
+          cache-dependency-path: desktop/go.sum
+      - run: go test -race -count=1 ./...
+      - run: go vet ./...
+      - run: GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go vet ./...
+
+  windows-candidate:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: desktop/go.mod
+          cache-dependency-path: desktop/go.sum
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - run: go vet ./...
+      - run: ./scripts/build-windows.ps1 -Architecture amd64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MCastTalk-windows-amd64-development-candidate
+          path: desktop/dist/*
+          if-no-files-found: error
+          retention-days: 30

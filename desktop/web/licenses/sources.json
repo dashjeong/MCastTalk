@@ -1,0 +1,30 @@
+[
+  {
+    "file": "supertonic-3.txt",
+    "source": "https://huggingface.co/Supertone/supertonic-3/resolve/main/LICENSE",
+    "resolved": "https://huggingface.co/api/resolve-cache/models/Supertone/supertonic-3/3cadd1ee6394adea1bd021217a0e650ede09a323/LICENSE?%2FSupertone%2Fsupertonic-3%2Fresolve%2Fmain%2FLICENSE=&etag=%221e2cbe6cef94c8cdf3ed1fcebc0f5317ca7ad5a1%22",
+    "bytes": 15007,
+    "sha256": "0d944a9110fed9a9602d60e0423a272903e7bd21ab060490774efc77c2275e9f"
+  },
+  {
+    "file": "sherpa-onnx.txt",
+    "source": "https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/v1.13.8/LICENSE",
+    "resolved": "https://raw.githubusercontent.com/k2-fsa/sherpa-onnx/v1.13.8/LICENSE",
+    "bytes": 11358,
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+  },
+  {
+    "file": "espeak-ng.txt",
+    "source": "https://raw.githubusercontent.com/espeak-ng/espeak-ng/1.52.0/COPYING",
+    "resolved": "https://raw.githubusercontent.com/espeak-ng/espeak-ng/1.52.0/COPYING",
+    "bytes": 35147,
+    "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+  },
+  {
+    "file": "apache-2.0.txt",
+    "source": "https://raw.githubusercontent.com/hexgrad/kokoro/main/LICENSE",
+    "resolved": "https://raw.githubusercontent.com/hexgrad/kokoro/main/LICENSE",
+    "bytes": 11357,
+    "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+  }
+]

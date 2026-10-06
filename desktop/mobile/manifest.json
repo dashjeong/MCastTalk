@@ -1,0 +1,12 @@
+{
+  "listener/i18n.js": "a9dce7f677b93d5013fc6d66dc8f63b3065e283e686c44a63bf34989f11fa999",
+  "listener/index.html": "a18a5adc504a79f11f952924190d9a57cfa6ba8d86e1a3a4778ec3ba79c60739",
+  "listener/player.css": "075acda4f6b0783df3ee9d9e51529a2bdb7707225fe440dc651851ed99851531",
+  "listener/player.js": "50170d4d5d06d7716f360e8fa2148917430fe04820e515e824bfb9a0ce00390e",
+  "listener/replay.js": "5bd21dd8dd39829c21281e01424a1b5b9ce23ef8fd1f4d5103930a1dd40ddc15",
+  "speaker/setup-trust.html": "754cc8c7c5f234c66d72d6c7fea72b3a61b10111c8e772e71ad1720c546d6005",
+  "speaker/setup-trust.js": "e8e0893787292fb688a79d3fb04f46d08add9042d669dd0cb3d62ab1d58aa1ec",
+  "speaker/speaker.css": "538d8f7097215be1465db3afcdc61c442538ee65be95f0f4972f0ba0d186c70c",
+  "speaker/speaker.html": "3e52dc7d6ad98b1b2fa5e2bf965072bc45324136ebb0a6a99afb572494cb1d35",
+  "speaker/speaker.js": "5a1822e1d417c0ab515f93e5dd999c4ce8a7fe360016ed3cfc9affe0230e829a"
+}

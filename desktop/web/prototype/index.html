@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';">
+    <title>MCastTalk · 다중 언어 교류 MVP</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="mvp-ribbon">MVP 시연 · 실제 AI 모델 미연결 (모의 화면) - v0.2.48-desktop</div>
+
+    <div class="layout">
+        <!-- Sidebar Navigation -->
+        <nav class="sidebar">
+            <div class="brand">MCastTalk PC</div>
+            <ul class="nav-links">
+                <li><button class="nav-btn active" data-testid="nav-console" data-view="console">PC 서버 콘솔</button></li>
+                <li><button class="nav-btn" data-testid="nav-participant" data-view="participant">참가자 화면</button></li>
+                <li><button class="nav-btn" data-testid="nav-models" data-view="models">모델·PC 진단</button></li>
+                <li><button class="nav-btn" data-testid="nav-history" data-view="history">기록·품질</button></li>
+                <li><button class="nav-btn" data-testid="nav-flow" data-view="flow">서비스 흐름·POC</button></li>
+            </ul>
+        </nav>
+
+        <!-- Main Content Area -->
+        <main class="content">
+            <!-- 1. PC Server Console View -->
+            <section id="view-console" class="view-section active">
+                <header>
+                    <h2>PC 서버 콘솔</h2>
+                    <div class="room-status">
+                        <span class="badge simulation">모의 방: 30명 참가, 5개 언어</span>
+                        <div class="room-modes">
+                            <label for="room-mode-lecture"><input type="radio" id="room-mode-lecture" name="roomMode" value="lecture" checked> 강의 모드 (강사 우선권)</label>
+                            <label for="room-mode-conversation"><input type="radio" id="room-mode-conversation" name="roomMode" value="conversation"> 자유 대화 (동등한 발언권)</label>
+                        </div>
+                    </div>
+                </header>
+
+                <div class="dashboard">
+                    <div class="panel qr-panel">
+                        <h3>접속 QR (시뮬레이션)</h3>
+                        <p class="note">이 QR은 현재 PC에서 여는 시연 링크입니다. 휴대폰 연결은 실제 POC에서 접근 가능한 PC의 LAN/HTTPS 주소로 제공합니다. 강사 역할은 방 운영자이며 PC 관리자 권한과 구분합니다.</p>
+                        <div class="form-group">
+                            <label for="new-room-title">대화방 이름</label>
+                            <input id="new-room-title" type="text" maxlength="80" placeholder="예: 국제 공동 수업">
+                            <button id="create-room" class="secondary-btn" data-testid="room-create">방 만들기 (시연)</button>
+                            <p id="room-create-status" class="note" role="status"></p>
+                        </div>
+                        <div class="qr-cards">
+                            <div class="qr-card">
+                                <h4>강사 (Teacher)</h4>
+                                <div id="qr-teacher"></div>
+                                <a href="?role=teacher" class="qr-link" data-testid="role-teacher-link">강사 접속 링크</a>
+                            </div>
+                            <div class="qr-card">
+                                <h4>학생 (Student)</h4>
+                                <div id="qr-student"></div>
+                                <a href="?role=student" class="qr-link" data-testid="role-student-link">학생 접속 링크</a>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="panel actions-panel">
+                        <h3>시연 제어 (가이드)</h3>
+                        <div class="btn-group">
+                            <button data-testid="teacher-speak" id="btn-teacher-speak" class="action-btn">강사 발언 시연</button>
+                            <button data-testid="student-speak" id="btn-student-speak" class="action-btn">학생 질문 시연</button>
+                        </div>
+                        <div class="custom-input">
+                            <label for="custom-speech" class="visually-hidden">자유 텍스트 입력</label>
+                            <input type="text" id="custom-speech" placeholder="자유 텍스트 입력 (시연용)">
+                            <button id="btn-custom-speak">입력</button>
+                            <p class="note text-muted">실제 번역은 POC 모델 연결 후 제공</p>
+                        </div>
+                    </div>
+
+                    <div class="panel transcript-panel">
+                        <h3>실시간 번역/자막 상태</h3>
+                        <div class="status-bar" aria-live="polite">입력/인식/번역/음성 상태: <span id="pipeline-status">대기 중</span></div>
+                        <p id="recovery-status" class="note" role="status"></p>
+                        <div id="console-transcript" class="transcript-box">
+                            <!-- Captions will appear here dynamically via textContent -->
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 2. Participant View -->
+            <section id="view-participant" class="view-section">
+                <header>
+                    <h2>참가자 화면</h2>
+                    <div class="device-selector">
+                        <label for="device-select">기기 표시: </label>
+                        <select id="device-select">
+                            <option value="mobile">모바일 뷰</option>
+                            <option value="pc">PC 뷰</option>
+                        </select>
+                    </div>
+                </header>
+
+                <div class="mobile-frame" id="participant-frame">
+                    <div class="participant-setup" id="participant-setup">
+                        <h3>참가 설정</h3>
+                        <div class="form-group">
+                            <label for="role-select">역할 (방 운영/참여 시뮬레이션)</label>
+                            <select id="role-select" data-testid="role-select">
+                                <option value="student">학생</option>
+                                <option value="teacher">강사</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="participant-name">이름</label>
+                            <input type="text" id="participant-name" data-testid="participant-name" value="User1">
+                        </div>
+                        <div class="form-group">
+                            <label for="language-select">수신 및 발언 언어</label>
+                            <select id="language-select" data-testid="language-select">
+                                <option value="ko">한국어 (Korean)</option>
+                                <option value="en" selected>영어 (English)</option>
+                                <option value="ja">일본어 (Japanese)</option>
+                                <option value="zh">중국어 (Chinese)</option>
+                                <option value="es">스페인어 (Spanish)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="room-select">방 선택</label>
+                            <select id="room-select">
+                                <option value="room-1">Room 1: 지속 가능한 도시 (Simulation)</option>
+                                <option value="room-2">Room 2: 일반 대화 (Simulation)</option>
+                            </select>
+                        </div>
+                        <button id="btn-join-room" data-testid="room-join" class="primary-btn">방 입장</button>
+                    </div>
+
+                    <div class="participant-room hidden" id="participant-room">
+                        <div class="room-header">
+                            <span id="p-room-name">Room 1</span>
+                            <button id="btn-leave-room" class="secondary-btn small">나가기</button>
+                        </div>
+                        <div class="room-options">
+                            <label for="show-original"><input type="checkbox" id="show-original" data-testid="show-original"> 원문 함께 보기</label>
+                            <label for="caption-only"><input type="checkbox" id="caption-only" data-testid="caption-only"> 자막만 (모의 음성 끄기)</label>
+                        </div>
+                        <div class="form-group">
+                            <label for="in-room-language">내 언어 변경</label>
+                            <select id="in-room-language" data-testid="in-room-language">
+                                <option value="ko">한국어</option><option value="en">English</option><option value="ja">日本語</option><option value="zh">中文</option><option value="es">Español</option>
+                            </select>
+                        </div>
+
+                        <div class="p-actions mb-2" style="display:flex; gap:0.5rem; justify-content:center; margin-bottom: 0.5rem;">
+                            <button data-testid="question-speak" id="btn-p-question-speak" class="action-btn small">질문 시연 (내 언어로)</button>
+                            <button data-testid="teacher-answer" id="btn-p-teacher-answer" class="action-btn small hidden">강사 답변 시연</button>
+                        </div>
+
+                        <div class="p-transcript" id="p-transcript">
+                            <!-- Participant captions via textContent -->
+                        </div>
+                        <div class="p-controls">
+                            <div class="speak-status" id="p-speak-status" aria-live="polite">대기 중...</div>
+                            <button id="btn-p-request-speak" class="action-btn toggle-btn">발언권 요청 / 해제 (토글)</button>
+                            <label for="participant-text">내 언어로 직접 입력 (음성은 실제 POC에서 연결)</label>
+                            <input id="participant-text" type="text" maxlength="2000">
+                            <button id="participant-send" class="secondary-btn">원문 보내기 (시연)</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 3. Models View -->
+            <section id="view-models" class="view-section">
+                <header>
+                    <h2>모델·PC 진단</h2>
+                    <span class="badge simulation">모든 하드웨어 수치는 시뮬레이션입니다</span>
+                </header>
+
+                <div class="panel">
+                    <h3>내 PC 프로필</h3>
+                    <ul class="hw-list">
+                        <li><strong>CPU:</strong> 시뮬레이션된 프로세서 (16 코어)</li>
+                        <li><strong>RAM:</strong> <select id="ram-selector"><option value="8">8 GB</option><option value="32" selected>32 GB</option></select></li>
+                        <li><strong>가속기 선택:</strong>
+                            <select id="npu-selector">
+                                <option>CPU Only</option>
+                                <option>NVIDIA CUDA (가상)</option>
+                                <option>AMD Vulkan (가상)</option>
+                                <option>OpenVINO NPU (가상)</option>
+                            </select>
+                        </li>
+                        <li class="note text-muted">실제 로드/실측 필요 (미측정)</li>
+                    </ul>
+                </div>
+
+                <div class="panel">
+                    <h3>모델 프로필 관리 (모의)</h3>
+                    <div class="models-grid">
+                        <div class="model-card">
+                            <h4>STT (Whisper Base)</h4>
+                            <p>상태: <span class="status-label loaded" id="status-stt">모의 로드됨</span></p>
+                            <p>메모리: 1GB 예상</p>
+                            <p>성능: 실측 전 (미측정)</p>
+                            <button class="sim-btn sm-btn mt-2 mock-unload" data-target="stt">언로드</button>
+                        </div>
+                        <div class="model-card">
+                            <h4>번역 (4B 빠름)</h4>
+                            <p>상태: <span class="status-label loaded" id="status-4b">모의 로드됨</span></p>
+                            <p>메모리: 4GB 예상</p>
+                            <p>성능: 실측 전 (미측정)</p>
+                            <button class="sim-btn sm-btn mt-2 mock-unload" data-target="4b">언로드</button>
+                        </div>
+                        <div class="model-card">
+                            <h4>번역 (12B 품질)</h4>
+                            <p>상태: <span class="status-label waiting" id="status-12b">대기</span></p>
+                            <p>메모리: 10GB 예상</p>
+                            <p>성능: 실측 전 (미측정)</p>
+                            <button class="sim-btn sm-btn mt-2 mock-load" data-target="12b">모의 로드</button>
+                        </div>
+                        <div class="model-card">
+                            <h4>번역 (27B 고품질)</h4>
+                            <p>상태: <span class="status-label waiting" id="status-27b">대기</span></p>
+                            <p>메모리: 18GB 예상</p>
+                            <p>성능: 실측 전 (미측정)</p>
+                            <button class="sim-btn sm-btn mt-2 mock-load" data-target="27b">모의 로드</button>
+                        </div>
+                    </div>
+
+                    <div class="hf-form mt-4">
+                        <h4>새 HF 프로필 등록 (모의)</h4>
+                        <div class="form-group">
+                            <label for="hf-repo">Repository</label>
+                            <input type="text" id="hf-repo" placeholder="예: organization/model-name">
+                        </div>
+                        <div class="form-group">
+                            <label for="hf-revision">Revision (Commit Hash)</label>
+                            <input type="text" id="hf-revision" placeholder="40자리 고정 commit 해시">
+                        </div>
+                        <div class="form-group">
+                            <label for="hf-file">File Name (GGUF)</label>
+                            <input type="text" id="hf-file" placeholder="예: model-q4_k_m.gguf">
+                        </div>
+                        <div class="form-group">
+                            <label for="hf-family">Model Family</label>
+                            <input type="text" id="hf-family" placeholder="예: llama, gemma">
+                        </div>
+                        <div class="form-group">
+                            <label for="hf-prompt">Prompt Template</label>
+                            <input type="text" id="hf-prompt" placeholder="예: chatml">
+                        </div>
+                        <div class="form-group">
+                            <label for="hf-license">License</label>
+                            <input type="text" id="hf-license" placeholder="예: MIT, Apache-2.0">
+                        </div>
+                        <div class="form-group">
+                            <label for="hf-sha">Expected SHA256 (필수)</label>
+                            <input type="text" id="hf-sha" placeholder="64자리 SHA256">
+                        </div>
+                        <button class="secondary-btn" id="btn-register-mock">검증 및 등록 모의 실행</button>
+                        <p id="register-mock-status" class="note mt-2" aria-live="polite"></p>
+                        <div id="registered-models"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 4. History View -->
+            <section id="view-history" class="view-section">
+                <header>
+                    <h2>기록·품질</h2>
+                    <div class="export-actions" style="display:flex; gap: 0.5rem;">
+                        <select id="history-language" data-testid="history-language">
+                            <option value="ko">한국어</option>
+                            <option value="en" selected>영어</option>
+                            <option value="ja">일본어</option>
+                            <option value="zh">중국어</option>
+                            <option value="es">스페인어</option>
+                        </select>
+                        <button class="secondary-btn" id="btn-export-json" data-testid="history-export-json">JSON 내보내기</button>
+                        <button class="secondary-btn" id="btn-export-txt" data-testid="history-export-txt">TXT 내보내기</button>
+                    </div>
+                </header>
+
+                <div class="panel">
+                    <div class="history-list" id="history-list">
+                        <!-- History items appended safely -->
+                    </div>
+                </div>
+
+                <div class="panel mt-4">
+                    <h3>모바일 확장 고려사항 (Mobile Evolution)</h3>
+                    <ul class="bullet-list">
+                        <li>PC 서버 발견 및 QR 프로토콜 공통 활용</li>
+                        <li>네트워크 끊김 대비 자막/음성 캐싱</li>
+                        <li>단말 성능에 따른 로컬/PC 추론 선택</li>
+                        <li>오프라인/로컬 데이터 원칙 (클라우드 API 사용 시 별도 명시 필요)</li>
+                    </ul>
+                </div>
+            </section>
+
+            <!-- 5. Flow / POC View -->
+            <section id="view-flow" class="view-section">
+                <header>
+                    <h2>서비스 흐름·POC 검증</h2>
+                </header>
+
+                <div class="panel">
+                    <h3>서비스 흐름</h3>
+                    <div class="flow-diagram">
+                        <span>첫 실행</span> &rarr; <span>진단/모델로드</span> &rarr; <span>방 생성/QR</span> &rarr;
+                        <span>언어 선택</span> &rarr; <span>발화(STT)</span> &rarr; <span>문맥 번역</span> &rarr; <span>음성(TTS)</span> &rarr;
+                        <span>언어별 팬아웃</span> &rarr; <span>저장/재연결</span>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h3>단계별 목표 (Draft Test Targets)</h3>
+                    <p class="note">최종 목표는 300명 이상 대형 강의입니다. 접속 인원·대상 언어 수·동시 발화 수를 따로 측정하고, 이전 단계의 품질·지연·복구 기준을 통과한 뒤 확대합니다.</p>
+                    <div class="ladder">
+                        <div class="ladder-step active">
+                            <h4>단계 A (첫 실제 POC 예정)</h4>
+                            <p>접속: 30명 이상, 언어: 5개 이상</p>
+                            <p>목표: 자막 p95 &le; 2s / 음성 p95 &le; 4s (미측정)</p>
+                        </div>
+                        <div class="ladder-step">
+                            <h4>단계 B</h4>
+                            <p>접속: 100명, 언어: 5개 이상</p>
+                            <p>부하: 서버 한계 측정</p>
+                        </div>
+                        <div class="ladder-step">
+                            <h4>단계 C (최종 목표)</h4>
+                            <p>접속: 300명+, 언어: 10개(후보)</p>
+                            <p>300명 동시 발화는 별도 시험 항목입니다.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <h3>테스트 체크리스트 (증빙 수준)</h3>
+                    <ul class="checklist">
+                        <li><label><input type="checkbox" disabled> 목업 시연 / 가상 사용자 시험: 별도 증빙으로 확인</label></li>
+                        <li><label><input type="checkbox" disabled> 실제 모델 통번역 연동 (Pending)</label></li>
+                        <li><label><input type="checkbox" disabled> Windows VM 실행/재부팅 증빙 (Pending)</label></li>
+                        <li><label><input type="checkbox" disabled> 모의 추론 전송 부하 증빙 (Pending)</label></li>
+                        <li><label><input type="checkbox" disabled> 실제 NVIDIA/AMD/NPU PC 증빙 (Pending)</label></li>
+                        <li><label><input type="checkbox" disabled> 실제 원어민/인간 다국어 품질 평가 (Pending)</label></li>
+                    </ul>
+                </div>
+
+                <div class="panel">
+                    <h3>피드백 폼 (모의)</h3>
+                    <div class="form-group">
+                        <label for="fb-screen">화면</label>
+                        <input type="text" id="fb-screen" data-testid="fb-screen" placeholder="예: 참가자 화면">
+                    </div>
+                    <div class="form-group">
+                        <label for="fb-problem">문제점 (증상)</label>
+                        <input type="text" id="fb-problem" data-testid="fb-problem" placeholder="예: 모바일 화면에서 버튼이 잘림">
+                    </div>
+                    <div class="form-group">
+                        <label for="fb-request">요구사항</label>
+                        <textarea id="fb-request" data-testid="fb-request" rows="2" placeholder="해결 방안 제안"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label for="fb-priority">우선순위</label>
+                        <select id="fb-priority" data-testid="fb-priority">
+                            <option value="high">높음</option>
+                            <option value="medium">중간</option>
+                            <option value="low">낮음</option>
+                        </select>
+                    </div>
+                    <div style="display:flex; gap:0.5rem; margin-top:0.5rem;">
+                        <button class="primary-btn" id="btn-submit-feedback" data-testid="feedback-submit">피드백 저장</button>
+                        <button class="secondary-btn" id="btn-export-feedback" data-testid="feedback-export">피드백 JSON 내보내기</button>
+                    </div>
+                    <p id="fb-status" class="note mt-2" aria-live="polite"></p>
+                    <div id="fb-list" style="margin-top: 1rem; border-top:1px solid #ccc; padding-top: 0.5rem; font-size: 0.85rem;"></div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Failure Simulation Panel -->
+    <div class="failure-panel minimized">
+        <div class="failure-header">
+            <h4>장애/오류 모의 제어</h4>
+            <button id="btn-toggle-failure">장애 시연 펼치기</button>
+        </div>
+        <div class="failure-controls" id="failure-controls">
+            <button data-testid="simulate-disconnect" id="btn-sim-disconnect" class="sim-btn">네트워크 끊김</button>
+            <button data-testid="simulate-reconnect" id="btn-sim-reconnect" class="sim-btn">재연결 (누락분 회수)</button>
+            <button data-testid="simulate-reboot" id="btn-sim-reboot" class="sim-btn danger">PC 강제 재시작 (공백 유발)</button>
+            <div class="sim-options mt-2">
+                <label for="sim-delay-ja"><input type="checkbox" id="sim-delay-ja"> 선택 언어만 번역 지연/오류 시연</label>
+                <label for="sim-language">오류를 시연할 언어</label>
+                <select id="sim-language"><option value="zh">中文</option><option value="ja">日本語</option><option value="es">Español</option><option value="en">English</option><option value="ko">한국어</option></select>
+                <label for="sim-voice-contention"><input id="sim-voice-contention" type="checkbox"> 다른 발언자와 경합 시연</label>
+            </div>
+            <div class="status-msg mt-2" id="sim-status-msg" aria-live="assertive"></div>
+        </div>
+    </div>
+
+    <script src="vendor/qrcode.min.js"></script>
+    <script src="app.js"></script>
+    <script src="workflows.js"></script>
+</body>
+</html>

@@ -1,0 +1,34 @@
+MCastTalk Desktop local speech packages
+
+Models and inference libraries have separate licences from MCastTalk source.
+These notices are available without an internet connection in the desktop EXE.
+
+Supertonic 3 model weights and converted INT8 weights:
+  Supertone, Inc. — BigScience Open RAIL-M.
+  The use restrictions in section 5 and Attachment A apply to every user of
+  this model and derivatives, including use through a hosted speech service.
+  By using this model through MCastTalk, you agree to those restrictions.
+  Complete terms: supertonic-3.txt in this directory.
+  Upstream model: https://huggingface.co/Supertone/supertonic-3
+  The MIT licence in the model tar archive covers sample/code material;
+  it does not replace the weights' Open RAIL-M terms.
+
+Kokoro v1.1 multilingual INT8 model:
+  hexgrad — Apache-2.0. Complete terms: apache-2.0.txt.
+  Converted model: https://github.com/k2-fsa/sherpa-onnx/releases/tag/tts-models
+
+Sherpa ONNX v1.13.8:
+  Apache-2.0. Complete terms: sherpa-onnx.txt.
+  Source and build files: https://github.com/k2-fsa/sherpa-onnx/tree/v1.13.8
+  Third-party components retain their own terms and attribution.
+
+eSpeak NG runtime/data used for Kokoro:
+  GPL-3.0-or-later. Complete terms: espeak-ng.txt.
+  Upstream source: https://github.com/espeak-ng/espeak-ng
+  Sherpa dependency build references:
+    https://github.com/k2-fsa/sherpa-onnx/tree/v1.13.8/cmake
+  These GPL terms are separate from Kokoro's Apache model licence.
+  When distributing the runtime or an offline environment, preserve its
+  licence notices and fulfil corresponding-source obligations.
+
+Acquisition sources and exact notice hashes: sources.json.

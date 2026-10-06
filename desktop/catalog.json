@@ -1,0 +1,343 @@
+[
+  {
+    "id": "translategemma-4b-q4",
+    "name": "TranslateGemma 4B (Q4)",
+    "task": "translation",
+    "family": "translategemma",
+    "prompt": "translategemma",
+    "format": "gguf",
+    "url": "https://huggingface.co/mradermacher/translategemma-4b-it-GGUF/resolve/35a7486e128b19642cdc72d7b91b21ba388aaf42/translategemma-4b-it.Q4_K_M.gguf",
+    "sha256": "81200d03e843d2ec1ece6eeafe7d13cb6e5211e1fcd336ade55790b683a08330",
+    "bytes": 2489909760,
+    "ramGB": 4,
+    "vramGB": 4,
+    "context": 2048,
+    "license": "gemma",
+    "source": "mradermacher",
+    "backends": [
+      "cpu",
+      "cuda",
+      "vulkan"
+    ],
+    "experimental": false
+  },
+  {
+    "id": "translategemma-12b-q4",
+    "name": "TranslateGemma 12B (Q4)",
+    "task": "translation",
+    "family": "translategemma",
+    "prompt": "translategemma",
+    "format": "gguf",
+    "url": "https://huggingface.co/mradermacher/translategemma-12b-it-GGUF/resolve/fdf84c9f6fe14e69d58814f14e7b5b63bb6a1b28/translategemma-12b-it.Q4_K_M.gguf",
+    "sha256": "b7aac4b4be7ab0c49b6556c29c4467e74313df7f1e95d9f9676bb2adf0afa528",
+    "bytes": 7300794112,
+    "ramGB": 8,
+    "vramGB": 8,
+    "context": 2048,
+    "license": "gemma",
+    "source": "mradermacher",
+    "backends": [
+      "cpu",
+      "cuda",
+      "vulkan"
+    ],
+    "experimental": false
+  },
+  {
+    "id": "translategemma-27b-q4",
+    "name": "TranslateGemma 27B (Q4)",
+    "task": "translation",
+    "family": "translategemma",
+    "prompt": "translategemma",
+    "format": "gguf",
+    "url": "https://huggingface.co/mradermacher/translategemma-27b-it-GGUF/resolve/0f2c24b456631d519a919e20429119bbd524d86e/translategemma-27b-it.Q4_K_M.gguf",
+    "sha256": "7f1e67c4ecfec676b38c1ea2ef85c46fafe2f02d3c050fb9540e51787405d8a3",
+    "bytes": 16546704480,
+    "ramGB": 18,
+    "vramGB": 18,
+    "context": 2048,
+    "license": "gemma",
+    "source": "mradermacher",
+    "backends": [
+      "cpu",
+      "cuda",
+      "vulkan"
+    ],
+    "experimental": false
+  },
+  {
+    "id": "qwen3-4b-q4",
+    "name": "Qwen3 4B (Q4)",
+    "task": "translation",
+    "family": "qwen",
+    "prompt": "chat",
+    "format": "gguf",
+    "url": "https://huggingface.co/Qwen/Qwen3-4B-GGUF/resolve/bc640142c66e1fdd12af0bd68f40445458f3869b/Qwen3-4B-Q4_K_M.gguf",
+    "sha256": "7485fe6f11af29433bc51cab58009521f205840f5b4ae3a32fa7f92e8534fdf5",
+    "bytes": 2497280256,
+    "ramGB": 4,
+    "vramGB": 4,
+    "context": 4096,
+    "license": "apache-2.0",
+    "source": "Qwen",
+    "backends": [
+      "cpu",
+      "cuda",
+      "vulkan",
+      "openvino-npu"
+    ],
+    "experimental": true
+  },
+  {
+    "id": "whisper-turbo",
+    "name": "Whisper Turbo",
+    "task": "stt",
+    "family": "whisper",
+    "prompt": "",
+    "format": "ggml",
+    "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo.bin",
+    "sha256": "1fc70f774d38eb169993ac391eea357ef47c88757ef72ee5943879b7e8e2bc69",
+    "bytes": 1624555275,
+    "ramGB": 3,
+    "vramGB": 3,
+    "context": 0,
+    "license": "mit",
+    "source": "ggerganov",
+    "backends": [
+      "cpu",
+      "cuda"
+    ],
+    "experimental": false
+  },
+  {
+    "id": "whisper-turbo-q5",
+    "name": "Whisper Turbo (Q5)",
+    "task": "stt",
+    "family": "whisper",
+    "prompt": "",
+    "format": "ggml",
+    "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo-q5_0.bin",
+    "sha256": "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
+    "bytes": 574041195,
+    "ramGB": 2,
+    "vramGB": 2,
+    "context": 0,
+    "license": "mit",
+    "source": "ggerganov",
+    "backends": [
+      "cpu",
+      "cuda"
+    ],
+    "experimental": false
+  },
+  {
+    "id": "runtime-whisper-cpu",
+    "name": "Whisper Runtime (CPU)",
+    "task": "runtime",
+    "family": "whisper",
+    "prompt": "",
+    "format": "zip",
+    "url": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.1/whisper-bin-x64.zip",
+    "sha256": "7d8be46ecd31828e1eb7a2ecdd0d6b314feafd82163038ab6092594b0a063539",
+    "bytes": 7982101,
+    "ramGB": 0,
+    "vramGB": 0,
+    "context": 0,
+    "license": "mit",
+    "source": "ggerganov",
+    "backends": [
+      "cpu"
+    ],
+    "experimental": false,
+    "treeSHA256": "bf2c2b99ccac7b611b12c0614efc064bda62686efa40ebc34f9ce42d6071276b"
+  },
+  {
+    "id": "runtime-whisper-cuda",
+    "name": "Whisper Runtime (CUDA)",
+    "task": "runtime",
+    "family": "whisper",
+    "prompt": "",
+    "format": "zip",
+    "url": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.1/whisper-cublas-12.4.0-bin-x64.zip",
+    "sha256": "106a2030eff8998e4ef320fe72e263a78449e9040386ee27c41ea80b001b601b",
+    "bytes": 677887125,
+    "ramGB": 0,
+    "vramGB": 0,
+    "context": 0,
+    "license": "mit",
+    "source": "ggerganov",
+    "backends": [
+      "cuda"
+    ],
+    "experimental": false,
+    "treeSHA256": "d436568e61421eca49f6d3e6bd7911bed522acce7ed2342f134d759feb653c46"
+  },
+  {
+    "id": "runtime-llama-cpu",
+    "name": "Llama Runtime (CPU)",
+    "task": "runtime",
+    "family": "llama",
+    "prompt": "",
+    "format": "zip",
+    "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11390/llama-b11390-bin-win-cpu-x64.zip",
+    "sha256": "071e95e15271ec8424a76caa3559f5353080635289b073b5b83067c13d035fc3",
+    "bytes": 19363545,
+    "ramGB": 0,
+    "vramGB": 0,
+    "context": 0,
+    "license": "mit",
+    "source": "ggml-org",
+    "backends": [
+      "cpu"
+    ],
+    "experimental": false,
+    "treeSHA256": "7fa4ff947536cb2f107915a8e4678101d6a202e6fbfe023bc6d2a92ee4ceb5a4"
+  },
+  {
+    "id": "runtime-llama-cuda",
+    "name": "Llama Runtime (CUDA)",
+    "task": "runtime",
+    "family": "llama",
+    "prompt": "",
+    "format": "zip",
+    "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11390/llama-b11390-bin-win-cuda-12.4-x64.zip",
+    "sha256": "344f9ba59bbb1b08c68ebaaca699f95e6aa8e3fb7648e8f0e7f6aefbe6e75b19",
+    "bytes": 263804629,
+    "ramGB": 0,
+    "vramGB": 0,
+    "context": 0,
+    "license": "mit",
+    "source": "ggml-org",
+    "backends": [
+      "cuda"
+    ],
+    "experimental": false,
+    "treeSHA256": "68c511f8b93efa9e2c2ad256564165ef3c4c6b3b427c66cf35582abaca40911e"
+  },
+  {
+    "id": "runtime-llama-cudart",
+    "name": "Llama CUDA Runtime Libraries",
+    "task": "runtime",
+    "family": "llama",
+    "prompt": "",
+    "format": "zip",
+    "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11390/cudart-llama-bin-win-cuda-12.4-x64.zip",
+    "sha256": "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6",
+    "bytes": 391443627,
+    "ramGB": 0,
+    "vramGB": 0,
+    "context": 0,
+    "license": "mit",
+    "source": "ggml-org",
+    "backends": [
+      "cuda"
+    ],
+    "experimental": false,
+    "treeSHA256": "b551a82c425150414beb06afb151a66b30b0069b438d884c986335c27571cb70"
+  },
+  {
+    "id": "runtime-llama-vulkan",
+    "name": "Llama Runtime (Vulkan)",
+    "task": "runtime",
+    "family": "llama",
+    "prompt": "",
+    "format": "zip",
+    "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11390/llama-b11390-bin-win-vulkan-x64.zip",
+    "sha256": "a76809824873cf50de3038096521968d50a99a5d2ffac614d288eb212d53a05f",
+    "bytes": 33280099,
+    "ramGB": 0,
+    "vramGB": 0,
+    "context": 0,
+    "license": "mit",
+    "source": "ggml-org",
+    "backends": [
+      "vulkan"
+    ],
+    "experimental": false,
+    "treeSHA256": "b1cf58aba78d77c2da224901c9be09231b08b83c5963a6b4928b2eac5318b209"
+  },
+  {
+    "id": "runtime-llama-openvino",
+    "name": "Llama Runtime (OpenVINO)",
+    "task": "runtime",
+    "family": "llama",
+    "prompt": "",
+    "format": "zip",
+    "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11390/llama-b11390-bin-win-openvino-2026.4.1-x64.zip",
+    "sha256": "3ccb6aa733e935f925e8d45738025bd089e68c03908243f29995b70ec332dd8e",
+    "bytes": 89478449,
+    "ramGB": 0,
+    "vramGB": 0,
+    "context": 0,
+    "license": "mit",
+    "source": "ggml-org",
+    "backends": [
+      "openvino-npu"
+    ],
+    "experimental": false,
+    "treeSHA256": "6f81918cd08a37ae693d2813c6453ed90245db22da205f20f5c002ade797b063"
+  },
+  {
+    "id": "runtime-sherpa-tts",
+    "name": "Sherpa ONNX TTS Runtime (Windows CPU)",
+    "task": "runtime",
+    "family": "sherpa-onnx",
+    "prompt": "",
+    "format": "tar.bz2",
+    "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.13.8/sherpa-onnx-v1.13.8-win-x64-shared-MD-Release.tar.bz2",
+    "sha256": "3e971a04b2e0ba4dfa53d381a006367ce8c9f5f09b4ae00043e9845c2baded22",
+    "bytes": 20494724,
+    "ramGB": 0,
+    "vramGB": 0,
+    "context": 0,
+    "license": "Apache-2.0; MIT; GPL-3.0 (eSpeak NG dependency)",
+    "source": "k2-fsa/sherpa-onnx",
+    "backends": [
+      "cpu"
+    ],
+    "experimental": true,
+    "treeSHA256": "0bb52d12cdf030fa9d182b713fb41ecc8d78762959b7a2412c6e93dd682d88b3"
+  },
+  {
+    "id": "tts-supertonic3",
+    "name": "Supertonic 3 TTS (31 languages, INT8 ONNX)",
+    "task": "tts",
+    "family": "supertonic3",
+    "prompt": "",
+    "format": "tar.bz2",
+    "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/sherpa-onnx-supertonic-3-tts-int8-2026-05-11.tar.bz2",
+    "sha256": "82fa96f91c4ef8abaae3a14a3f4153facf88bed821d1f7331cec2700f432c427",
+    "bytes": 128774318,
+    "ramGB": 1,
+    "vramGB": 0,
+    "context": 0,
+    "license": "OpenRAIL-M (model weights); MIT (sample files)",
+    "source": "Supertone; k2-fsa/sherpa-onnx",
+    "backends": [
+      "cpu"
+    ],
+    "experimental": true,
+    "treeSHA256": "9662dd3a113dec7ef7e117c92f56d6e4b69b8ac85e484688a6b70fb5a57cb266"
+  },
+  {
+    "id": "tts-kokoro-zh",
+    "name": "Kokoro TTS (Mandarin, INT8 ONNX)",
+    "task": "tts",
+    "family": "kokoro",
+    "prompt": "",
+    "format": "tar.bz2",
+    "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/kokoro-int8-multi-lang-v1_1.tar.bz2",
+    "sha256": "a1e94694776049035c4f2c6529f003aaece993c76aae9a78995831c3c4dcafc6",
+    "bytes": 147031220,
+    "ramGB": 1,
+    "vramGB": 0,
+    "context": 0,
+    "license": "Apache-2.0 (model); GPL-3.0 (eSpeak NG data)",
+    "source": "hexgrad; k2-fsa/sherpa-onnx",
+    "backends": [
+      "cpu"
+    ],
+    "experimental": true,
+    "treeSHA256": "c1772e77b7aa300318ff0e4ccbd898617a631e2dc2147d2994064af46ef326e6"
+  }
+]

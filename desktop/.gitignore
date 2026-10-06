@@ -1,0 +1,5 @@
+dist/
+local-admin-token
+*.test
+*.exe
+*.log

@@ -1,0 +1,80 @@
+* { box-sizing: border-box; }
+body { font-family: -apple-system, sans-serif; margin: 0; padding: 0; background: #f4f4f9; color: #333; height: 100vh; overflow: hidden; }
+#admin-app { display: flex; height: 100%; width: 100%; }
+
+.sidebar { width: 250px; background: #202124; color: white; display: flex; flex-direction: column; }
+.brand { padding: 1.5rem; margin: 0; font-size: 1.25rem; border-bottom: 1px solid #3c4043; }
+.nav-menu { list-style: none; padding: 0; margin: 0; }
+.nav-menu li { padding: 1rem 1.5rem; cursor: pointer; border-left: 4px solid transparent; }
+.nav-menu li:hover { background: #3c4043; }
+.nav-menu li.active { background: #1a73e8; border-left-color: #fff; font-weight: bold; }
+
+.main-content { flex: 1; display: flex; flex-direction: column; overflow-y: auto; }
+.top-bar { background: white; padding: 1rem 2rem; display: flex; justify-content: flex-end; align-items: center; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+#status-bar { display: flex; align-items: center; gap: 1rem; }
+.status-badge { padding: 0.25rem 0.75rem; background: #eee; border-radius: 16px; font-size: 0.9rem; font-weight: 500; }
+.status-badge.ready { background: #e6f4ea; color: #137333; }
+.status-badge.error { background: #fce8e6; color: #c5221f; }
+button { background: #1a73e8; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; font-size: 0.95rem; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.panel { padding: 2rem; display: none; max-width: 1200px; margin: 0 auto; width: 100%; }
+.panel.active { display: block; }
+.card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 1.5rem; margin-top: 1rem; }
+.card { background: white; border: 1px solid #e0e0e0; padding: 1.5rem; border-radius: 8px; box-shadow: 0 1px 2px rgba(0,0,0,0.05); margin-bottom: 1rem; }
+.card h4 { margin: 0 0 0.5rem 0; font-size: 1.1rem; }
+.card-meta { font-size: 0.9rem; color: #5f6368; margin-bottom: 1rem; line-height: 1.4; }
+.card-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+
+.modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: flex; justify-content: center; align-items: center; z-index: 100; }
+.modal-content { background: white; padding: 2rem; border-radius: 8px; min-width: 350px; max-width: 90%; max-height: 90vh; overflow-y: auto; }
+.hidden { display: none !important; }
+form label { display: block; margin-bottom: 1rem; font-weight: 500; }
+form input, form select, form textarea { width: 100%; padding: 0.5rem; margin-top: 0.25rem; border: 1px solid #ccc; border-radius: 4px; font-family: inherit; }
+.modal-actions { display: flex; gap: 1rem; justify-content: flex-end; margin-top: 1.5rem; }
+.err-text { color: #d93025; margin-top: 0.5rem; font-size: 0.9rem; }
+
+.line-item { background: #f8f9fa; border: 1px solid #ddd; padding: 1rem; margin-bottom: 0.5rem; border-radius: 4px; }
+.line-source { font-weight: bold; margin-bottom: 0.5rem; }
+th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+th { background-color: #f2f2f2; }
+/* Codex integration keeps the proposal's familiar sidebar and adds narrow-screen support. */
+body { font-family: "Segoe UI", "Apple SD Gothic Neo", system-ui, sans-serif; height: 100dvh; }
+.sidebar { flex: 0 0 240px; overflow-y: auto; }
+.main-content { min-width: 0; }
+.nav-menu li:focus-visible, button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 3px solid #9ac1ff; outline-offset: 2px; }
+.nav-menu li { padding: .75rem 1rem; }
+.panel, .card, .line-item, .card-meta, #diagnostic-info, #diagnostic-summary { overflow-wrap: anywhere; }
+.card-grid { grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); }
+.card-meta, .line-source, .line-item p { white-space: pre-wrap; }
+textarea { min-height: 110px; resize: vertical; }
+input, select, textarea { max-width: 100%; font-size: 1rem; }
+input[type=checkbox] { width: auto; }
+.modal-content { min-width: 0; width: min(600px, 94vw); }
+.quick-actions { display: flex; flex-wrap: wrap; gap: .6rem; margin-bottom: 1rem; }
+#connection-status { padding: .5rem 1.5rem; margin: 0; color: #42546a; background: #edf2f7; }
+#nav-toggle { display: none; }
+#status-bar { flex-wrap: wrap; justify-content: flex-end; }
+fieldset { border: 1px solid #d7e0e8; border-radius: 8px; margin: 1rem 0; }
+#form-add-term { flex-wrap: wrap; }
+#form-add-term input { flex: 1 1 150px; min-width: 0; }
+#panel-glossary table { table-layout: fixed; }
+#panel-glossary th, #panel-glossary td { overflow-wrap: anywhere; }
+#panel-glossary td input { min-width: 0; width: 100%; }
+#broadcast-share { margin-top: 1rem; }
+#broadcast-url { width: 100%; }
+#diagnostic-info ul { padding-left: 1.4rem; }
+#diagnostic-info li { margin-bottom: .45rem; }
+.model-recommendation { border-left: 3px solid #5682a8; padding: .5rem .7rem; background: #eef4fb; border-radius: 4px; overflow-wrap: anywhere; }
+.pin-settings p { font-size: .9rem; color: #42546a; overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .sidebar { display: none; position: fixed; top: 0; bottom: 0; left: 0; width: min(280px, 85vw); z-index: 90; box-shadow: 4px 0 24px #0004; }
+  .sidebar.open { display: flex; }
+  .top-bar { justify-content: space-between; padding: .75rem; gap: .5rem; }
+  #nav-toggle { display: inline-block; }
+  #status-bar { gap: .4rem; font-size: .85rem; }
+  .panel { padding: 1rem .75rem; }
+  .card { padding: 1rem; }
+  #connection-status { padding: .5rem .75rem; }
+  .modal-actions { flex-wrap: wrap; }
+}

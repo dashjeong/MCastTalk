@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCastTalk PC 관리</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="admin-app">
+        <aside class="sidebar" aria-label="관리 메뉴">
+            <h1 class="brand">MCastTalk PC</h1>
+            <ul class="nav-menu">
+                <li data-target="dashboard" class="active" tabindex="0" role="button">홈</li>
+                <li data-target="notes" tabindex="0" role="button">방송 · 음성노트</li>
+                <li data-target="files" tabindex="0" role="button">파일 전사</li>
+                <li data-target="history" tabindex="0" role="button">이력 · 내보내기</li>
+                <li data-target="glossary" tabindex="0" role="button">용어집</li>
+                <li data-target="scripts" tabindex="0" role="button">대본</li>
+                <li data-target="lessons" tabindex="0" role="button">교정 · 검토</li>
+                <li data-target="rooms" tabindex="0" role="button">강의실 · 개인대화</li>
+                <li data-target="models" tabindex="0" role="button">모델 · PC 진단</li>
+                <li data-target="settings" tabindex="0" role="button">설정</li>
+                <li data-target="portable" tabindex="0" role="button">오프라인 환경 옮기기</li>
+            </ul>
+        </aside>
+
+        <main class="main-content">
+            <header class="top-bar"><button id="nav-toggle" type="button" aria-expanded="false" aria-label="관리 메뉴 펼치기">메뉴</button>
+                <div id="status-bar">
+                    <span id="engine-status" class="status-badge" aria-live="polite">엔진 상태 확인 중</span>
+                    <span id="queue-depth" class="status-badge" aria-live="polite">대기 작업: 0</span>
+                    <button id="btn-engine-toggle">엔진 시작</button>
+                </div>
+            </header><p id="connection-status" role="status" aria-live="polite"></p><p id="operation-status" role="alert"></p>
+
+            <div id="panel-dashboard" class="panel active">
+                <h2>PC 통역 관리</h2><p class="card-meta">0.2.48-desktop · 실제 모델의 품질·7초 지연·대형 강의 성능은 대상 PC에서 따로 확인하세요.</p><div class="quick-actions"><button data-open-panel="notes">방송·노트 시작</button><button data-open-panel="files">파일 전사</button><button data-open-panel="history">저장 자료</button><button data-open-panel="rooms">강의실·개인대화</button><button data-open-panel="models">모델·진단</button></div>
+                <p>로컬 통역과 강의실을 관리합니다. 개인대화는 지정된 두 당사자에게만 전달합니다.</p>
+                <div id="diagnostic-summary">PC 상태 확인 중</div>
+                <section id="setup-card" class="card" aria-labelledby="setup-title">
+                    <h3 id="setup-title">첫 실행 · 환경 일괄 구성</h3>
+                    <p>선택한 번역·음성인식 모델, 실행 엔진, CPU 대체 엔진을 함께 준비합니다. 파일을 받은 뒤 로컬 엔진 기동 → 언어별 WAV 음성인식 → 양방향 번역·음성합성을 자동 확인합니다.</p>
+                    <p id="setup-summary" role="status" aria-live="polite">PC 진단·구성을 확인하고 있습니다.</p>
+                    <ul id="setup-assets"></ul>
+                    <p id="setup-warnings"></p>
+                    <label><input id="setup-consent" type="checkbox" style="width:auto"> 표시된 용량과 모델·엔진·Microsoft 실행 구성요소 이용조건을 확인했고 다운로드·설치·구동 시험에 동의합니다.</label>
+                    <div class="card-actions">
+                        <button id="setup-start" type="button" disabled>필요 환경 받기·구성·구동 검증</button>
+                        <button id="setup-cancel" type="button" disabled>구성 작업 취소</button>
+                        <button id="setup-refresh" type="button">PC 진단·구성 새로고침</button>
+                        <button id="setup-offline" type="button">오프라인 환경 가져오기</button>
+                    </div>
+                    <p id="setup-status" role="status" aria-live="polite"></p>
+                    <ul id="setup-checks"></ul>
+                    <p>선택한 로컬 음성 모델과 GPU/NPU 드라이버의 준비 상태를 확인합니다. 다운로드 완료, 기능 연결 확인, 정확도·실시간 지연·대형 강의 검증은 각각 표시합니다.</p>
+                </section>
+            </div>
+
+            <div id="panel-notes" class="panel hidden">
+                <h2>방송 · 음성노트</h2>
+                <div class="card">
+                    <h3>진행 중인 작업</h3>
+                    <p id="notes-status" role="status" aria-live="polite"></p><div id="active-session-info" aria-live="polite">확인 중</div>
+                    <div class="card-actions" style="margin-top:1rem;">
+                        <button id="btn-stop-session">작업 종료</button>
+                        <button id="btn-refresh-notes">새로고침</button>
+                        <button id="btn-mic">마이크 켜기</button><meter id="mic-meter" min="0" max="1" value="0" aria-label="마이크 입력 크기"></meter>
+                    </div>
+                <div id="broadcast-share" hidden><label>청취 주소 <input id="broadcast-url" readonly></label><button id="broadcast-copy" type="button">주소 복사</button><button id="broadcast-qr" type="button">청취 QR</button></div></div>
+                <div class="card">
+                    <h3>작업 시작</h3>
+                    <form id="form-create-notes"><label>작업 종류 <select id="notes-kind"><option value="note">음성노트</option><option value="broadcast">통역 방송 · 청취자에게 공유</option></select></label>
+                        <label>제목 <input id="notes-title" required maxlength="120"></label>
+                        <label>입력 언어 <input id="notes-source" placeholder="비워 두면 설정의 기본 언어 사용"></label>
+                        <label>대상 언어 · 쉼표로 구분 <input id="notes-targets" placeholder="비워 두면 설정의 기본 언어 사용"></label>
+                        <button type="submit">작업 시작</button>
+                    </form>
+                </div>
+                <div class="card">
+                    <h3>원문 입력</h3>
+                    <form id="form-submit-text">
+                        <label>내용 <textarea id="notes-text" required maxlength="8192"></textarea></label>
+                        <button type="submit" id="btn-submit-text">저장 · 번역 요청</button>
+                    </form>
+                </div>
+                <div class="card">
+                    <h3>문장 · 번역 · 음성</h3>
+                    <div id="notes-lines"></div>
+                </div>
+            </div>
+
+            <div id="panel-files" class="panel hidden">
+                <h2>파일 전사</h2>
+                <div class="card">
+                    <h3>음성 파일 등록</h3>
+                    <form id="form-upload-file">
+                        <label>기존 파일 작업 ID · 비워 두면 새 작업 <input id="files-session" maxlength="32"></label>
+                        <label>새 작업 제목 <input id="files-title" maxlength="120"></label>
+                        <label>입력 언어 <input id="files-source"></label>
+                        <label>대상 언어 · 쉼표로 구분 <input id="files-targets"></label>
+                        <label>WAV 파일 · PCM16 mono 16kHz <input type="file" id="files-audio" accept=".wav" required></label>
+                        <button type="submit" id="btn-upload-file">파일 전사 접수</button>
+                        <div id="files-upload-status" role="status" aria-live="polite"></div>
+                    </form>
+                </div>
+                <div class="card">
+                    <h3>처리 작업 <button id="btn-refresh-jobs">새로고침</button></h3>
+                    <div id="jobs-list"></div>
+                </div>
+            </div>
+
+            <div id="panel-history" class="panel hidden">
+                <h2>이력 · 내보내기</h2>
+                <div class="card">
+                    <h3>저장된 작업 <button id="btn-refresh-history">새로고침</button></h3>
+                    <div id="history-sessions-list"></div>
+                </div>
+                <div class="card">
+                    <h3>문장 · 번역 · 음성</h3>
+                    <p>개인대화 자료는 당사자의 채널 화면에서만 열람할 수 있습니다.</p><p id="history-page-status" role="status"></p><div id="history-lines"></div><div class="card-actions"><button id="history-previous" type="button" disabled>이전 100문장</button><button id="history-more" type="button" disabled>다음 100문장</button></div>
+                </div>
+            </div>
+
+            <div id="panel-glossary" class="panel hidden">
+                <h2>용어집</h2>
+                <div class="card">
+                    <button id="btn-refresh-glossary">새로고침</button>
+                    <button id="btn-save-glossary">변경 저장</button>
+                    <p>언어별 용어를 편집한 후 변경 저장을 누르세요. 편집 중인 내용은 자동으로 덮어쓰지 않습니다.</p><div id="glossary-status" role="status" aria-live="polite"></div>
+                    <table style="width:100%; margin-top:1rem; border-collapse:collapse;">
+                        <thead>
+                            <tr>
+                                <th>언어</th>
+                                <th>원문 용어</th>
+                                <th>번역 용어</th>
+                                <th>작업</th>
+                            </tr>
+                        </thead>
+                        <tbody id="glossary-tbody"></tbody>
+                    </table>
+                    <form id="form-add-term" style="margin-top:1rem; display:flex; gap:1rem;">
+                        <input aria-label="용어 언어" id="term-lang" placeholder="ko" required>
+                        <input aria-label="원문 용어" id="term-source" placeholder="원문 용어" required>
+                        <input aria-label="번역 용어" id="term-target" placeholder="번역 용어" required>
+                        <button type="submit">용어 추가</button>
+                    </form>
+                </div>
+            </div>
+
+            <div id="panel-scripts" class="panel hidden">
+                <h2>대본</h2>
+                <div class="card">
+                    <h3>저장한 대본 <button id="btn-refresh-scripts">새로고침</button></h3>
+                    <div id="scripts-list"></div>
+                </div>
+                <div class="card">
+                    <h3>대본 저장</h3>
+                    <form id="form-create-script">
+                        <label>제목 <input id="script-title" required></label>
+                        <label>내용 <textarea id="script-text" required></textarea></label>
+                        <button type="submit">저장</button>
+                    </form>
+                </div>
+            </div>
+
+            <div id="panel-lessons" class="panel hidden">
+                <h2>교정 · 검토</h2><p>등록한 제안은 검토 대기 상태입니다. 승인한 교정만 후속 번역에 참고하며 모델을 자동 미세조정하지 않습니다.</p>
+                <div class="card">
+                    <h3>교정 제안 등록</h3>
+                    <form id="form-create-lesson">
+                        <label>언어 <input id="lesson-lang" required></label>
+                        <label>원문 <input id="lesson-source" required maxlength="8192"></label>
+                        <label>기존 번역 · 선택 <input id="lesson-before"></label>
+                        <label>교정 제안 <input id="lesson-proposed" required></label>
+                        <button type="submit">등록</button>
+                    </form>
+                </div>
+                <div class="card">
+                    <h3>검토 기록 <button id="btn-refresh-lessons">새로고침</button></h3>
+                    <div id="lessons-list"></div>
+                </div>
+            </div>
+
+            <div id="panel-rooms" class="panel hidden">
+                <h2>강의실 · 개인대화</h2>
+                <p>30명 이상·5개 언어 이상으로 시험을 시작하고 100명 → 300명 이상으로 확장합니다. 등록 정원은 설정값이며 실제 통역 처리 성능을 보증하지 않습니다. 강사·학생은 서로 다른 초대 주소에서 참여하며, 개인대화는 지정된 당사자에게만 전달됩니다.</p>
+                <button id="btn-show-create">강의실 만들기</button>
+                <div id="rooms-list" class="card-grid"></div>
+            </div>
+
+            <div id="panel-models" class="panel hidden">
+                <h2>모델 · PC 진단</h2>
+                <button id="btn-refresh-diag">PC 진단 새로고침</button>
+                <section id="diagnostic-info" aria-label="PC 자원·가속 장치·모델 후보 진단"></section>
+                <p id="model-message" role="status" aria-live="polite"></p>
+                <details>
+                    <summary>Hugging Face 모델 추가</summary>
+                    <p>저장소의 선택 리비전을 고정된 커밋과 SHA-256으로 등록합니다. 새 모델은 실제 구동과 품질 시험 전까지 실험 후보입니다.</p>
+                    <form id="model-register-form">
+                        <label>저장소 <input id="model-repo" placeholder="조직/저장소" required maxlength="180"></label>
+                        <label>리비전 <input id="model-revision" value="main" required maxlength="120"></label>
+                        <label>모델 파일 <input id="model-filename" placeholder="model-Q4_K_M.gguf" required maxlength="240"></label>
+                        <label>구동 형식 <select id="model-profile"><option value="chat">번역 · GGUF / 일반 채팅 템플릿</option><option value="translategemma">번역 · TranslateGemma GGUF</option><option value="whisper">음성인식 · Whisper GGML</option></select></label>
+                        <label>필요 RAM(GB) <input id="model-ram" type="number" min="1" max="512" value="8" required></label>
+                        <label>모델 이용조건 <input id="model-license" placeholder="모델 카드에서 확인하세요" required maxlength="240"></label>
+                        <button type="submit">검증 메타데이터 가져와 등록</button>
+                    </form>
+                </details>
+                <h3>선택 가능한 모델</h3>
+                <div id="models-list" class="card-grid"></div>
+            </div>
+
+            <div id="panel-portable" class="panel hidden">
+                <h2>오프라인 환경 옮기기</h2>
+                <p>온라인 PC에서 모델·실행 엔진을 준비하고 실제 구동을 확인한 뒤 내보내세요. USB 등으로 옮긴 ZIP 또는 폴더를 인터넷 없이 가져올 수 있습니다.</p>
+                <p>인증키·PIN·TLS 개인키·개인 대화·녹음·참여자 정보는 포함하지 않습니다. 대상 PC의 관리자 인증을 사용하며 모바일 접속용 로컬 네트워크·HTTPS는 대상에서 설정하세요.</p>
+                <div class="card-grid">
+                    <form id="environment-export" class="card">
+                        <h3>환경 내보내기</h3>
+                        <label>형식 <select id="environment-format"><option value="zip">ZIP 패키지</option><option value="folder">내보내기 폴더</option></select></label>
+                        <label>새 목적지 전체 경로 <input id="environment-destination" required placeholder="D:\\MCastTalk-환경.zip"></label>
+                        <label><input id="environment-exe" type="checkbox"> 현재 Windows 실행파일 포함</label>
+                        <label><input id="environment-knowledge" type="checkbox"> 전역 용어집·대본·승인한 학습 자료 포함</label>
+                        <p>선택 모델·CPU 대체 엔진·설치한 가속 엔진을 확인합니다. 기존 목적지를 덮어쓰지 않습니다.</p>
+                        <button type="submit">검증하고 내보내기</button>
+                    </form>
+                    <form id="environment-import" class="card">
+                        <h3>환경 검사·가져오기</h3>
+                        <label>ZIP 또는 폴더 전체 경로 <input id="environment-source" required placeholder="E:\\MCastTalk-환경.zip"></label>
+                        <p>검사는 파일·버전·플랫폼·공간을 확인합니다. 가져오기 전 엔진·강의실·대기 작업·접속을 종료하세요.</p>
+                        <button type="submit">패키지 검사</button>
+                        <button type="button" id="environment-apply" disabled>검사한 환경 가져오기</button>
+                        <p>가져오면 CPU·오프라인·로컬 접속으로 적용됩니다. 프로그램을 다시 실행하고 엔진·음성·통번역 성능을 확인하세요.</p>
+                    </form>
+                </div>
+                <button id="environment-cancel" type="button" disabled>진행 작업 취소</button>
+                <button id="environment-refresh" type="button">상태 새로고침</button>
+                <p id="environment-status" role="status" aria-live="polite"></p>
+                <pre id="environment-result" style="white-space:pre-wrap;overflow-wrap:anywhere"></pre>
+            </div>
+
+            <div id="panel-settings" class="panel hidden">
+                <h2>서버 · 언어 설정</h2>
+                <form id="config-form">
+                    <label>추론 가속 방식
+                        <select id="cfg-backend">
+                            <option value="cpu">CPU</option>
+                            <option value="cuda">CUDA</option>
+                            <option value="vulkan">Vulkan</option>
+                            <option value="openvino-npu">OpenVINO NPU</option>
+                        </select>
+                    </label>
+                    <label>번역 모델 ID <input type="text" id="cfg-translation"></label>
+                    <label>음성인식 모델 ID <input type="text" id="cfg-stt"></label>
+                    <label>청취 서버 주소·포트 <input type="text" id="cfg-publicBind"></label>
+                    <label>참여자 HTTPS 접속 주소 <input type="text" id="cfg-publicURL"></label>
+                    <label>HTTPS 인증서 PEM 경로 <input id="cfg-tlsCert" type="text"></label>
+                    <label>HTTPS 개인키 PEM 경로 <input id="cfg-tlsKey" type="text"></label>
+                    <label>접속 정원 · 성능 보증 아님 <input type="number" id="cfg-maxListeners" min="1" max="2048"></label>
+                    <label>청취 접속 방식
+                        <select id="cfg-access">
+                            <option value="open">주소를 아는 청취자</option>
+                            <option value="qr">QR 초대</option>
+                            <option value="pin">PIN</option>
+                        </select>
+                    </label>
+                    <fieldset class="pin-settings"><legend>청취 · 원격 마이크 PIN</legend>
+                        <p>새 PIN은 앞뒤 공백 없이 UTF-8 기준 6~32바이트로 입력하세요. 영문·숫자는 6~32자입니다. 기존 PIN은 표시하지 않으며, 입력을 비우면 유지합니다.</p>
+                        <label>청취 PIN <input id="cfg-listener-pin" type="password" autocomplete="new-password" spellcheck="false" aria-describedby="cfg-listener-pin-status"></label>
+                        <p id="cfg-listener-pin-status" role="status"></p>
+                        <label>원격 마이크 PIN <input id="cfg-speaker-pin" type="password" autocomplete="new-password" spellcheck="false" aria-describedby="cfg-speaker-pin-status"></label>
+                        <p id="cfg-speaker-pin-status" role="status"></p>
+                    </fieldset>
+<label>기본 입력 언어 <input id="cfg-source" required value="ko"></label><label>기본 대상 언어 <input id="cfg-targets" required value="ko,en,ja,zh,es"></label><fieldset><legend>공개 방송·노트 온라인 번역 · 선택</legend><p>선택하면 해당 작업의 원문·최근 문맥·대상 언어 용어가 설정한 API로 전달됩니다. 개인대화는 로컬 처리합니다.</p><label>완전한 HTTPS 요청 주소 <input id="cfg-online-endpoint" type="url" placeholder="https://api.openai.com/v1/chat/completions"></label><label>온라인 모델 <input id="cfg-online-model" maxlength="120"></label><label>API 키 · 비우면 기존 키 유지 <input id="cfg-online-key" type="password" autocomplete="off" maxlength="512"></label><label><input id="cfg-online-consent" type="checkbox"> 이 공개 작업의 온라인 전송에 동의합니다.</label></fieldset>                    <button type="submit">설정 저장</button>
+                    <div id="config-msg"></div>
+                </form>
+            </div>
+        </main>
+    </div>
+
+    <!-- Create Room Modal -->
+    <div id="modal-create" class="modal hidden" role="dialog" aria-modal="true">
+        <div class="modal-content">
+            <h3>강의실 만들기</h3>
+            <form id="form-create-room">
+                <label>제목 <input type="text" id="room-title" required maxlength="120"></label>
+                <label>운영 방식 <select id="room-mode"><option value="lecture">강의 · 발언권 관리</option><option value="conversation">자유 대화</option></select></label>
+                <label>접속 정원 · 성능 보증 아님 <input type="number" id="room-capacity" value="30" max="512" min="1"></label>
+                <label>사용 언어 · 쉼표로 구분 <input type="text" id="room-languages" value="ko,en,ja,zh,es" required></label>
+                <div class="modal-actions">
+                    <button type="submit">등록</button>
+                    <button type="button" id="btn-cancel-create">취소</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- QR Modal -->
+    <div id="modal-qr" class="modal hidden" role="dialog" aria-modal="true">
+        <div class="modal-content">
+            <h3 id="qr-title" style="word-break: break-all;">초대 주소</h3>
+            <input type="text" id="qr-url" readonly style="width:100%; margin-bottom:1rem;">
+            <div id="qr-container" style="background:white; padding:1rem; margin-bottom:1rem; display:flex; justify-content:center;"></div>
+            <div class="modal-actions">
+                <button type="button" id="btn-copy-url">주소 복사</button>
+                <button type="button" id="btn-close-qr">닫기</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/prototype/vendor/qrcode.min.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

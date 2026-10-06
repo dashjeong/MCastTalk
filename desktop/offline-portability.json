@@ -1,0 +1,80 @@
+{
+  "schema": 1,
+  "version": "0.2.48-desktop",
+  "updatedUtc": "2026-10-05T22:41:41.872863+00:00",
+  "scope": "Windows amd64 offline environment transfer",
+  "flow": [
+    "Online source: install immutable model/runtime profiles; real inference + voices + performance verification",
+    "Export ZIP Store or folder (full path; never overwrite)",
+    "Move by local storage; target inspect files/platform/disk",
+    "Import verified fingerprint into immutable managed paths; atomic Bolt activation",
+    "Restart -> diagnose target -> start engine -> actual local STT/translation/TTS -> load and reboot trials"
+  ],
+  "implemented": {
+    "formats": [
+      "zip",
+      "folder"
+    ],
+    "requiredDefaultAssets": [
+      "selected translation model",
+      "selected STT model",
+      "runtime-llama-cpu",
+      "runtime-whisper-cpu",
+      "runtime-sherpa-tts",
+      "selected-language Supertonic3 and/or Kokoro ONNX model bundles"
+    ],
+    "optional": [
+      "currently running Windows EXE (stored separately; no automatic execution)",
+      "global glossary/scripts/approved lessons",
+      "installed acceleration runtime"
+    ],
+    "profileExtensibility": "Immutable HF commit/SHA/format/prompt/model registry transfers without HF lookup; custom executable/runtime rejected; schema/version compatibility fails closed; schema1 exact older tree-metadata and VC DLL4 descriptor accepted only after current source-tree and installer identity validation",
+    "security": [
+      "strict file allowlist",
+      "SHA256+size+magic+runtime manifests",
+      "Windows device/ADS/path/case/reparse rejection",
+      "source and target disk preflight",
+      "safe settings allowlist; target credentials remain local",
+      "inspected manifest fingerprint bound to import",
+      "environment mutation gate and idle import",
+      "cancel/failed activation preserve existing paths/config",
+      "running operation on restart shown interrupted",
+      "Immutable source-archive-derived complete file tree pin; reject rewritten file+installed manifest and forged portable tree"
+    ],
+    "limits": {
+      "maxFileBytes": 137438953472,
+      "maxTotalBytes": 549755813888,
+      "maxManifestBytes": 8388608,
+      "maxFiles": 16384,
+      "stagingReserveBytes": 536870912
+    },
+    "transferEfficiency": "Large GGUF/GGML exported/imported with one full payload pass while hashing; no model-sized RAM buffer; runtime tree retains separate archive profile and extracted hashes"
+  },
+  "excluded": [
+    "API keys/PIN/TLS material",
+    "DPAPI/private AES key/DB",
+    "sessions/rooms/members/invites/tokens",
+    "private/public conversation lines/recordings/jobs/recent contexts",
+    "development logs"
+  ],
+  "targetValidation": {
+    "fileVerification": "implemented",
+    "osArchVersionCompatibility": "same application version; Windows amd64",
+    "disk": "measured before copy",
+    "GPU_NPU_RAM": "target diagnostic candidates; actual inference readiness is separate",
+    "sourcePerformanceTransfer": false,
+    "targetVerifiedOnImport": false,
+    "requiresWarmup": true
+  },
+  "remainingAcceptance": [
+    "Actual Windows EXE launch in VM",
+    "Actual installed model + language voice roundtrip with OS egress blocked",
+    "Offline target drivers and bundled ONNX speech model execution verification",
+    "Full-size multi-GB transfer and disk-full/power-loss at each phase",
+    "30/100/320 actual inference scale and >=8h runtime trial",
+    "Runtime signed-publisher authentication/package signing",
+    "Conservative automatic cleanup of uncommitted crash orphan directories"
+  ],
+  "internetBoundary": "Backend HTTP denied counter=0 in fixture roundtrip; browser app requests local only. Entire OS outbound traffic was not blocked/measured. Import uses OS diagnostics, but never runs imported binaries.",
+  "crossDeviceNotes": "Mobile may join offline PC over local authenticated HTTPS LAN with role-scoped QR. Native Android environment migration is not implemented."
+}
