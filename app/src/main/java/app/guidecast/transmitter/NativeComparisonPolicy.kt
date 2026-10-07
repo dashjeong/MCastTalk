@@ -17,7 +17,7 @@ internal fun nativeComparisonPresentation(options: TranslationApiOptions, reques
     if (supported && requested && active && startedGeneration != null && startedGeneration != currentGeneration)
         return NativeComparisonPresentation(true, true, "비교 학습 · 다음 중계 시작부터 적용", NativeLearningPause.RESTART.label)
     return if (!supported) NativeComparisonPresentation(false, false, "비교 학습 · 현재 모델에서 미지원",
-        "원문·통역의 대응 ID를 확인할 수 없어 비교하지 않습니다. 음성 통역 중계는 이용할 수 있습니다.")
+        "원문·통역의 대응 ID를 확인할 수 없어 비교하지 않습니다. 음성 On-통 Live(AI 통역)는 이용할 수 있습니다.")
     else NativeComparisonPresentation(true, requested,
         if (requested) "비교 학습 · 확정 예문 비교 선택됨" else "비교 학습 · 꺼짐",
         "준비된 오프라인 모델로 비교하며 직접 검수·저장한 예문만 재사용합니다.")

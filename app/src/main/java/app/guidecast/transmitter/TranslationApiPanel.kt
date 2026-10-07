@@ -62,7 +62,7 @@ internal fun AdvancedTranslationApiPanel(settings: TranslationApiSettings, servi
             val learningSupported = learningCapability.supportsLearningComparison
             ServiceExperienceToggle("학습 비교 (상시 설정 포함)",
                 if (learningSupported) "별도 동의 후 보조 엔진과 비교합니다. 주 방송 경로는 유지됩니다."
-                else if (learningCapability.supportsNativePairComparison) "직접 음성 비교는 통역 중계의 ‘오프라인 결과와 비교’에서 켜세요. 상시 문장 비교 설정은 이 경로에 적용되지 않습니다."
+                else if (learningCapability.supportsNativePairComparison) "직접 음성 비교는 On-통 Live(AI 통역)의 ‘오프라인 결과와 비교’에서 켜세요. 상시 문장 비교 설정은 이 경로에 적용되지 않습니다."
                 else "이 Live 음성 경로에서는 학습 비교를 지원하지 않습니다. 저장된 상시 학습 설정은 적용되지 않습니다.",
                 learningSupported && (sessionLearning || (options.provider != TranslationApiProvider.LOCAL && options.alwaysLearnOnline)),
                 enabled && learningSupported) { on ->
@@ -102,7 +102,7 @@ internal fun AdvancedTranslationApiPanel(settings: TranslationApiSettings, servi
                     TextButton(enabled = enabled, onClick = {
                         message = if (settings.setDomainPrompt(domain)) "전문통역 지시 저장됨" else "300자 이내의 분야 지시를 확인하세요. 키·민감정보는 넣지 마세요."
                     }) { Text("분야 지시 저장") }
-                    Text("이 지시는 선택 API로 전송됩니다. 분야 지정은 정확도 보증이나 모델 학습이 아닙니다. 통역 중계의 전문 자료·지침에서 지원 모델과 전달할 발췌를 확인하세요.")
+                    Text("이 지시는 선택 API로 전송됩니다. 분야 지정은 정확도 보증이나 모델 학습이 아닙니다. On-통 Live(AI 통역)의 전문 자료·지침에서 지원 모델과 전달할 발췌를 확인하세요.")
                 }
             }
             if (options.provider != TranslationApiProvider.GEMINI_LIVE) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -187,7 +187,7 @@ internal fun AdvancedTranslationApiPanel(settings: TranslationApiSettings, servi
                     capability.supportsReferences && options.allowDomainReferences, enabled && capability.supportsReferences, settings::setAllowDomainReferences)
                 ServiceExperienceToggle("온라인 사용 시 상시 학습",
                     if (capability.supportsLearningComparison) "온라인 결과와 기기 내 결과를 비교합니다. 검토 전에는 자동 적용하지 않습니다."
-                    else if (capability.supportsNativePairComparison) "통역 중계의 ‘오프라인 결과와 비교’를 별도로 켜세요. 저장된 상시 문장 비교 설정은 적용하지 않습니다."
+                    else if (capability.supportsNativePairComparison) "On-통 Live(AI 통역)의 ‘오프라인 결과와 비교’를 별도로 켜세요. 저장된 상시 문장 비교 설정은 적용하지 않습니다."
                     else "이 음성 경로에서는 저장된 학습 옵션을 적용하지 않습니다.",
                     capability.supportsLearningComparison && options.alwaysLearnOnline, capability.supportsLearningComparison && (enabled || options.alwaysLearnOnline), settings::setAlwaysLearnOnline)
                 Text("기본 꺼짐. 설정한 API 전송 동의 범위에서 같은 원문을 준비된 로컬 엔진과 비교합니다. 검토 결과는 자동 적용하지 않습니다. 이 저장 옵션만으로 OFFLINE 전송이 켜지지 않습니다. OFFLINE 보조 비교에는 이번 학습의 별도 동의가 필요합니다.", style = MaterialTheme.typography.bodySmall)

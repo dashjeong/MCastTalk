@@ -40,7 +40,7 @@ internal fun serviceExperience(options: TranslationApiOptions): ServiceExperienc
         "OpenAI 직접 음성 통역", "마이크 음성 → OpenAI → 통역 음성 · 원문/번역 자막",
         "마이크 음성과 선택한 말투·분야 지시를 OpenAI로 보냅니다. 원문 자막 인식도 제공자가 처리합니다.",
         true, true, false,
-        "현재 한 출력 언어로 이용합니다. 통역 중계에서 비교를 켜면 확정된 원문·통역 쌍을 준비된 Gemma와 비교하며 추가 API 요청은 없습니다. 직접 검수·저장한 예문만 재사용합니다. 실기기 품질 검증은 별도입니다.",
+        "현재 한 출력 언어로 이용합니다. On-통 Live(AI 통역)에서 비교를 켜면 확정된 원문·통역 쌍을 준비된 Gemma와 비교하며 추가 API 요청은 없습니다. 직접 검수·저장한 예문만 재사용합니다. 실기기 품질 검증은 별도입니다.",
         supportsNativePairComparison = true,
     ) else ServiceExperience(
         when (options.provider) {

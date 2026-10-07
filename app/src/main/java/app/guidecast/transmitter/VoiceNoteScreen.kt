@@ -69,6 +69,7 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
     var liveTranscription by rememberSaveable { mutableStateOf(true) }
     var showDetailedView by rememberSaveable { mutableStateOf(false) }
     var showTools by rememberSaveable { mutableStateOf(false) }
+    var showWorkbench by rememberSaveable { mutableStateOf(false) }
     var showTranslation by rememberSaveable { mutableStateOf(false) }
     var optionsExpanded by remember { mutableStateOf(false) }
     var userScrolledUp by rememberSaveable { mutableStateOf(false) }
@@ -141,10 +142,12 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
     val library = remember(state.library, libraryQuery) { state.library.filter { it.title.contains(libraryQuery.trim(), ignoreCase = true) } }
     LaunchedEffect(note?.id) {
         showTools = false
+        showWorkbench = false
         model.editorDraft.select(note?.id)
         transcriptQuery = ""
         if (note != null) { source = note.sourceLanguage; target = note.targetLanguage }
     }
+    LaunchedEffect(note?.targetLanguage) { note?.let { target = it.targetLanguage } }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (!granted) model.permissionDenied()
         else if (transcribePermission) model.transcribe(source, target) else model.record(title, source, target, liveTranscription)
@@ -176,6 +179,10 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
     if (transferVisible) {
         DataTransferPanel(onBack = { transferVisible = false; model.refreshLibrary() },
             unavailableReason = if (enabled && !state.playback.isPlaying) null else "진행 중인 음성 작업을 마친 뒤 백업·가져오기를 실행하세요.")
+        return
+    }
+    if (showWorkbench && note != null) {
+        VoiceNoteWorkbench(model, state, onBack = { showWorkbench = false })
         return
     }
     BackHandler(onBack = back)
@@ -385,6 +392,10 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
                                 }
                             }
                         } else {
+                            item {
+                                OutlinedButton(onClick = { showWorkbench = true }, enabled = enabled && note.lines.isNotEmpty(),
+                                    modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp)) { Text("문장 검사·언어별 번역") }
+                            }
                             if (showTools) {
                                 item {
                                     Text("${formatArchiveSessionTime(note.createdAt)} · ${voiceNoteTime(note.durationMs)}", style = MaterialTheme.typography.bodySmall)
@@ -425,7 +436,7 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
                                         }
                                     }
                                     VoiceNoteExportPanel(note, transcriptQuery, enabled, exportDocument)
-                                    Text("원문 (번역문) · 화자 이름은 직접 지정할 수 있습니다. 자동 화자 분리는 제공하지 않습니다. 구간 시각은 추정값일 수 있습니다.", style = MaterialTheme.typography.bodySmall)
+                                    Text("교정본 (번역문) · 받아쓴 원문은 ‘문장 검사·언어별 번역’에서 확인합니다. 화자 이름은 직접 지정하며, 구간 시각은 추정값일 수 있습니다.", style = MaterialTheme.typography.bodySmall)
                                     OutlinedTextField(transcriptQuery, { transcriptQuery = it.take(200) }, label = { Text("이 노트에서 문장·화자 찾기") },
                                         singleLine = true, modifier = Modifier.fillMaxWidth())
                                     if (transcriptQuery.isNotBlank()) {
@@ -624,15 +635,16 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
         dismissButton = { TextButton(onClick = { renameTitle = null }) { Text("취소") } }) }
     editIndex?.let { index -> AlertDialog(onDismissRequest = { editIndex = null }, title = { Text("문장 수정") },
         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("원문을 고치면 기존 자동 번역은 지워집니다. 새 번역을 직접 입력하거나 저장 후 남은 구간을 번역하세요. 원음과 화자 이름은 유지됩니다.")
-            OutlinedTextField(editOriginal, { editOriginal = it.take(65_536); if (!translationEdited) editTranslation = "" }, label = { Text("원문 수정") }, maxLines = 5, enabled = !state.busy)
+            Text("받아쓴 원문과 녹음은 보존하고 교정본만 수정합니다. 교정본이 바뀌면 번역을 다시 만들 수 있습니다.")
+            note?.lines?.getOrNull(index)?.let { line -> SelectionContainer { Text("보존된 원문: ${line.originalTranscript}") } }
+            OutlinedTextField(editOriginal, { editOriginal = it.take(65_536); if (!translationEdited) editTranslation = "" }, label = { Text("교정본 수정") }, maxLines = 5, enabled = !state.busy)
             OutlinedTextField(editTranslation, { editTranslation = it.take(65_536); translationEdited = true }, label = { Text("번역문 수정 (선택)") }, maxLines = 5, enabled = !state.busy)
             if (editAttempted && !state.busy) state.message?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
         } },
         confirmButton = { TextButton(onClick = { editAttempted = true; model.editLine(index, editOriginal, editTranslation, translationEdited) { editIndex = null } }, enabled = enabled && editOriginal.isNotBlank()) { Text("수정 저장") } },
         dismissButton = { TextButton(onClick = { editIndex = null }) { Text("취소") } }) }
     if (translateDialog) AlertDialog(onDismissRequest = { translateDialog = false }, title = { Text("번역 언어를 바꿀까요?") },
-        text = { Text("새 ${VOICE_NOTE_LANGUAGES[target]} 번역을 모두 완료한 뒤 기존 번역과 직접 수정한 번역을 대체합니다. 중지하거나 실패하면 기존 번역을 유지합니다. 원문·화자·녹음도 유지됩니다. 두 번역이 모두 필요하면 먼저 TXT를 내려받으세요.") },
+        text = { Text("${VOICE_NOTE_LANGUAGES[target]} 번역을 모두 완료한 뒤 표시합니다. 다른 언어 번역과 직접 수정한 번역은 보관하며, 원문·화자·녹음도 유지됩니다.") },
         confirmButton = { TextButton(onClick = { translateDialog = false; model.translateRemaining(target) }) { Text("번역 변경") } },
         dismissButton = { TextButton(onClick = { translateDialog = false }) { Text("취소") } })
     if (replaceDialog) AlertDialog(onDismissRequest = { replaceDialog = false }, title = { Text("다시 받아쓸까요?") },

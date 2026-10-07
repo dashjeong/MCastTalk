@@ -37,6 +37,11 @@ internal fun voiceNoteExportRevision(note: VoiceNote): String {
     note.lines.forEach { line ->
         part(line.startMs); part(line.endMs); part(line.original); part(line.language)
         part(line.translation); part(line.speaker); part(line.edited); part(line.timingEstimated)
+        part(line.originalTranscript); part(line.translations.size)
+        line.translations.toSortedMap().forEach { (language, value) ->
+            part(language); part(value.text); part(value.sourceFingerprint); part(value.model)
+            part(value.manuallyEdited); part(value.fromOriginal)
+        }
     }
     return digest.digest().joinToString("") { "%02x".format(it) }
 }

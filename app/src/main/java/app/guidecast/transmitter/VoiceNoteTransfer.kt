@@ -33,7 +33,7 @@ internal object VoiceNoteTransfer {
                 val ordinal = row.getInt("ordinal").also { require(it in 0 until 2_000) }
                 val line = line(row)
                 DataTransferFormat.RecordKey(SEGMENT, "$parent:$ordinal", parent = parent, ordinal = ordinal,
-                    contentChars = line.original.length.toLong() + line.translation.length + line.speaker.length)
+                    contentChars = voiceNoteStoredCharacters(line))
             }
             else -> error("지원하지 않는 노트 레코드입니다.")
         }
@@ -52,9 +52,9 @@ internal object VoiceNoteTransfer {
     fun line(row: JSONObject): VoiceNoteLine {
         val start = row.getLong("start").also { require(it in 0..MAX_TIME) }
         val end = row.getLong("end").also { require(it in start..MAX_TIME) }
-        return VoiceNoteLine(start, end, text(row.getString("original"), 65_536),
+        return readVoiceNoteProcessingMetadata(row, VoiceNoteLine(start, end, text(row.getString("original"), 65_536),
             row.nullablePortableString("language")?.also { require(it.matches(Regex("[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8}){0,3}"))) }, text(row.getString("translation"), 65_536),
-            text(row.getString("speaker"), 80), row.getBoolean("edited"), row.getBoolean("timingEstimated"))
+            text(row.getString("speaker"), 80), row.getBoolean("edited"), row.getBoolean("timingEstimated")))
     }
 
     fun export(repository: VoiceNoteRepository, emit: (JSONObject) -> Unit, checkActive: () -> Unit): List<Pair<File, String>> {
@@ -73,7 +73,8 @@ internal object VoiceNoteTransfer {
                 emit(JSONObject().put("type", SEGMENT).put("note", id).put("ordinal", index)
                     .put("start", line.startMs).put("end", line.endMs).put("original", line.original)
                     .put("language", line.language ?: JSONObject.NULL).put("translation", line.translation)
-                    .put("speaker", line.speaker).put("edited", line.edited).put("timingEstimated", line.timingEstimated))
+                    .put("speaker", line.speaker).put("edited", line.edited).put("timingEstimated", line.timingEstimated)
+                    .also { putVoiceNoteProcessingMetadata(it, line) })
             }
             if (bytes > 0) audio += file to hash
         }

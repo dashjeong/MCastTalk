@@ -532,6 +532,29 @@ private fun GuideCastScreen(
                 },
                 onStopTranslationTest = onStopTranslationTest,
             )
+            // Keep the 0.2.48 input and broadcast settings below. Input-only controls
+            // also stay within reach while teaching, guiding or broadcasting.
+            if (inputActive && !broadcast.isInterpreterRelay) {
+                val inputName = if (state.selectedDevice?.kind in setOf(AudioInputKind.DEVICE_PLAYBACK, AudioInputKind.WEB_SPEAKER)) "입력" else "마이크"
+                Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (broadcast.inputPhase == InputPhase.ACTIVE) {
+                        OutlinedButton(onClick = onPauseInput, modifier = Modifier.weight(1f)) {
+                            Text("$inputName 일시정지")
+                        }
+                    } else if (broadcast.inputPhase == InputPhase.PAUSED) {
+                        Button(onClick = onResumeInput, modifier = Modifier.weight(1f)) {
+                            Text("$inputName 재개")
+                        }
+                    }
+                    OutlinedButton(onClick = onStopInput, modifier = Modifier.weight(1f)) {
+                        Text(if (broadcast.inputPhase == InputPhase.STARTING) "입력 시작 취소" else "$inputName 중지")
+                    }
+                }
+                Text("입력만 제어합니다. 방송 상태는 유지됩니다.",
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
+            }
             val displayedService = if (service == MCastService.VOICE) MCastService.MULTILINGUAL else service
             if (activeService != null && (section != GuideCastSection.BROADCAST || displayedService != activeService)) {
                 activeWorkNotice?.let { notice ->
@@ -1269,7 +1292,7 @@ private fun OperatorHeader(
                     TextButton(
                         modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),
                         onClick = onOpenBroadcast,
-                    ) { Text(if (broadcast.isInterpreterRelay) "통역 중계 보기" else if (broadcast.runMode == BroadcastRunMode.STANDALONE) "단독 사용 보기" else "방송 보기") }
+                    ) { Text(if (broadcast.isInterpreterRelay) "On-통 Live(AI 통역) 보기" else if (broadcast.runMode == BroadcastRunMode.STANDALONE) "단독 사용 보기" else "방송 보기") }
                 } else if (broadcast.translationTestActive) {
                     Button(
                         modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp),

@@ -20,6 +20,12 @@ import java.util.concurrent.atomic.AtomicLong
 import app.guidecast.core.stream.PcmAudioFrame
 import app.guidecast.core.audio.requestNearSpeakerFocus
 import app.guidecast.core.translation.SpeechRecognitionEngine
+import app.guidecast.core.translation.SourceProofreadingContext
+import app.guidecast.core.translation.TranslationStyle
+import app.guidecast.core.translation.TranslationStyleContext
+import app.guidecast.core.translation.requireProtectedTranslationMeaning
+import app.guidecast.provider.gemma.translation.GemmaModelReadiness
+import app.guidecast.provider.gemma.translation.GemmaTranslationProvider
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
@@ -36,11 +42,17 @@ internal data class VoiceNoteUiState(
     val partialTranscript: String = "",
     val recognitionMessage: String? = null,
     val playback: FileAudioPlaybackState = FileAudioPlaybackState(),
+    val findings: List<VoiceNoteFinding> = emptyList(),
+    val canUndoCorrection: Boolean = false,
 )
 
 internal class VoiceNoteViewModel(application: Application, private val savedState: SavedStateHandle) : AndroidViewModel(application) {
     val editorDraft = VoiceNoteEditorDraft()
     private val app = application as GuideCastApplication
+    val apiSettings get() = app.translationApiSettings
+    val apiService get() = app.translationApiService
+    val selectedLocalModelName get() = app.gemmaTranslationProvider.modelManager.selectedVariant.id
+    private val correctionHistory = ArrayDeque<VoiceNote>()
     private val repository = VoiceNoteRepository(File(app.filesDir, "voice-notes"))
     private val mutableState = MutableStateFlow(VoiceNoteUiState())
     val state = mutableState.asStateFlow()
@@ -255,7 +267,8 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
         playWhenPrepared = false
         audio.close()
         val note = withContext(Dispatchers.IO) { repository.load(id) }
-        mutableState.update { it.copy(selected = note, message = note.notice) }
+        correctionHistory.clear()
+        mutableState.update { it.copy(selected = note, message = note.notice, findings = emptyList(), canUndoCorrection = false) }
     }
     fun recover() {
         val id = state.value.selected?.id ?: return
@@ -287,6 +300,8 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
                 notice = result.warnings.joinToString("\n").ifBlank { null })
             // Commit the source before any translation/model preparation can fail.
             saveSelected(updated)
+            correctionHistory.clear()
+            mutableState.update { it.copy(findings = emptyList(), canUndoCorrection = false) }
             translateSaved(updated, target)
         }
     }
@@ -299,34 +314,135 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
         return fileSpeechSupportFailure(source, Build.VERSION.SDK_INT, platform,
             capability?.available == true, capability?.reason)
     }
-    fun translateRemaining(target: String) {
+    fun translateRemaining(target: String, engine: FileTranslationEngine = FileTranslationEngine.MLKIT,
+        tone: TranslationStyle = TranslationStyle.AUTO, fromOriginal: Boolean = false, force: Boolean = false) {
         val note = state.value.selected ?: return
         if (note.lines.isEmpty() || target !in VOICE_NOTE_LANGUAGES) return
-        task { audio.pause(); translateSaved(note, target) }
+        task { audio.pause(); translateSaved(note, target, engine, tone, fromOriginal, force) }
     }
-    private suspend fun translateSaved(note: VoiceNote, target: String) {
-        mutableState.update { it.copy(message = "원문 저장 완료 · 기기 내 번역 준비 중 (최초 사용 시 모델 다운로드)") }
+    private suspend fun translateSaved(note: VoiceNote, target: String, engine: FileTranslationEngine = FileTranslationEngine.MLKIT,
+        tone: TranslationStyle = TranslationStyle.AUTO, fromOriginal: Boolean = false, force: Boolean = false) {
+        val modelLabel = when (engine) {
+            FileTranslationEngine.MLKIT -> "기기 내 ML Kit"
+            FileTranslationEngine.GEMMA -> "기기 내 ML Kit + ${selectedLocalModelName} 검토"
+            FileTranslationEngine.API -> "${apiSettings.state.value.provider.label} / ${apiSettings.state.value.model}"
+        }
+        if (engine == FileTranslationEngine.API && apiSettings.state.value.usesNativeLiveAudio) {
+            mutableState.update { it.copy(message = "음성 노트는 저장된 글을 번역합니다. 온라인 설정에서 텍스트 API를 선택하세요.") }; return
+        }
+        mutableState.update { it.copy(message = "$modelLabel · ${if (fromOriginal) "보존된 원문" else "교정본"} 번역 준비 중") }
         try {
             var qualityNotes = emptyList<String>()
-            val updated = translateVoiceNote(note, target, ::saveSelected) { pending, onLine ->
+            val updated = translateVoiceNote(note, target, ::saveSelected, modelLabel, fromOriginal, force) { pending, onLine ->
+                val context = note.lines.mapIndexed { index, line -> FileSpeechSegment(index.toLong(), line.startMs, line.endMs,
+                    if (fromOriginal) line.originalTranscript else line.original, line.language ?: note.sourceLanguage) }
                 val entry = FileLibraryEntry(note.id, note.title, "", note.id, note.durationMs,
                     note.sourceLanguage, note.createdAt,
-                    pending.mapIndexed { index, line -> FileSpeechSegment(index.toLong(), line.startMs, line.endMs, line.original, line.language) })
-                val result = translateFileScript(app, entry, target, FileTranslationEngine.MLKIT,
-                    allowCloudReview = false, onLine = onLine) { done, total ->
+                    pending.map { line -> context.first { it.startMs == line.startMs && it.endMs == line.endMs &&
+                        it.text == (if (fromOriginal) line.originalTranscript else line.original) } })
+                val result = withContext(TranslationStyleContext(tone)) { translateFileScript(app, entry, target, engine,
+                    allowCloudReview = false, respectGlobalProvider = false, requireExactEngine = true,
+                    contextSegments = context, onLine = onLine) { done, total ->
                     mutableState.update { it.copy(message = if (target != note.targetLanguage)
-                        "새 언어 번역 $done / $total · 모두 완료할 때까지 기존 번역을 보관합니다."
+                        "${VOICE_NOTE_LANGUAGES[target]} 번역 $done / $total · 다른 언어 번역과 원문은 보관합니다."
                         else "남은 구간 번역 $done / $total · 완료 구간은 순차 저장합니다.") }
-                }
+                } }
                 qualityNotes = result.notes
             }
             saveSelected(updated.copy(notice = (updated.notice.orEmpty().lines() + qualityNotes).filter { it.isNotBlank() }.distinct().joinToString("\n")))
-            mutableState.update { it.copy(message = "원문과 번역을 저장했습니다. 문장 수정과 원음 대조를 할 수 있습니다.") }
+            mutableState.update { it.copy(message = "${VOICE_NOTE_LANGUAGES[target]} 번역을 저장했습니다. 원문·교정본·다른 언어 번역은 유지됩니다.") }
         } catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: Exception) {
-            mutableState.update { it.copy(message = "번역을 완료하지 못했습니다. 녹음·원문과 저장된 번역은 유지됩니다. 인터넷·저장 공간·언어 설정을 확인한 뒤 ‘남은 구간 번역’으로 이어가세요.") }
+        catch (error: Exception) {
+            mutableState.update { it.copy(message = if (error is FileTranscriptionException) error.message else
+                "번역을 완료하지 못했습니다. 녹음·원문과 저장된 번역은 유지됩니다. 인터넷·저장 공간·언어 설정을 확인한 뒤 ‘번역·미완료 이어하기’로 이어가세요.") }
         }
     }
+
+    fun selectTranslationLanguage(target: String) {
+        val note = state.value.selected ?: return
+        if (target !in VOICE_NOTE_LANGUAGES || target == note.targetLanguage) return
+        task { audio.pause(); saveSelected(selectVoiceNoteTranslation(note, target)) }
+    }
+
+    fun checkSource(engine: FileTranslationEngine) {
+        val note = state.value.selected ?: return
+        if (note.lines.isEmpty() || engine == FileTranslationEngine.MLKIT) return
+        task {
+            audio.pause()
+            mutableState.update { it.copy(findings = emptyList(), message = "문장 검사 중 · 원문은 변경하지 않습니다.") }
+            val findings = mutableListOf<VoiceNoteFinding>()
+            try {
+                app.withTranslationBackendUse {
+                    note.lines.forEachIndexed { index, line ->
+                        currentCoroutineContext().ensureActive()
+                        val language = line.language ?: note.sourceLanguage
+                            ?: throw FileTranscriptionException("말하는 언어를 확인한 뒤 다시 검사하세요.")
+                        if (engine == FileTranslationEngine.GEMMA) check(
+                            GemmaTranslationProvider.supportsProofreading(language)) {
+                            "이 언어는 기기 내 AI 검사를 지원하지 않습니다. 온라인 AI를 선택하세요."
+                        }
+                        var offset = 0
+                        val chunks = fileTranslationChunks(line.original)
+                        for ((part, chunk) in chunks.withIndex()) {
+                            val start = line.original.indexOf(chunk, offset)
+                            check(start >= 0)
+                            val context = fileWholeTranslationContext(note.lines.take(index).takeLast(2).map { it.original } + chunks.take(part))
+                            val corrected = if (engine == FileTranslationEngine.API) {
+                                app.translationApiService.proofread(chunk, context, language)
+                            } else {
+                                check(app.gemmaTranslationProvider.modelManager.status.value.readiness ==
+                                    GemmaModelReadiness.READY) {
+                                    "기기 내 AI 모델을 설정에서 먼저 준비하세요."
+                                }
+                                withContext(SourceProofreadingContext()) {
+                                    app.withProcessNativeColdLoadLease(ProcessNativeColdLoadKeys.GEMMA_MODEL, true) {
+                                        app.gemmaTranslationProvider.engineFor(language).translateWithContext(chunk, context, language, language)
+                                    }
+                                }
+                            }
+                            requireProtectedTranslationMeaning(chunk, corrected, language, language)
+                            findings += voiceNoteFindings(index, chunk, corrected, start, line.original)
+                            check(findings.size <= 1_000) { "수정 후보가 많습니다. 짧은 노트로 나눠 검사하세요." }
+                            offset = start + chunk.length
+                        }
+                        mutableState.update { it.copy(findings = findings.toList(), message = "문장 검사 ${index + 1} / ${note.lines.size} · 수정 후보 ${findings.size}개") }
+                    }
+                }
+                mutableState.update { it.copy(message = "검사 완료 · 수정 후보 ${findings.size}개. 적용할 항목을 선택하세요. 원문은 보존됩니다.") }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { mutableState.update { it.copy(message = "검사를 완료하지 못했습니다. 원문은 유지됩니다. 기기 내 AI 검사는 한국어·영어·일본어·중국어·스페인어·아랍어를 지원합니다. 다른 언어는 온라인 텍스트 AI와 전송 동의를 확인하세요.") } }
+        }
+    }
+
+    fun applyFindings(ids: Set<String>) {
+        val note = state.value.selected ?: return
+        val selected = state.value.findings.filter { it.id in ids }
+        if (selected.isEmpty()) return
+        task {
+            val updated = applyVoiceNoteFindings(note, selected)
+            saveSelected(updated)
+            rememberCorrection(note)
+            mutableState.update { it.copy(findings = it.findings.filterNot { f -> selected.any { s -> s.lineIndex == f.lineIndex } },
+                message = "선택한 ${selected.size}개 수정만 교정본에 반영했습니다. 같은 문장의 나머지 항목은 다시 검사하세요.") }
+        }
+    }
+    fun dismissFinding(id: String) { if (!state.value.busy) mutableState.update { it.copy(findings = it.findings.filterNot { f -> f.id == id }) } }
+    private fun rememberCorrection(note: VoiceNote) {
+        correctionHistory.addLast(note)
+        while (correctionHistory.size > 10) correctionHistory.removeFirst()
+        mutableState.update { it.copy(canUndoCorrection = true) }
+    }
+    fun undoCorrection() {
+        val last = correctionHistory.lastOrNull() ?: return
+        if (last.id != state.value.selected?.id) return
+        task {
+            val current = state.value.selected ?: return@task
+            saveSelected(restoreVoiceNoteCorrection(current, last)); correctionHistory.removeLast()
+            mutableState.update { it.copy(findings = emptyList(), canUndoCorrection = correctionHistory.isNotEmpty(), message = "마지막 교정을 되돌렸습니다. 원문과 녹음은 유지됩니다.") }
+        }
+    }
+    fun cancelProcessing() { if (!state.value.recording) work?.cancel() }
+    fun pauseNotePlayback() { audio.pause() }
     private suspend fun saveSelected(note: VoiceNote) {
         withContext(Dispatchers.IO) { repository.save(note) }
         mutableState.update { current -> current.copy(
@@ -344,8 +460,12 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
         val note = state.value.selected ?: return
         if (index !in note.lines.indices) return
         task {
-            val line = note.lines[index].corrected(original, translation, translationEdited)
+            var line = note.lines[index].archiveTranslation(note.targetLanguage).corrected(original, translation, translationEdited)
+            if (translationEdited && line.translation.isNotBlank()) line = line.copy(translations = line.translations +
+                (note.targetLanguage to VoiceNoteTranslatedText(line.translation, voiceNoteSourceFingerprint(line.original),
+                    "직접 편집", manuallyEdited = true)))
             saveSelected(note.copy(lines = note.lines.mapIndexed { i, old -> if (i == index) line else old }))
+            rememberCorrection(note)
             mutableState.update { it.copy(message = if (line.translation.isBlank()) "수정한 원문을 저장했습니다. ‘남은 구간 번역’으로 새 번역을 만들 수 있습니다." else "수정한 문장을 저장했습니다. 내려받기에도 반영됩니다.") }
             onSaved()
         }

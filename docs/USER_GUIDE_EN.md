@@ -8,7 +8,7 @@ Use an ARM64 device running Android 11 or later. Compare the APK checksum with t
 
 - On-device interpretation: prepare recognition, translation and voice assets before use. Prepared assets work without internet access.
 - Online sentence translation: recognize speech into sentences, translate through the selected API and play synthesized speech.
-- Interpretation relay (통역 중계): send microphone audio to a selected real-time API and receive interpreted audio and captions. Internet access, an API key and transmission consent are required. Provider charges may apply.
+- Interpretation relay (On-통 Live(AI 통역)): send microphone audio to a selected real-time API and receive interpreted audio and captions. Internet access, an API key and transmission consent are required. Provider charges may apply.
 
 Review the selected model, languages and permitted data. Enter keys in app settings; never include them in public posts or shared files.
 
