@@ -10,8 +10,6 @@ without modification from Microsoft ONNX Runtime Android 1.23.2:
 
 Moonshine Voice 0.1.5 is built against ONNX Runtime 1.23.2, but its reduced
 Android binary omits `QLinearMatMul(10)` while the current official Kokoro
-model requires it. The full same-version runtime restores that operator. The
-device integration test downloads and synthesizes every configured language
-so an upstream model/runtime mismatch cannot be reported as ready.
+model requires it. The full same-version runtime restores that operator. Check the prepared voice and runtime compatibility for the selected language before use.
 
 ONNX Runtime is licensed under the MIT License.

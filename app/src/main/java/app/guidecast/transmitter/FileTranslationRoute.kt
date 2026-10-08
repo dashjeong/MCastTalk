@@ -6,12 +6,15 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.foundation.layout.*
+import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -22,6 +25,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 internal fun FileTranslationRoute(model: FileTranslationViewModel, onBack: () -> Unit) {
     val context = LocalContext.current
     val state by model.uiState.collectAsStateWithLifecycle()
+    val app = context.applicationContext as GuideCastApplication
+    val defaults by app.serviceDefaults.state.collectAsStateWithLifecycle()
+    val commonApi by app.commonServiceApiSettings.state.collectAsStateWithLifecycle()
+    LaunchedEffect(defaults, commonApi.revision, state.isConverting, state.isLoading) {
+        if (!state.isConverting && !state.isLoading) app.serviceMenuProfiles.refreshInheritedDefaults(ServiceMenuProfile.FILES)
+    }
     val playback by model.playbackState.collectAsStateWithLifecycle()
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) model.selectFile(uri) else model.cancelPicker()
@@ -43,6 +52,11 @@ internal fun FileTranslationRoute(model: FileTranslationViewModel, onBack: () ->
         else speechPermission.launch(Manifest.permission.RECORD_AUDIO)
     }
     val playing = playback
+    Column(Modifier.fillMaxSize()) {
+    MenuWebBroadcastCard(context.applicationContext as GuideCastApplication, MenuBroadcastOrigin.FILES,
+        canStart = playing != null && !state.isConverting && !state.isLoading,
+        onStart = model::startWebBroadcast, onStop = model::stopWebBroadcast)
+    Box(Modifier.weight(1f)) {
     if (playing != null) {
         FilePlaybackTranscriptScreen(playing, model::playPause, model::stop, model::seek,
             onPrevious = { model.adjacent(-1) }, onNext = { model.adjacent(1) },
@@ -60,6 +74,8 @@ internal fun FileTranslationRoute(model: FileTranslationViewModel, onBack: () ->
             onChooseFolder = { folderPicker.launch(null) },
             onRetryFailed = { requestConversion(true, null) },
             onRetryFile = { requestConversion(false, it) })
+    }
+    }
     }
 }
 

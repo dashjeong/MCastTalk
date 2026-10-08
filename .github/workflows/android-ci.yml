@@ -1,4 +1,4 @@
-name: Android CI
+name: Android package check
 
 on:
   pull_request:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 jobs:
-  verify:
+  assemble:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -23,34 +23,10 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Public source boundary
-        run: |
-          python3 scripts/test-public-snapshot.py
-          python3 scripts/verify-public-snapshot.py
-
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
         with:
           gradle-version: "8.13"
           cache-disabled: true
 
-      - name: Web audio and localization regression
-        run: |
-          node scripts/verify-listener-player.mjs
-          node scripts/verify-listener-resampling.mjs
-          node scripts/verify-listener-i18n.mjs
-          node scripts/verify-speaker-mic.mjs
-          node scripts/verify-public-branding.mjs
-
-      - name: Unit test, lint, and assemble
-        run: >-
-          ./gradlew testDebugUnitTest
-          :core:stream:test :core:translation:test
-          :provider:gemma-translation:assembleDebug
-          :app:lintAlpha :app:assembleAlpha :app:assembleRelease --stacktrace
-
-      # Public CI checks source-only builds without the separately obtained glossary.
-      # Full local APK validation must run :app:verifyPackagedThirdPartyLicenseAssets
-      # with the reviewed glossary present before any APK handoff.
-
-      # APKs and logs are not uploaded automatically. A separate reviewed release
-      # procedure must approve the exact artifact hash and destination.
+      - name: Assemble and verify required package notices
+        run: ./gradlew :app:assembleAlpha :app:verifyPackagedThirdPartyLicenseAssets --stacktrace

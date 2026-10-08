@@ -20,6 +20,8 @@ import org.json.JSONObject
 internal interface RealtimeSocket {
     suspend fun send(text: String)
     suspend fun receive(): String
+    /** Audio owners may abort their socket without waiting for a suspended output callback. */
+    fun abort() {}
 }
 internal data class RealtimeTranslation(val text: String, val rawResponse: String)
 internal val OPENAI_REALTIME_MODELS = setOf("gpt-realtime-2.1-mini", "gpt-realtime-2")

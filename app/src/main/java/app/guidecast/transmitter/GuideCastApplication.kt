@@ -113,6 +113,8 @@ class GuideCastApplication : Application() {
     }
     val speechRecognitionEngine by speechRecognitionEngineDelegate
     val broadcastRuntime = BroadcastRuntime()
+    internal val webBroadcastOwnership = WebBroadcastOwnership()
+    internal val menuBroadcast by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { MenuBroadcastController(this) }
     internal val recordings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { BroadcastRecordingRepository(this) }
     internal val recordedPlayback = RecordedPlaybackOwnership()
     internal val translationWorkspaceActive = kotlinx.coroutines.flow.MutableStateFlow(false)
@@ -141,6 +143,16 @@ class GuideCastApplication : Application() {
     val developerLabSettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { DeveloperLabSettings(this) }
     internal val geminiLiveMonitor = GeminiLiveMonitor()
     val translationApiSettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { TranslationApiSettings(this) }
+    internal val commonServiceApiSettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        TranslationApiSettings(this, "translation_api_common_defaults", TranslationApiOptions())
+    }
+    internal val serviceDefaults by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { ServiceDefaults(this) }
+    internal val commonServiceApiService by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        TranslationApiService(commonServiceApiSettings, shadowAllowed = { false }, comparisonResources = { false })
+    }
+    internal val serviceMenuProfiles by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        ServiceMenuProfiles(this, commonServiceApiSettings)
+    }
     val translationApiService by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { TranslationApiService(translationApiSettings, shadowAllowed = { target ->
         learningResourcesAvailable() && translationProvider.hasActivePreparedWorker(target)
     }, comparisonResources = ::learningResourcesAvailable) }
@@ -153,7 +165,7 @@ class GuideCastApplication : Application() {
             false
         }
     }
-    private fun learningResourcesAvailable(): Boolean {
+    internal fun learningResourcesAvailable(): Boolean {
         val power = getSystemService(android.os.PowerManager::class.java) ?: return false
         if (power.currentThermalStatus >= android.os.PowerManager.THERMAL_STATUS_MODERATE) return false
         val manager = getSystemService(android.app.ActivityManager::class.java) ?: return false

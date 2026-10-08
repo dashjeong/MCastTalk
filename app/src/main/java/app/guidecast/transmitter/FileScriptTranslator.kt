@@ -37,12 +37,18 @@ internal suspend fun translateFileScript(
     mode: FileTranslationEngine,
     allowCloudReview: Boolean = true,
     contextSegments: List<FileSpeechSegment> = entry.segments,
+    apiSettings: TranslationApiSettings = app.translationApiSettings,
+    apiService: TranslationApiService = app.translationApiService,
     onLine: suspend (Int, String) -> Unit = { _, _ -> },
     onProgress: (Int, Int) -> Unit,
 ): FileScriptTranslation {
     val requestScope = java.util.UUID.randomUUID().toString()
     val requestedMode = mode
-    val mode = if (app.translationApiSettings.state.value.provider == TranslationApiProvider.LOCAL) {
+    val selectedApi = apiSettings.state.value
+    fun requireCurrentMenuSettings() {
+        if (apiSettings.state.value != selectedApi) throw CancellationException("이 메뉴의 번역 설정이 변경되어 작업을 중지했습니다.")
+    }
+    val mode = if (selectedApi.provider == TranslationApiProvider.LOCAL) {
         if (requestedMode == FileTranslationEngine.API) FileTranslationEngine.MLKIT else requestedMode
     } else FileTranslationEngine.API
     require(entry.segments.isNotEmpty()) { "번역할 원문이 없습니다." }
@@ -60,7 +66,7 @@ internal suspend fun translateFileScript(
     val contexts = fileTranslationContexts(contextSegments)
     var allReviewsCompleted = mode == FileTranslationEngine.GEMMA
     var allApiCompleted = mode == FileTranslationEngine.API
-    if (mode == FileTranslationEngine.API) check(app.translationApiSettings.state.value.provider != TranslationApiProvider.LOCAL) {
+    if (mode == FileTranslationEngine.API) check(selectedApi.provider != TranslationApiProvider.LOCAL) {
         "설정의 번역 서비스에서 API를 선택하고 전송 허용을 확인하세요."
     }
     val grouped = entry.segments.indices.groupBy { index ->
@@ -71,6 +77,7 @@ internal suspend fun translateFileScript(
     var sourceOnlySegments = 0
     for ((source, indexes) in grouped) {
         currentCoroutineContext().ensureActive()
+        requireCurrentMenuSettings()
         if (source == target.substringBefore('-')) {
             sourceOnlySegments += indexes.size
             indexes.forEach { index ->
@@ -156,9 +163,10 @@ internal suspend fun translateFileScript(
                     translateWithContext(text, null, sourceLanguageTag, targetLanguageTag)
             }
             val localDomainEngine = DomainCorpusTranslationEngine(completedLocalEngine, app.domainCorpus) { 600 }
-            val draftEngine = app.translationApiService.engine(localDomainEngine)
+            val draftEngine = apiService.engine(localDomainEngine)
             indexes.forEach { index ->
                 currentCoroutineContext().ensureActive()
+                requireCurrentMenuSettings()
                 if (!app.isPreparationCurrent(owner)) throw CancellationException("File translation superseded")
                 val original = entry.segments[index].text
                 // Long recognizer segments are translated in bounded, word-aware pieces. Source
@@ -171,12 +179,13 @@ internal suspend fun translateFileScript(
                     val lab = app.developerLabSettings.state.value
                     val style = if (app.uiDisplaySettings.developerInfo.value && lab.paraphraseEnabled)
                         TranslationStyleContext(TranslationStyle.valueOf(lab.translationRegister.name))
-                    else TranslationStyleContext(app.translationApiSettings.state.value.tone)
+                    else TranslationStyleContext(selectedApi.tone)
                     withContext(style + TranslationRequestIdentity(requestScope, (index.toLong() shl 32) + chunkIndex)) {
                     val draft = withTimeout(if (mode == FileTranslationEngine.GEMMA) 55_000 else 20_000) {
                         translateFileChunkWithContext(draftEngine, chunk, contextBefore, source, target)
                     }
-                    if (mode == FileTranslationEngine.API && app.translationApiService.states.value[target] != TranslationApiState.READY) allApiCompleted = false
+                    requireCurrentMenuSettings()
+                    if (mode == FileTranslationEngine.API && apiService.states.value[target] != TranslationApiState.READY) allApiCompleted = false
                     check(draft.isNotBlank()) { "번역 결과가 비어 있습니다." }
                     if (target.equals("zh-TW", true)) convertToTraditionalChinese(draft) else draft
                     }
@@ -191,7 +200,7 @@ internal suspend fun translateFileScript(
     if (sourceOnlySegments > 0) notes += "$target · 원문과 같은 언어인 ${sourceOnlySegments}개 구간은 원문을 사용했습니다. 번역·검토 결과는 나머지 구간에 해당합니다."
     if (mode != FileTranslationEngine.API) notes += if (!allReviewsCompleted) "Google ML Kit 번역 · 자동 검사는 의미 정확성을 보증하지 않습니다."
         else "Google ML Kit 번역 + 준비된 AI 모델 검토 · 최종 내용은 원음과 대조하세요."
-    if (mode == FileTranslationEngine.API) notes += "설정한 API 경로 · " + (app.translationApiService.states.value[target]?.label ?: "기기 내 번역")
+    if (mode == FileTranslationEngine.API) notes += "설정한 API 경로 · " + (apiService.states.value[target]?.label ?: "기기 내 번역")
     if (mode == FileTranslationEngine.API && !allApiCompleted) error("선택한 API가 일부 구간을 완료하지 못했습니다.")
     FileScriptTranslation(results, notes.toList(), if (allApiCompleted) FileTranslationEngine.API else if (allReviewsCompleted) FileTranslationEngine.GEMMA else FileTranslationEngine.MLKIT)
     }

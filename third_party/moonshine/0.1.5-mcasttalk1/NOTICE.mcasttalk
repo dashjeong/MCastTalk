@@ -32,6 +32,6 @@ Local changes (not an official upstream release):
   semantic sentence boundary.
 
 See moonshine-0.1.5-mcasttalk-reliability.patch, patch-receipt.json,
-source-acquisition.json and build-receipt.json for exact inputs and outputs.
+source-acquisition.json and provenance.json for exact inputs and outputs.
 This notice does not claim successful Android, long-duration or voice-quality
 validation. Those results must be recorded separately for the exact artifact.

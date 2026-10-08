@@ -1,5 +1,6 @@
 package app.guidecast.transmitter
 
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -106,6 +107,7 @@ enum class InterpreterRelayPhase { IDLE, CONNECTING, READY, RECEIVING, PAUSED, F
 
 data class BroadcastSnapshot(
     val recordingId: String? = null,
+    val broadcastTitle: String = "",
     val recordingWarning: String? = null,
     val isInterpreterRelay: Boolean = false,
     val relayPhase: InterpreterRelayPhase = InterpreterRelayPhase.IDLE,
@@ -116,6 +118,7 @@ data class BroadcastSnapshot(
     val relayContext: RelayContextPresentation? = null,
     val runMode: BroadcastRunMode = BroadcastRunMode.NETWORK,
     val inputPhase: InputPhase = InputPhase.IDLE,
+    val inputStopping: Boolean = false,
     val phase: BroadcastPhase = BroadcastPhase.IDLE,
     val accessMode: OperatorAccessMode? = null,
     val listenerUrl: String? = null,
@@ -208,8 +211,8 @@ data class TranslationTranscriptLine(
 
 /** A closed session may only finalize its own unfinished rows, even after a new session starts. */
 internal fun terminalizeNativeAudioTranscripts(lines: List<TranslationTranscriptLine>, sessionId: Long,
-    reason: NativeAudioEndReason): List<TranslationTranscriptLine> = lines.map { row ->
-    if (row.nativeAudioSessionId == sessionId && row.liveOutputState in setOf(LiveOutputState.QUEUED, LiveOutputState.GENERATING))
+    reason: NativeAudioEndReason, target: String? = null): List<TranslationTranscriptLine> = lines.map { row ->
+    if (row.nativeAudioSessionId == sessionId && (target == null || row.liveSegmentLanguage == target) && row.liveOutputState in setOf(LiveOutputState.QUEUED, LiveOutputState.GENERATING))
         row.copy(isFinal = false, liveOutputState = reason.outputState, liveEndReason = reason)
     else row
 }
@@ -217,6 +220,9 @@ internal fun terminalizeNativeAudioTranscripts(lines: List<TranslationTranscript
 class BroadcastRuntime {
     private val mutableState = MutableStateFlow(BroadcastSnapshot())
     val state: StateFlow<BroadcastSnapshot> = mutableState.asStateFlow()
+    val inputRequestEpoch: Long get() = requestEpoch.get()
+
+    fun invalidateInputRequest(): Long = requestEpoch.incrementAndGet()
 
     internal fun update(snapshot: BroadcastSnapshot) {
         mutableState.value = snapshot
@@ -224,6 +230,10 @@ class BroadcastRuntime {
 
     internal fun update(transform: (BroadcastSnapshot) -> BroadcastSnapshot) {
         mutableState.update(transform)
+    }
+
+    private companion object {
+        val requestEpoch = AtomicLong(0)
     }
 }
 

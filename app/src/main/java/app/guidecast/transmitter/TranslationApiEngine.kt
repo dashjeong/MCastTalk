@@ -111,8 +111,8 @@ class TranslationApiService internal constructor(
                                 CloudTransportPhase.BODY_SENT -> bodiesSent.incrementAndGet()
                                 CloudTransportPhase.RESPONSE -> responseStatus.set(event.status ?: -1)
                             }
-                            RuntimeDiagnosticLog.record("batch_transport", "request_id=$requestId phase=${event.phase} " +
-                                "http_status=${event.status ?: "UNKNOWN"}", true)
+                            RuntimeDiagnosticLog.durableRecord("batch_transport", "request_id=$requestId phase=${event.phase} " +
+                                "http_status=${event.status ?: "UNKNOWN"}")
                         })
                 }
                 check(allowed()) { "Online consent changed" }
@@ -144,9 +144,11 @@ class TranslationApiService internal constructor(
                     recordOpenAiBatchUsage(options, rawUsage, elapsed, batch.targets.size)
                     rawUsage.diagnostic()
                 }
-                RuntimeDiagnosticLog.record("batch_usage", "provider=${options.provider} request_id=$requestId input_session=${batch.correlationId} sequence=${identity.sequence} " +
+                val usageReceipt = "provider=${options.provider} request_id=$requestId input_session=${batch.correlationId} sequence=${identity.sequence} " +
                     "revision=${options.revision} target_count=${batch.targets.size} attempts=${attempts.get()} bodies_sent=${bodiesSent.get()} " +
-                    "http_status=${responseStatus.get().takeIf { it >= 0 } ?: "UNKNOWN"} outcome=$outcome elapsed_ms=$elapsed $usageDiagnostic", true)
+                    "http_status=${responseStatus.get().takeIf { it >= 0 } ?: "UNKNOWN"} outcome=$outcome elapsed_ms=$elapsed $usageDiagnostic"
+                if (outcome == "COMPLETE") RuntimeDiagnosticLog.durableRecord("batch_usage", usageReceipt)
+                else RuntimeDiagnosticLog.record("batch_usage", usageReceipt, true)
             }
         }
         check(authorized(options) && batch.accepts()) { "Online consent changed" }
@@ -241,12 +243,14 @@ class TranslationApiService internal constructor(
         } finally { ledger.finish(ticket) }
     }
 
-    fun engine(local: TextTranslationEngine): TextTranslationEngine = object : BoundedQueuedTranslationEngine {
+    fun engine(local: TextTranslationEngine, expectedOptions: TranslationApiOptions? = null): TextTranslationEngine = object : BoundedQueuedTranslationEngine {
         override val maximumCallDurationMillis: Long get() =
             ((local as? BoundedQueuedTranslationEngine)?.maximumCallDurationMillis ?: 4_000) +
                 if (currentOptions().provider == TranslationApiProvider.LOCAL) 0 else 6_500
         override suspend fun translateWithContext(text: String, contextBefore: String?, sourceLanguageTag: String, targetLanguageTag: String): String {
             val primary = currentOptions()
+            if (expectedOptions != null && primary != expectedOptions)
+                throw CancellationException("Translation settings changed before processing")
             val offlinePrimary = primary.provider == TranslationApiProvider.LOCAL
             val auxiliary = if (offlinePrimary && sessionLearning()) auxiliaryOptions()?.takeIf(auxiliaryAuthorized) else null
             val compare = if (offlinePrimary) auxiliary != null else primary.alwaysLearnOnline || sessionLearning()

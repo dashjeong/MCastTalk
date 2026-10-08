@@ -8,6 +8,7 @@ import app.guidecast.core.server.crypto.verifyGuideCastCaDerFingerprint
 import app.guidecast.core.stream.AudioChannelDescriptor
 import app.guidecast.core.stream.AudioStreamRegistry
 import app.guidecast.core.stream.ListenerLimitExceededException
+import app.guidecast.core.stream.PcmAudioFrame
 import app.guidecast.core.stream.StreamSession
 import app.guidecast.core.stream.RecordedBroadcast
 import app.guidecast.core.stream.StreamSessionSupersededException
@@ -48,6 +49,17 @@ import java.net.InetAddress
 import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.ReceiveChannel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
@@ -90,6 +102,9 @@ data class GuideCastTranscriptLine(
     val translationLatencyMillis: Map<String, Long>,
     val firstAudioLatencyMillis: Map<String, Long>,
     val synthesisLatencyMillis: Map<String, Long>,
+    val liveSegmentLanguage: String? = null,
+    val liveOutputState: String? = null,
+    val displayGroupSequence: Long? = null,
 )
 
 /**
@@ -108,6 +123,18 @@ data class GuideCastTranscriptSnapshot(
     }
 }
 
+/**
+ * Immutable committed caption prefix for one logical recording.
+ * [page] must retain the committed boundary captured when this snapshot was created: later
+ * writes, pauses and provider revisions must never expand this handle's visible rows.
+ */
+data class ReplayCaptionSnapshot(
+    val revision: Long,
+    val page: (Long?, Long?) -> String,
+) {
+    init { require(revision >= 0L) { "Caption revision must not be negative" } }
+}
+
 class GuideCastLocalServer(
     context: Context,
     private val streams: AudioStreamRegistry,
@@ -120,6 +147,9 @@ class GuideCastLocalServer(
     private val transcriptSnapshotProvider: (() -> GuideCastTranscriptSnapshot)? = null,
     private val replayProvider: (() -> RecordedBroadcast?)? = null,
     private val replayCaptionsProvider: ((Long?, Long?) -> String)? = null,
+    private val isLiveAudioBroadcastEnabled: () -> Boolean = { true },
+    private val replayCaptionSnapshotProvider: (() -> ReplayCaptionSnapshot)? = null,
+    private val broadcastStatusProvider: (() -> GuideCastBroadcastStatus)? = null,
 ) {
     private val appContext = context.applicationContext
     private val started = AtomicBoolean(false)
@@ -187,6 +217,9 @@ class GuideCastLocalServer(
                         transcriptSnapshotProvider = transcriptSnapshotProvider,
                         replayProvider = replayProvider,
                         replayCaptionsProvider = replayCaptionsProvider,
+                        isLiveAudioBroadcastEnabled = isLiveAudioBroadcastEnabled,
+                        replayCaptionSnapshotProvider = replayCaptionSnapshotProvider,
+                        broadcastStatusProvider = broadcastStatusProvider,
                     )
                 }.start(wait = false)
                 stopSecureBackend = {
@@ -233,8 +266,11 @@ class GuideCastLocalServer(
                     // but it must never reopen the legacy plaintext query-token microphone path.
                     requireTlsSpeakerTransport = config.enableHttps,
                     transcriptSnapshotProvider = transcriptSnapshotProvider,
-                        replayProvider = replayProvider,
-                        replayCaptionsProvider = replayCaptionsProvider,
+                    replayProvider = replayProvider,
+                    replayCaptionsProvider = replayCaptionsProvider,
+                    isLiveAudioBroadcastEnabled = isLiveAudioBroadcastEnabled,
+                    replayCaptionSnapshotProvider = replayCaptionSnapshotProvider,
+                    broadcastStatusProvider = broadcastStatusProvider,
                 )
             }.start(wait = false)
         } catch (error: Throwable) {
@@ -376,6 +412,9 @@ internal fun Application.guideCastModule(
     transcriptSnapshotProvider: (() -> GuideCastTranscriptSnapshot)? = null,
     replayProvider: (() -> RecordedBroadcast?)? = null,
     replayCaptionsProvider: ((Long?, Long?) -> String)? = null,
+    isLiveAudioBroadcastEnabled: () -> Boolean = { true },
+    replayCaptionSnapshotProvider: (() -> ReplayCaptionSnapshot)? = null,
+    broadcastStatusProvider: (() -> GuideCastBroadcastStatus)? = null,
 ) = guideCastModule(
     expectedHost = expectedHost,
     authenticator = authenticator,
@@ -385,8 +424,11 @@ internal fun Application.guideCastModule(
     admissionController = admissionController,
     speakerAssets = speakerAssets,
     transcriptSnapshotProvider = transcriptSnapshotProvider,
-                        replayProvider = replayProvider,
-                        replayCaptionsProvider = replayCaptionsProvider,
+    replayProvider = replayProvider,
+    replayCaptionsProvider = replayCaptionsProvider,
+    isLiveAudioBroadcastEnabled = isLiveAudioBroadcastEnabled,
+    replayCaptionSnapshotProvider = replayCaptionSnapshotProvider,
+    broadcastStatusProvider = broadcastStatusProvider,
 )
 
 internal fun Application.guideCastModule(
@@ -410,6 +452,9 @@ internal fun Application.guideCastModule(
     transcriptSnapshotProvider: (() -> GuideCastTranscriptSnapshot)? = null,
     replayProvider: (() -> RecordedBroadcast?)? = null,
     replayCaptionsProvider: ((Long?, Long?) -> String)? = null,
+    isLiveAudioBroadcastEnabled: () -> Boolean = { true },
+    replayCaptionSnapshotProvider: (() -> ReplayCaptionSnapshot)? = null,
+    broadcastStatusProvider: (() -> GuideCastBroadcastStatus)? = null,
 ) {
     install(WebSockets) {
         pingPeriodMillis = 15_000
@@ -439,6 +484,18 @@ internal fun Application.guideCastModule(
         }
     }
     val transcriptResponseCache = TranscriptResponseCache()
+    val liveAudioGate = LiveAudioBroadcastGate(isLiveAudioBroadcastEnabled)
+    val publishedSnapshots = PublishedBroadcastSnapshots(
+        liveAudioGate, transcriptProvider, transcriptSnapshotProvider, replayProvider,
+        replayCaptionsProvider, replayCaptionSnapshotProvider,
+    )
+    // Application-scoped: stops with this server, without replacing its authenticator or sockets.
+    launch(Dispatchers.IO) {
+        while (isActive) {
+            publishedSnapshots.refresh()
+            delay(250)
+        }
+    }
 
     routing {
         get("/ca.crt") {
@@ -943,7 +1000,11 @@ internal fun Application.guideCastModule(
                     return@get
                 }
                 call.respondText(
-                    streamSession.toStatusJson(requestedChannel),
+                    streamSession.toStatusJson(
+                        requestedChannel,
+                        readBroadcastStatus(broadcastStatusProvider),
+                        liveAudioGate.observe(),
+                    ),
                     ContentType.Application.Json,
                 )
             } finally {
@@ -966,13 +1027,9 @@ internal fun Application.guideCastModule(
                     call.respondText("Unknown channel", status = HttpStatusCode.NotFound)
                     return@get
                 }
-                val versionedSnapshot = transcriptSnapshotProvider?.invoke()
-                val representation = if (versionedSnapshot != null) {
-                    transcriptResponseCache.responseFor(versionedSnapshot, requestedChannel)
-                } else {
-                    // Compatibility path for embedders that have not adopted revisioned snapshots.
-                    transcriptResponseCache.responseFor(transcriptProvider(), requestedChannel)
-                }
+                val representation = transcriptResponseCache.responseFor(
+                    publishedSnapshots.transcripts(), requestedChannel,
+                )
                 call.response.header(HttpHeaders.ETag, representation.etag)
                 if (
                     call.request.headers[HttpHeaders.IfNoneMatch]
@@ -999,7 +1056,7 @@ internal fun Application.guideCastModule(
                 if (!streamSession.isActive() || !streamSession.hasConfiguredChannel(channel)) {
                     call.respond(HttpStatusCode.Gone); return@get
                 }
-                val recording = replayProvider?.invoke()
+                val recording = publishedSnapshots.replay()
                 if (recording == null) { call.respond(HttpStatusCode.NotFound); return@get }
                 var offset = 0L
                 val items = recording.segments.filter { it.channel.id == channel && it.committedBytes > 0 }.map { segment ->
@@ -1019,7 +1076,7 @@ internal fun Application.guideCastModule(
                 val part = call.request.queryParameters["afterPart"]?.toLongOrNull()
                 val sequence = call.request.queryParameters["afterSequence"]?.toLongOrNull()
                 if ((part == null) != (sequence == null) || (part != null && (part < 0 || sequence!! < 0))) { call.respond(HttpStatusCode.BadRequest); return@get }
-                val body = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { replayCaptionsProvider?.invoke(part, sequence) }
+                val body = kotlinx.coroutines.withContext(Dispatchers.IO) { publishedSnapshots.captions(part, sequence) }
                 if (body == null) { call.respond(HttpStatusCode.NotFound); return@get }
                 call.respondText(body, ContentType.Application.Json)
             } finally { admission.close() }
@@ -1036,14 +1093,14 @@ internal fun Application.guideCastModule(
                 val number = call.parameters["segment"]?.toIntOrNull()
                 val offset = call.request.queryParameters["offset"]?.toLongOrNull()
                 val count = call.request.queryParameters["count"]?.toIntOrNull()
-                val segment = replayProvider?.invoke()?.segments?.firstOrNull { it.partId == part && it.segment == number && it.channel.id == channel }
+                val segment = publishedSnapshots.replay()?.segments?.firstOrNull { it.partId == part && it.segment == number && it.channel.id == channel }
                 if (segment == null) { call.respond(HttpStatusCode.NotFound); return@get }
                 if (offset == null || count == null || offset < 0 || offset % 2 != 0L || count !in 2..262144 || count % 2 != 0 || offset > segment.committedBytes - count) {
                     call.respond(HttpStatusCode.RequestedRangeNotSatisfiable); return@get
                 }
                 val bytes = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     java.io.RandomAccessFile(segment.file, "r").use { file ->
-                        file.seek(offset); ByteArray(count).also(file::readFully)
+                        file.seek(segment.fileOffsetBytes + offset); ByteArray(count).also(file::readFully)
                     }
                 }
                 call.respondBytes(bytes, ContentType.Application.OctetStream)
@@ -1099,12 +1156,12 @@ internal fun Application.guideCastModule(
                     send(Frame.Text(subscription.descriptor.toConfigJson(streamSession.generation)))
                     coroutineScope {
                         val outgoingAudio = launch {
-                            for (audioFrame in subscription.frames) {
-                                send(Frame.Binary(fin = true, data = audioFrame.bytes))
-                                // Queue admission only proves that the server accepted a frame.
-                                // Record delivery after the WebSocket send completes successfully.
-                                subscription.recordWebSocketDelivery(audioFrame)
-                            }
+                            transmitGatedLiveAudio(
+                                frames = subscription.frames,
+                                gate = liveAudioGate,
+                                sendFrame = { send(Frame.Binary(fin = true, data = it.bytes)) },
+                                onDelivered = subscription::recordWebSocketDelivery,
+                            )
                         }
                         val peerLifetime = launch {
                             // Ktor closes `incoming` when the peer sends Close or the transport is
@@ -1133,6 +1190,190 @@ internal fun Application.guideCastModule(
                 admission.close()
             }
         }
+    }
+}
+
+/** One observed publication epoch, shared by HTTP snapshots and every remote listener. */
+internal class LiveAudioBroadcastGate(private val enabled: () -> Boolean) {
+    data class Admission(val enabled: Boolean, val epoch: Long)
+    private var previous = runCatching(enabled).getOrDefault(false)
+    private var epoch = 0L
+
+    @Synchronized
+    fun observe(): Admission {
+        val current = runCatching(enabled).getOrDefault(false)
+        if (current != previous) {
+            previous = current
+            epoch++
+        }
+        return Admission(current, epoch)
+    }
+
+    @Synchronized
+    fun accepts(admission: Admission): Boolean =
+        admission.enabled && observe() == admission
+}
+
+/**
+ * Drains only this remote subscription. Local monitoring and recording still receive PCM.
+ * A pause cancels a suspended send and retires its epoch. Already transport-enqueued frames
+ * cannot be recalled; a Boolean callback is observed at admission and at 10 ms intervals.
+ */
+internal suspend fun transmitGatedLiveAudio(
+    frames: ReceiveChannel<PcmAudioFrame>,
+    gate: LiveAudioBroadcastGate,
+    sendFrame: suspend (PcmAudioFrame) -> Unit,
+    onDelivered: (PcmAudioFrame) -> Unit,
+) = coroutineScope {
+    data class Pending(val epoch: Long, val send: Deferred<Unit>)
+    val pending = AtomicReference<Pending?>(null)
+    var handledEpoch = gate.observe().epoch
+    fun drainRemoteQueue() {
+        while (frames.tryReceive().isSuccess) Unit
+    }
+    val watcher = launch {
+        var observedEpoch = handledEpoch
+        while (isActive) {
+            val admission = gate.observe()
+            if (!admission.enabled || admission.epoch != observedEpoch) {
+                pending.get()?.takeIf {
+                    !admission.enabled || it.epoch != admission.epoch
+                }?.send?.cancel()
+                drainRemoteQueue()
+            }
+            observedEpoch = admission.epoch
+            delay(10)
+        }
+    }
+    try {
+        for (frame in frames) {
+            val admission = gate.observe()
+            if (admission.epoch != handledEpoch) {
+                handledEpoch = admission.epoch
+                // Also discard the frame removed just before a pause/resume was observed.
+                drainRemoteQueue()
+                continue
+            }
+            if (!admission.enabled) continue
+            val send = async(start = CoroutineStart.LAZY) {
+                if (gate.accepts(admission)) {
+                    sendFrame(frame)
+                    // Count completed socket sends, never queue admission or discarded PCM.
+                    onDelivered(frame)
+                }
+            }
+            val entry = Pending(admission.epoch, send)
+            pending.set(entry)
+            if (gate.accepts(admission)) send.start() else send.cancel()
+            try {
+                send.await()
+            } catch (_: CancellationException) {
+                currentCoroutineContext().ensureActive()
+            } finally {
+                pending.compareAndSet(entry, null)
+            }
+        }
+    } finally {
+        watcher.cancelAndJoin()
+        pending.getAndSet(null)?.send?.cancelAndJoin()
+    }
+}
+
+/** Retains the last public committed prefix while local capture continues privately on pause. */
+private class PublishedBroadcastSnapshots(
+    private val gate: LiveAudioBroadcastGate,
+    private val transcriptProvider: () -> List<GuideCastTranscriptLine>,
+    private val transcriptSnapshotProvider: (() -> GuideCastTranscriptSnapshot)?,
+    private val replayProvider: (() -> RecordedBroadcast?)?,
+    private val replayCaptionsProvider: ((Long?, Long?) -> String)?,
+    private val replayCaptionSnapshotProvider: (() -> ReplayCaptionSnapshot)?,
+) {
+    private var captionSnapshot: ReplayCaptionSnapshot? = null
+    private var transcript = GuideCastTranscriptSnapshot(0, emptyList())
+    private var sourceRevision: Long? = null
+    private var recording: RecordedBroadcast? = null
+    private val captionBodies = linkedMapOf<Pair<Long?, Long?>, String>()
+
+    @Synchronized
+    fun transcripts(): GuideCastTranscriptSnapshot {
+        val admission = gate.observe()
+        if (!admission.enabled) return transcript
+        val versioned = transcriptSnapshotProvider?.invoke()
+        if (versioned != null && sourceRevision == versioned.revision) return transcript
+        val frozen = (versioned?.lines ?: transcriptProvider()).map { line ->
+            line.copy(
+                translations = line.translations.toMap(),
+                translationLatencyMillis = line.translationLatencyMillis.toMap(),
+                firstAudioLatencyMillis = line.firstAudioLatencyMillis.toMap(),
+                synthesisLatencyMillis = line.synthesisLatencyMillis.toMap(),
+            )
+        }
+        if (gate.accepts(admission)) {
+            if (frozen != transcript.lines) {
+                transcript = GuideCastTranscriptSnapshot(transcript.revision + 1, frozen)
+            }
+            sourceRevision = versioned?.revision
+        }
+        return transcript
+    }
+
+    @Synchronized
+    fun replay(): RecordedBroadcast? {
+        val admission = gate.observe()
+        if (admission.enabled) {
+            val frozen = replayProvider?.invoke()?.let { it.copy(segments = it.segments.toList()) }
+            if (gate.accepts(admission)) recording = frozen
+        }
+        return recording
+    }
+
+    @Synchronized
+    private fun frozenCaptionSnapshot(): ReplayCaptionSnapshot? {
+        val admission = gate.observe()
+        if (admission.enabled) {
+            val next = replayCaptionSnapshotProvider?.invoke()
+            if (gate.accepts(admission) && next != null && next.revision != captionSnapshot?.revision) {
+                captionSnapshot = next
+            }
+        }
+        return captionSnapshot
+    }
+
+    fun captions(part: Long?, sequence: Long?): String? {
+        if (replayCaptionSnapshotProvider != null) {
+            // The immutable prefix allows any cursor while paused, without publishing later
+            // locally recorded rows. Disk paging happens only for the requested HTTP page.
+            return frozenCaptionSnapshot()?.page?.invoke(part, sequence) ?: "[]"
+        }
+        return legacyCaptions(part, sequence)
+    }
+
+    @Synchronized
+    private fun legacyCaptions(part: Long?, sequence: Long?): String? {
+        if (replayCaptionsProvider == null) return null
+        val key = part to sequence
+        val admission = gate.observe()
+        if (admission.enabled) {
+            val body = replayCaptionsProvider.invoke(part, sequence)
+            if (gate.accepts(admission)) {
+                captionBodies[key] = body
+                // Keep the full frozen snapshot, with bounded incremental-query caching.
+                while (captionBodies.size > 64) {
+                    val oldest = captionBodies.keys.first { it != (null to null) }
+                    captionBodies.remove(oldest)
+                }
+            }
+        }
+        // An unseen cursor must never query the continuing private recording during pause.
+        return captionBodies[key] ?: "[]"
+    }
+
+    fun refresh() {
+        // A failed optional provider leaves its previous public snapshot intact.
+        runCatching { transcripts() }
+        runCatching { replay() }
+        // O(1) provider only. Legacy disk-backed pages are cached when explicitly requested.
+        runCatching { frozenCaptionSnapshot() }
     }
 }
 
@@ -1301,7 +1542,11 @@ private fun ApplicationCall.secureApiResponse() {
 private fun StreamSession.hasConfiguredChannel(channelId: String): Boolean =
     descriptor(channelId) != null
 
-private fun StreamSession.toStatusJson(requestedChannel: String? = null): String = buildString {
+internal fun StreamSession.toStatusJson(
+    requestedChannel: String? = null,
+    broadcastStatus: GuideCastBroadcastStatus? = null,
+    liveAudioAdmission: LiveAudioBroadcastGate.Admission? = null,
+): String = buildString {
     val snapshot = observabilitySnapshot()
     // A language URL scopes translated content, but always offers the live original input too.
     val visibleChannels = channels.filter {
@@ -1318,6 +1563,19 @@ private fun StreamSession.toStatusJson(requestedChannel: String? = null): String
     append(generation)
     append(",\"active\":")
     append(snapshot.isActive)
+    if (liveAudioAdmission != null) {
+        append(",\"liveAudioEnabled\":")
+        append(liveAudioAdmission.enabled)
+        append(",\"liveAudioEpoch\":")
+        append(liveAudioAdmission.epoch)
+    }
+    if (broadcastStatus != null) {
+        append(",\"broadcast\":{\"phase\":\"")
+        append(broadcastStatus.phase.name)
+        append("\",\"nextAction\":\"")
+        append(broadcastStatus.nextAction.name)
+        append("\"}")
+    }
     append(",\"scope\":\"")
     append(if (requestedChannel == null) "session" else "channel")
     append('"')
@@ -1351,6 +1609,12 @@ private fun StreamSession.toStatusJson(requestedChannel: String? = null): String
         append(",\"listenerPath\":\"/")
         append(channel.id.jsonEscaped())
         append('"')
+        if (broadcastStatus != null) {
+            val readiness = broadcastStatus.channelStatus(channel.id)
+            append(",\"audioReadiness\":\"").append(readiness.audioReadiness.name)
+            append("\",\"transcriptReadiness\":\"").append(readiness.transcriptReadiness.name)
+            append("\",\"nextAction\":\"").append(readiness.nextAction.name).append('"')
+        }
         append('}')
     }
     append("]}")
@@ -1379,10 +1643,10 @@ internal fun List<GuideCastTranscriptLine>.toTranscriptsJson(
 }
 
 private fun GuideCastTranscriptLine.forChannel(channelId: String): GuideCastTranscriptLine = copy(
-    translations = translations.filterKeys { it == channelId },
-    translationLatencyMillis = translationLatencyMillis.filterKeys { it == channelId },
-    firstAudioLatencyMillis = firstAudioLatencyMillis.filterKeys { it == channelId },
-    synthesisLatencyMillis = synthesisLatencyMillis.filterKeys { it == channelId },
+    translations = translations.filterKeys { it.equals(channelId, ignoreCase = true) },
+    translationLatencyMillis = translationLatencyMillis.filterKeys { it.equals(channelId, ignoreCase = true) },
+    firstAudioLatencyMillis = firstAudioLatencyMillis.filterKeys { it.equals(channelId, ignoreCase = true) },
+    synthesisLatencyMillis = synthesisLatencyMillis.filterKeys { it.equals(channelId, ignoreCase = true) },
 )
 
 private fun toTranscriptJson(line: GuideCastTranscriptLine): String = buildString {
@@ -1395,6 +1659,9 @@ private fun toTranscriptJson(line: GuideCastTranscriptLine): String = buildStrin
     append("\"translationLatencyMillis\":").append(line.translationLatencyMillis.toJsonLongMap()).append(',')
     append("\"firstAudioLatencyMillis\":").append(line.firstAudioLatencyMillis.toJsonLongMap()).append(',')
     append("\"synthesisLatencyMillis\":").append(line.synthesisLatencyMillis.toJsonLongMap())
+    line.liveSegmentLanguage?.let { append(",\"liveSegmentLanguage\":\"").append(it.jsonEscaped()).append('"') }
+    line.liveOutputState?.let { append(",\"liveOutputState\":\"").append(it.jsonEscaped()).append('"') }
+    line.displayGroupSequence?.let { append(",\"displayGroupSequence\":").append(it) }
     append('}')
 }
 

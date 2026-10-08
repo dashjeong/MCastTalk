@@ -288,7 +288,9 @@ class TranslationBroadcastPipeline(
                                 else maxOf(configuredTimeoutMillis, queueBudget + 100L)
                             // Take one snapshot: edits affect the next utterance, never a subtitle
                             // that has already committed its exact TTS input.
-                            val terms = glossaryTerms(utterance.text, utterance.sourceLanguageTag, target.languageTag)
+                            val terms = boundedGlossaryLookup(
+                                utterance.text, utterance.sourceLanguageTag, target.languageTag, glossaryTerms, onGlossaryWarning,
+                            )
                             val sessionMemoryContext = activeSessionMemory.buildContext(utterance.sourceLanguageTag, target.languageTag)
                             val translationContext = sharedBatch + TranslationRequestIdentity(requestScope, utterance.sequence) +
                                 TranslationDeliveryContext(deliveryTickets, ticket) + TranslationGlossaryContext(GlossaryTerms.hints(terms)) +

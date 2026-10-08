@@ -13,9 +13,9 @@ tar -xzf third_party/rnnoise/model-0b50c45-runtime.tar.gz -C "$build"
 cd "$build"
 "$toolchain/bin/clang" --target=aarch64-linux-android29 --sysroot="$toolchain/sysroot" \
   -O2 -fPIC -shared -fvisibility=hidden -fstack-protector-strong -D_FORTIFY_SOURCE=2 \
-  -DRNNOISE_BUILD -DHAVE_LRINTF -DHAVE_LRINT -Iinclude -Isrc -I"$root/core/audio/src/main/cpp" \
+  -DRNNOISE_BUILD -DHAVE_LRINTF -DHAVE_LRINT -Iinclude -Isrc -I"$root/third_party/rnnoise/android" \
   src/denoise.c src/rnn.c src/pitch.c src/kiss_fft.c src/celt_lpc.c \
   src/nnet.c src/nnet_default.c src/parse_lpcnet_weights.c src/rnnoise_data.c src/rnnoise_tables.c \
-  "$root/core/audio/src/main/cpp/rnnoise_jni.c" -lm \
+  "$root/third_party/rnnoise/android/rnnoise_jni.c" -lm \
   -Wl,-z,relro,-z,now,-z,max-page-size=16384,-soname,libguidecast_rnnoise.so \
   -o "$root/core/audio/src/main/jniLibs/arm64-v8a/libguidecast_rnnoise.so"

@@ -26,11 +26,16 @@ import kotlinx.coroutines.withContext
 
 internal class FileTranslationViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as GuideCastApplication
+    val apiSettings = app.serviceMenuProfiles.settings(ServiceMenuProfile.FILES)
+    val apiService = app.serviceMenuProfiles.service(ServiceMenuProfile.FILES)
     private val library = FileTranscriptLibrary(app)
-    private val mutableUi = MutableStateFlow(withRecognitionSupport(FileTranslationUiState()))
+    private val mutableUi = MutableStateFlow(withRecognitionSupport(initialMenuState()))
     val uiState = mutableUi.asStateFlow()
     private val mutablePlayback = MutableStateFlow<FilePlaybackUiState?>(null)
     val playbackState = mutablePlayback.asStateFlow()
+    val webBroadcast = app.menuBroadcast.state
+    private var webStart: Job? = null
+    private var webGeneration: Long? = null
     private var selectedUri: Uri? = null
     private var selectedBatch: List<Uri> = emptyList()
     @Volatile private var work: Job? = null
@@ -49,15 +54,30 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
 
     init {
         viewModelScope.launch {
+            app.serviceMenuProfiles.state.map { it.getValue(ServiceMenuProfile.FILES) }
+                .distinctUntilChanged().collect { options ->
+                    val source = if (options.automaticSource) null else
+                        supportedMenuLanguageTag(options.sourceTag, FILE_LANGUAGE_OPTIONS.keys)
+                    val targets = options.targetTags.mapNotNull { supportedMenuLanguageTag(it, FILE_LANGUAGE_OPTIONS.keys) }.take(4).toSet()
+                    val engine = if (apiSettings.state.value.provider == TranslationApiProvider.LOCAL)
+                        options.localEngine else FileTranslationEngine.API
+                    mutableUi.update { current ->
+                        if (current.sourceLanguageTag == source && current.targetLanguageTags == targets && current.translationEngine == engine) current
+                        else withRecognitionSupport(current.copy(sourceLanguageTag = source,
+                            targetLanguageTags = targets, translationEngine = engine, selectedFiles = requeueCompleted(current.selectedFiles)))
+                    }
+                }
+        }
+        viewModelScope.launch {
             combine(mutableUi, mutablePlayback) { ui, playback ->
                 ui.isConverting || ui.isLoading || playback?.isPlaying == true || playback?.isTranslating == true
             }.distinctUntilChanged().collect { updateOwnership() }
         }
         viewModelScope.launch {
-            app.translationApiSettings.state.map { it.provider != TranslationApiProvider.LOCAL }
+            apiSettings.state.map { it.provider != TranslationApiProvider.LOCAL }
                 .distinctUntilChanged().collect { online ->
                     val next = if (online) FileTranslationEngine.API else
-                        mutableUi.value.translationEngine.takeUnless { it == FileTranslationEngine.API } ?: FileTranslationEngine.MLKIT
+                        app.serviceMenuProfiles.state.value.getValue(ServiceMenuProfile.FILES).localEngine
                     if (next != mutableUi.value.translationEngine) {
                         if (isBusy()) cancel("통번역 운용 모드가 변경되어 파일 작업을 중지했습니다.")
                         mutableUi.update { it.copy(translationEngine = next, selectedFiles = requeueCompleted(it.selectedFiles)) }
@@ -66,9 +86,10 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
         }
         viewModelScope.launch { refreshLibrary() }
         viewModelScope.launch {
-            app.broadcastRuntime.state.map { runtime ->
+            combine(app.broadcastRuntime.state, app.menuBroadcast.state) { runtime, menu ->
                 runtime.translationTestActive || runtime.phase in setOf(BroadcastPhase.STARTING, BroadcastPhase.LIVE, BroadcastPhase.PAUSED) ||
-                    runtime.inputPhase in setOf(InputPhase.STARTING, InputPhase.ACTIVE, InputPhase.PAUSED)
+                    runtime.inputPhase in setOf(InputPhase.STARTING, InputPhase.ACTIVE, InputPhase.PAUSED) ||
+                    menuBroadcastBlocks(MenuBroadcastOrigin.FILES, menu)
             }.distinctUntilChanged().collect { busy ->
                 mutableUi.update { it.copy(unavailableReason = if (busy) "입력·방송·실시간 통역을 중지한 뒤 파일을 변환하세요." else null) }
                 if (busy) {
@@ -90,7 +111,64 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
         }
     }
     private fun claimWork(): Boolean = !cleared && !app.localVoiceNoteWorkActive.value &&
+        !app.broadcastRuntime.state.value.dataTransferUnavailable() &&
+        !menuBroadcastBlocks(MenuBroadcastOrigin.FILES, app.menuBroadcast.state.value) &&
         app.fileWorkOwners.tryAcquire(workOwner)
+
+    private fun initialMenuState(): FileTranslationUiState {
+        val profile = app.serviceMenuProfiles.state.value.getValue(ServiceMenuProfile.FILES)
+        return FileTranslationUiState(
+            sourceLanguageTag = if (profile.automaticSource) null else supportedMenuLanguageTag(profile.sourceTag, FILE_LANGUAGE_OPTIONS.keys),
+            targetLanguageTags = profile.targetTags.mapNotNull { supportedMenuLanguageTag(it, FILE_LANGUAGE_OPTIONS.keys) }.take(4).toSet(),
+            translationEngine = if (apiSettings.state.value.provider == TranslationApiProvider.LOCAL) profile.localEngine else FileTranslationEngine.API,
+        )
+    }
+
+    /** Opens the same URI and SHA-protected source used by the library player. */
+    fun startWebBroadcast() {
+        val entry = mutablePlayback.value?.entry ?: return
+        if (isBusy() || webStart?.isActive == true || !claimWork()) return
+        if (entry.requiresRelink) {
+            mutablePlayback.update { it?.copy(errorMessage = "파일 찾기로 원본 음원을 연결한 뒤 웹 방송을 시작하세요.") }
+            updateOwnership()
+            return
+        }
+        val generation = ++request
+        audio.pause()
+        mutableUi.update { it.copy(isLoading = true, errorMessage = null) }
+        mutablePlayback.update { it?.copy(errorMessage = null, statusMessage = "웹 방송을 위해 원본 파일을 확인하고 있습니다.") }
+        webStart = viewModelScope.launch {
+            try {
+                val uri = Uri.parse(entry.uri)
+                val details = inspectFile(uri)
+                if (generation != request || cleared) return@launch
+                if (details.hash != entry.sha256) {
+                    mutablePlayback.update { it?.copy(errorMessage = "파일 내용이 저장된 스크립트와 다릅니다. 원본 파일을 다시 연결하세요.", statusMessage = null) }
+                    return@launch
+                }
+                if (app.menuBroadcast.startMedia(MenuBroadcastOrigin.FILES, uri, entry.displayName,
+                        entry.sourceLanguageTag ?: "und", fileBroadcastCaptions(entry))) {
+                    webGeneration = app.menuBroadcast.state.value.generation
+                    mutablePlayback.update { it?.copy(statusMessage = "원음과 저장된 번역으로 웹 방송을 준비합니다. 새 번역 요청은 하지 않습니다.") }
+                } else mutablePlayback.update { it?.copy(errorMessage = app.menuBroadcast.state.value.errorMessage ?: "다른 입력·방송을 종료한 뒤 다시 시작하세요.", statusMessage = null) }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                mutablePlayback.update { it?.copy(errorMessage = "파일을 읽을 수 없습니다. 접근 권한·저장 위치를 확인하고 원본 파일을 다시 연결하세요.", statusMessage = null) }
+            } finally {
+                if (generation == request) mutableUi.update { it.copy(isLoading = false) }
+                updateOwnership()
+            }
+        }
+        updateOwnership()
+    }
+
+    fun stopWebBroadcast() {
+        webStart?.cancel(); webStart = null
+        val generation = webGeneration
+        if (generation != null && app.menuBroadcast.state.value.generation == generation &&
+            app.menuBroadcast.owns(MenuBroadcastOrigin.FILES)) app.menuBroadcast.stop(generation)
+        webGeneration = null
+    }
 
     fun selectSource(tag: String?) {
         if (isBusy()) return
@@ -100,6 +178,7 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
             return
         }
         mutableUi.update { withRecognitionSupport(it.copy(sourceLanguageTag = tag, errorMessage = null, selectedFiles = requeueCompleted(it.selectedFiles))) }
+        app.serviceMenuProfiles.setLanguages(ServiceMenuProfile.FILES, tag, mutableUi.value.targetLanguageTags)
     }
     fun refreshRecognitionSupport() { mutableUi.update(::withRecognitionSupport) }
 
@@ -132,7 +211,12 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
             },
         )
     }
-    fun selectEngine(engine: FileTranslationEngine) { if (!isBusy() && app.translationApiSettings.state.value.provider == TranslationApiProvider.LOCAL && engine != FileTranslationEngine.API) mutableUi.update { it.copy(translationEngine = engine, selectedFiles = requeueCompleted(it.selectedFiles)) } }
+    fun selectEngine(engine: FileTranslationEngine) {
+        if (!isBusy() && apiSettings.state.value.provider == TranslationApiProvider.LOCAL && engine != FileTranslationEngine.API) {
+            app.serviceMenuProfiles.setLocalEngine(ServiceMenuProfile.FILES, engine)
+            mutableUi.update { it.copy(translationEngine = engine, selectedFiles = requeueCompleted(it.selectedFiles)) }
+        }
+    }
     fun toggleTarget(tag: String) {
         if (isBusy()) return
         mutableUi.update { state ->
@@ -140,6 +224,7 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
                 else if (state.targetLanguageTags.size < 4) state.targetLanguageTags + tag else state.targetLanguageTags
             state.copy(targetLanguageTags = selected, selectedFiles = if (selected != state.targetLanguageTags) requeueCompleted(state.selectedFiles) else state.selectedFiles)
         }
+        app.serviceMenuProfiles.setLanguages(ServiceMenuProfile.FILES, mutableUi.value.sourceLanguageTag, mutableUi.value.targetLanguageTags)
     }
     fun prepareRelink() { relinkId = mutablePlayback.value?.entry?.id }
     fun reportSpeechPermissionDenied() {
@@ -287,7 +372,8 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
                                 withContext(Dispatchers.IO) { library.save(updated) }
                                 entry = updated
                             }) { pending, onLine ->
-                            translateFileScript(app, pending, target, settings.translationEngine, contextSegments = entry.segments, onLine = onLine) { done, total ->
+                            translateFileScript(app, pending, target, settings.translationEngine, contextSegments = entry.segments,
+                                apiSettings = apiSettings, apiService = apiService, onLine = onLine) { done, total ->
                                 mutableUi.update { it.copy(progressMessage = "남은 문장 번역·자동 검사 $done / $total", progress = done.toFloat() / total.coerceAtLeast(1)) }
                             }
                         }
@@ -330,6 +416,7 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
     }
 
     fun cancel(message: String = "파일 작업을 취소했습니다.") {
+        stopWebBroadcast()
         work?.cancel(CancellationException(message))
         ++request
         fileLoad?.cancel()
@@ -339,6 +426,7 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
     fun openEntry(id: String) {
         // Relinking calls this from its current fileLoad job; replacing that read is intentional.
         if (cleared || work?.isCompleted == false || app.fileWorkOwners.hasOther(workOwner) || !claimWork()) return
+        stopWebBroadcast()
         audio.close()
         val generation = ++request
         fileLoad?.cancel()
@@ -369,7 +457,7 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
         fileLoad?.invokeOnCompletion { updateOwnership() }
     }
 
-    fun closePlayback() { ++request; fileLoad?.cancel(); if (mutablePlayback.value?.isTranslating == true) work?.cancel(); audio.close(); mutablePlayback.value = null; mutableUi.update { it.copy(isLoading = false) } }
+    fun closePlayback() { stopWebBroadcast(); ++request; fileLoad?.cancel(); if (mutablePlayback.value?.isTranslating == true) work?.cancel(); audio.close(); mutablePlayback.value = null; mutableUi.update { it.copy(isLoading = false) } }
     fun playPause() { if (!isBusy() && claimWork()) { audio.playPause(); updateOwnership() } }
     fun pauseForBackground() { audio.pause() }
     fun stop() { audio.stop() }
@@ -401,7 +489,8 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
                         withContext(Dispatchers.IO) { library.save(saved) }
                         mutablePlayback.update { if (it?.entry?.id == id) it.copy(entry = saved) else it }
                     }) { pending, onLine ->
-                    translateFileScript(app, pending, target, mutableUi.value.translationEngine, contextSegments = current.entry.segments, onLine = onLine) { done, total ->
+                    translateFileScript(app, pending, target, mutableUi.value.translationEngine, contextSegments = current.entry.segments,
+                        apiSettings = apiSettings, apiService = apiService, onLine = onLine) { done, total ->
                         mutablePlayback.update { if (it?.entry?.id == id) it.copy(statusMessage = "남은 문장 번역·자동 검사 $done / $total") else it }
                     }
                 }
@@ -426,6 +515,8 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
         work?.invokeOnCompletion { updateOwnership() }
     }
     private fun isBusy(): Boolean = cleared || app.fileWorkOwners.hasOther(workOwner) ||
+        app.broadcastRuntime.state.value.dataTransferUnavailable() ||
+        menuBroadcastBlocks(MenuBroadcastOrigin.FILES, app.menuBroadcast.state.value) ||
         work?.isCompleted == false || mutableUi.value.isConverting ||
         app.localVoiceNoteWorkActive.value ||
         mutablePlayback.value?.isTranslating == true || mutableUi.value.isLoading
@@ -461,6 +552,7 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
     }
 
     override fun onCleared() {
+        stopWebBroadcast()
         // ViewModelScope includes refresh/delete/IO descendants beyond work and fileLoad.
         // A replacement screen cannot use the shared recognizer while these are retiring.
         synchronized(ownershipLock) {

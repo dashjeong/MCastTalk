@@ -264,6 +264,7 @@ class GalaxySpeechRecognitionEngine(
     private val recognitionEngineOverride: SpeechRecognitionEngine? = null,
 ) : SpeechRecognitionEngine, Closeable {
     private val operatorRestartSink = AtomicReference<Channel<Unit>?>(null)
+    private val usableSourceWatchdog = RecognitionUsableSourceWatchdog()
 
     /** Reconnect only recognition; translated audio queues, archives and input stay owned by service. */
     fun requestReconnect(): Boolean = operatorRestartSink.get()?.trySend(Unit)?.isSuccess == true
@@ -503,6 +504,26 @@ class GalaxySpeechRecognitionEngine(
         config: SpeechRecognitionConfig,
     ): Flow<RecognizedUtterance> = channelFlow {
         val normalizedSourceLanguage = requireSupportedSourceLanguage(config.sourceLanguageTag)
+        val captureGeneration = usableSourceWatchdog.beginCapture(SystemClock.elapsedRealtime())
+        var recognitionStatus = mutableStatus.value
+        fun updateRecognitionStatus(status: GalaxySpeechLanguageStatus) {
+            usableSourceWatchdog.ifCurrent(captureGeneration) {
+                recognitionStatus = status
+                val warning = usableSourceWatchdog.currentWarning(captureGeneration)
+                // This is source availability visibility, never a provider failure or stop command.
+                mutableStatus.value = if (status.isReady && warning != null)
+                    status.copy(message = warning.message) else status
+            }
+        }
+        fun publishSourceNotice(notice: RecognitionUsableSourceNotice) {
+            usableSourceWatchdog.publishIfCurrentNotice(captureGeneration, notice) {
+                if (recognitionStatus.isReady) mutableStatus.value =
+                    recognitionStatus.copy(message = notice.message)
+                RuntimeDiagnosticLog.record("recognition_source_visibility",
+                    "state=${notice.kind} empty_attempts=${notice.unusableAttempts} " +
+                        "source_age_ms=${notice.millisWithoutUsableSource}")
+            }
+        }
         val interpretationSegmenter = ProviderTranscriptSemanticAssembler(
             inputProfile.interpretationPolicy,
             onRecovery = { reason ->
@@ -546,8 +567,13 @@ class GalaxySpeechRecognitionEngine(
                         pcmS16Le = frame.bytes,
                         capturedAtNanos = frame.capturedAtElapsedRealtimeNanos,
                     )
+                    val observedAtMillis = SystemClock.elapsedRealtime()
+                    val frameDurationMillis = frame.bytes.size.toLong() * 1_000L /
+                        (config.sampleRateHz * config.channelCount * Short.SIZE_BYTES)
+                    usableSourceWatchdog.observeInput(captureGeneration, observedAtMillis,
+                        activity.active, frameDurationMillis)
                     progressWatchdog.observeInput(
-                        nowMillis = SystemClock.elapsedRealtime(),
+                        nowMillis = observedAtMillis,
                         isSpeech = activity.active,
                         frameDurationMillis = frame.bytes.size.toLong() * 1_000L /
                             (config.sampleRateHz * config.channelCount * Short.SIZE_BYTES),
@@ -574,6 +600,8 @@ class GalaxySpeechRecognitionEngine(
             while (currentCoroutineContext().isActive) {
                 delay(SEGMENTER_TICK_MILLIS)
                 val requestEndpoint = advanceSegmenter(SystemClock.elapsedRealtimeNanos())
+                usableSourceWatchdog.poll(captureGeneration, SystemClock.elapsedRealtime())
+                    ?.let(::publishSourceNotice)
                 if (inputCompletion.permitsAutomaticRestart()) {
                     progressWatchdog.stalledAttempt(SystemClock.elapsedRealtime())?.let {
                         recognitionStallRequests.trySend(it)
@@ -625,8 +653,9 @@ class GalaxySpeechRecognitionEngine(
                 val finalGate = ProviderFinalGate()
                 val attemptInput = inputCompletion.newAttempt()
                 val attemptId = nextRecognitionAttempt.getAndIncrement()
+                var attemptHadUsableSource = false
                 activeRecognitionAttempt.set(attemptId)
-                mutableStatus.value = GalaxySpeechLanguageStatus(
+                updateRecognitionStatus(GalaxySpeechLanguageStatus(
                     isReady = true,
                     message = if (attemptBackend == RecognitionBackend.ANDROID) {
                         "Galaxy ${config.sourceLanguageTag.sourceLanguageDisplayName()} " +
@@ -638,7 +667,7 @@ class GalaxySpeechRecognitionEngine(
                     } else {
                         "독립 PCM 한국어 음성인식 사용 중"
                     },
-                )
+                ))
 
                 val attemptOutcome = supervisorScope {
                     val completion = CompletableDeferred<RecognitionAttemptOutcome>()
@@ -678,7 +707,8 @@ class GalaxySpeechRecognitionEngine(
                             var previousHypothesis: Triple<Long, String, Boolean>? = null
                             engine.recognize(attemptInput.track(pcm.receiveAsFlow()), attemptConfig).collect { utterance ->
                                 val hypothesis = Triple(utterance.sequence, utterance.text, utterance.isFinal)
-                                if (hypothesis != previousHypothesis) {
+                                val hypothesisChanged = hypothesis != previousHypothesis
+                                if (hypothesisChanged) {
                                     previousHypothesis = hypothesis
                                     progressWatchdog.onChangedTranscript(attemptId, SystemClock.elapsedRealtime())
                                 }
@@ -688,6 +718,13 @@ class GalaxySpeechRecognitionEngine(
                                         attemptId, attemptBackend.name, utterance, accepted,
                                     )
                                     if (accepted) {
+                                        // Accepted provider source captions are real observations,
+                                        // not semantic finals or verified human-language ground truth.
+                                        if (hypothesisChanged && utterance.text.isNotBlank() && !utterance.isRetracted) {
+                                            attemptHadUsableSource = true
+                                            usableSourceWatchdog.onUsableSource(captureGeneration,
+                                                SystemClock.elapsedRealtime())?.let(::publishSourceNotice)
+                                        }
                                         val sequence = providerSequenceMap.map(utterance.sequence)
                                         interpretationSegmenter.accept(
                                             utterance.copy(sequence = sequence),
@@ -747,6 +784,13 @@ class GalaxySpeechRecognitionEngine(
                 activeRecognitionAttempt.compareAndSet(attemptId, NO_ACTIVE_RECOGNITION_ATTEMPT)
                 progressWatchdog.endAttempt(attemptId)
                 lastAttemptOutcome = attemptOutcome
+                val ordinaryEmptyFailure = attemptOutcome is RecognitionAttemptOutcome.Failed &&
+                    (attemptOutcome.error as? AndroidSpeechRecognitionException)?.errorCode in setOf(
+                        SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT)
+                if (!attemptHadUsableSource && (attemptOutcome == RecognitionAttemptOutcome.Completed ||
+                        attemptOutcome is RecognitionAttemptOutcome.EndpointRestart || ordinaryEmptyFailure)) {
+                    usableSourceWatchdog.onUnusableAttempt(captureGeneration)
+                }
                 RuntimeDiagnosticLog.record("recognition_outcome", "attempt=$attemptId outcome=" +
                     when (attemptOutcome) {
                         RecognitionAttemptOutcome.Completed -> "completed"
@@ -796,8 +840,8 @@ class GalaxySpeechRecognitionEngine(
                         }
                         backend = RecognitionBackend.MOONSHINE
                         preparedBackend = backend
-                        mutableStatus.value = GalaxySpeechLanguageStatus(true,
-                            "마이크 입력 충돌 감지 · 시스템 인식기를 종료하고 독립 PCM 인식으로 복구합니다.")
+                        updateRecognitionStatus(GalaxySpeechLanguageStatus(true,
+                            "마이크 입력 충돌 감지 · 시스템 인식기를 종료하고 독립 PCM 인식으로 복구합니다."))
                     }
                     RecognitionAttemptOutcome.Completed,
                     RecognitionAttemptOutcome.OperatorRestart,
@@ -822,8 +866,8 @@ class GalaxySpeechRecognitionEngine(
                                 SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT))
                         if (recovery == RecognitionRecoveryAction.FAIL ||
                             (!ordinaryPause && consecutiveFailures + 1 >= MAX_CONSECUTIVE_FAILURES)) {
-                            mutableStatus.value = GalaxySpeechLanguageStatus(false,
-                                "음성인식 연결을 확인하세요. 권한·모델을 확인한 뒤 ‘통역 다시 연결’을 누르면 기존 듣기 채널에서 이어갑니다.")
+                            updateRecognitionStatus(GalaxySpeechLanguageStatus(false,
+                                "음성인식 연결을 확인하세요. 권한·모델을 확인한 뒤 ‘통역 다시 연결’을 누르면 기존 듣기 채널에서 이어갑니다."))
                             RuntimeDiagnosticLog.record("recognition_recovery", "state=awaiting_operator")
                             // Keep consuming unrecognized PCM while waiting: leaving this bounded
                             // channel full would backpressure capture and prevent finite input EOF.
@@ -870,10 +914,10 @@ class GalaxySpeechRecognitionEngine(
                         }
                         preparedBackend = backend
                         preparedLanguageTag = config.sourceLanguageTag
-                        mutableStatus.value = GalaxySpeechLanguageStatus(
+                        updateRecognitionStatus(GalaxySpeechLanguageStatus(
                             isReady = true,
                             message = recognitionRecoveryStatusMessage(error),
-                        )
+                        ))
                         delay(FAILURE_RETRY_DELAY_MILLIS)
                     }
                 }
@@ -888,6 +932,7 @@ class GalaxySpeechRecognitionEngine(
                 }
             }
         } finally {
+            usableSourceWatchdog.endCapture(captureGeneration)
             operatorRestartSink.compareAndSet(operatorRestarts, null)
             operatorRestarts.close()
             activeRecognitionAttempt.set(NO_ACTIVE_RECOGNITION_ATTEMPT)

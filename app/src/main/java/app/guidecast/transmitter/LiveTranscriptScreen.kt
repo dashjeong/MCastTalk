@@ -142,7 +142,8 @@ internal fun LiveTranscriptScreen(
                                     }
                                 }
                                 if (translations.isEmpty() && targetLanguageTags.isNotEmpty()) {
-                                    Text(if (line.isFinal) "번역 결과 대기" else "문장 인식 중",
+                                    Text(line.nativeMissingCaptionLabel(selectedLanguage ?: line.liveSegmentLanguage)
+                                        ?: if (line.isFinal) "번역 결과 대기" else "문장 인식 중",
                                         style = MaterialTheme.typography.labelMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }

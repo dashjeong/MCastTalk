@@ -912,7 +912,7 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
         }
         val gemmaIsReady =
             gemmaProvider.modelManager.status.value.readiness == GemmaModelReadiness.READY
-        val translationModelsReady = selected.all { languageTag ->
+        val translationModelsReady = guideCastApplication.translationApiSettings.state.value.provider != TranslationApiProvider.LOCAL || selected.all { languageTag ->
             val lightweightReady = languageTag !in notReady
             if (useGemma.value && GemmaTranslationProvider.supportsTranslation(selectedSourceLanguageTag.value, languageTag)) {
                 gemmaIsReady || lightweightReady
@@ -972,9 +972,9 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
         if (voiceNoteBusy()) return
         val relay = guideCastApplication.interpreterRelaySettings.state.value
         BroadcastService.start(getApplication(), OperatorAccessMode.QR_TOKEN,
-            translationLanguages = arrayOf(relay.target), sourceLanguageTag = relay.source,
+            translationLanguages = relay.targetLanguageTags.toTypedArray(), sourceLanguageTag = relay.source,
             runMode = if (relay.networkBroadcast) BroadcastRunMode.NETWORK else BroadcastRunMode.STANDALONE,
-            interpreterRelay = true)
+            interpreterRelay = true, deferRelayInput = true, broadcastTitle = relay.broadcastTitle)
     }
 
     fun pauseBroadcast() = BroadcastService.pauseBroadcast(getApplication())

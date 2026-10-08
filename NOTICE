@@ -51,9 +51,9 @@ Third-Party Software and Model Attributions
    - NIKL source/download: https://www.korean.go.kr/front/pubWord/pubWordDataList.do?cateLarge=ALL&flag=1&langGubun=ALL&originGubun=ALL
    - NIKL Copyright Policy: https://www.korean.go.kr/front/nuri/pageView.do?mkn=3&page_id=P000189
    - Public Data Portal: https://www.data.go.kr
-   The original spreadsheets and converted database are excluded from GitHub source
-   and standalone release assets. The app uses locally prepared data with source
-   and download notices. Provider terms remain applicable; MCastTalk's code license
+   The original spreadsheets are not included. A pinned compressed public terminology
+   database and source provenance are included for the app build; user-created
+   recordings, transcripts and databases are not included. Provider terms remain applicable; MCastTalk's code license
    does not relicense the data. See docs/TERMINOLOGY_DATA.md.
 
 5. LAME MP3 Encoding Library

@@ -10,10 +10,6 @@ import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 import org.json.JSONObject
 
-internal data class RecordedCaption(val part: Long, val sequence: Long, val original: String,
-    val translations: Map<String, String>, val final: Boolean, val monotonicNanos: Long,
-    val alignment: String, val outputState: String?, val endReason: String?)
-
 /** Operator-owned local media; never uses a model or uploads a recording. */
 internal class BroadcastRecordingRepository(context: Context,
     private val shares: RecordedBroadcastShareStore = recordedShareStore(context)) : Closeable {
@@ -33,9 +29,9 @@ internal class BroadcastRecordingRepository(context: Context,
         shareCleanup.scheduleWithFixedDelay({ runCatching { shares.cleanup() } }, 0, 1, TimeUnit.HOURS)
     }
 
-    @Synchronized fun startPart(stream: StreamSession): String {
+    @Synchronized fun startPart(stream: StreamSession, title: String? = null): String {
         closePart()
-        val id = activeId ?: audio.begin().also { activeId = it }
+        val id = activeId ?: audio.begin(title.orEmpty()).also { activeId = it }
         subscription = audio.attach(id, stream)
         activePart = stream.generation
         return id
@@ -68,12 +64,7 @@ internal class BroadcastRecordingRepository(context: Context,
         synchronized(pending) {
             lines.forEach { line ->
                 val key = Triple(id, part, line.sequence)
-                val body = JSONObject().put("part", part).put("sequence", line.sequence)
-                    .put("original", line.sourceText).put("translations", JSONObject(line.translations))
-                    .put("final", line.isFinal).put("monotonicNanos", line.capturedAtElapsedRealtimeNanos)
-                    .put("alignment", line.recordingAlignment.name)
-                    .put("outputState", line.liveOutputState?.name ?: JSONObject.NULL)
-                    .put("endReason", line.liveEndReason?.name ?: JSONObject.NULL).toString()
+                val body = recordedCaptionStorageJson(part, line).toString()
                 if (seen[key] == body) return@forEach
                 if (pending.size >= 1024 && key !in pending) {
                     // The recording continues. Its caption copy has an explicit incomplete marker.
@@ -128,13 +119,7 @@ internal class BroadcastRecordingRepository(context: Context,
         bounded.bufferedReader().useLines { lines -> lines.forEach { raw -> runCatching {
             val row = JSONObject(raw); val key = row.getLong("part") to row.getLong("sequence")
             if (after != null && (key.first < after.first || (key.first == after.first && key.second <= after.second))) return@runCatching
-            val targets = row.getJSONObject("translations")
-            chosen[key] = RecordedCaption(key.first, key.second, row.getString("original"),
-                targets.keys().asSequence().associateWith { targets.getString(it) }, row.getBoolean("final"), row.getLong("monotonicNanos"),
-                // Older Gemini rows already have a native output state but lacked its session ID.
-                if (!row.isNull("outputState") && row.has("outputState")) "NATIVE_PAIR_UNCONFIRMED" else row.getString("alignment"),
-                row.optString("outputState").takeUnless { it == "null" || it.isBlank() },
-                row.optString("endReason").takeUnless { it == "null" || it.isBlank() })
+            chosen[key] = readRecordedCaption(row)
             if (chosen.size > limit) chosen.pollLastEntry()
         } } }
         return chosen.values.toList()
@@ -142,6 +127,7 @@ internal class BroadcastRecordingRepository(context: Context,
 
     fun captionIncomplete(id: String): Boolean = audio.snapshot(id) != null && (id in captionGaps || File(directory, "$id/caption-gap").exists())
     fun history(): List<RecordedBroadcast> = audio.snapshots()
+    fun rename(id: String, title: String): Boolean = audio.rename(id, title)
     fun flush() { worker.submit { drainCaptions() }.get(10, TimeUnit.SECONDS); audio.flush() }
     fun captionFile(id: String): File? = if (audio.snapshot(id) != null) File(directory, "$id/captions.ndjson").takeIf { it.isFile } else null
     fun committedCaptionLength(id: String): Long = captionLengths.getOrPut(id) {
@@ -184,7 +170,8 @@ internal class BroadcastRecordingRepository(context: Context,
                 }
             }
         }
-    fun delete(id: String) {
+    @Synchronized fun delete(id: String) {
+        check(id != activeId) { "Stop broadcast before deleting" }
         flush()
         val recording = audio.snapshot(id)
         check(recording == null || recording.endedAtMillis != null || recording.state == "INTERRUPTED")

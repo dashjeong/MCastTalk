@@ -4,14 +4,19 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
+import android.os.CancellationSignal
 import app.guidecast.core.translation.GlossaryTerm
 import app.guidecast.core.translation.GlossaryTerms
 import java.io.File
 import java.security.MessageDigest
-import java.text.Normalizer
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -25,7 +30,8 @@ class TranslationGlossaryRepository(private val context: Context) {
     private var database: SQLiteDatabase? = null
     val warning = MutableStateFlow<String?>(null)
 
-    private fun database(): SQLiteDatabase {
+    private fun database(checkCancellation: () -> Unit = {}): SQLiteDatabase {
+        checkCancellation()
         database?.let { return it }
         val directory = File(context.filesDir, "glossary").apply { mkdirs() }
         val base = File(directory, "public-20260905.db")
@@ -40,6 +46,7 @@ class TranslationGlossaryRepository(private val context: Context) {
                         val buffer = ByteArray(32 * 1024)
                         var total = 0L
                         while (true) {
+                            checkCancellation()
                             val read = input.read(buffer)
                             if (read < 0) break
                             total += read
@@ -47,6 +54,7 @@ class TranslationGlossaryRepository(private val context: Context) {
                             digest.update(buffer, 0, read)
                             output.write(buffer, 0, read)
                         }
+                        checkCancellation()
                         output.fd.sync()
                         check(total == BASE_BYTES) { "기본 사전이 불완전합니다" }
                     }
@@ -57,6 +65,7 @@ class TranslationGlossaryRepository(private val context: Context) {
                 check(temporary.renameTo(base)) { "기본 사전 저장 실패" }
             } finally { temporary.delete() }
         }
+        checkCancellation()
         val db = SQLiteDatabase.openOrCreateDatabase(File(directory, "user.db"), null)
         try {
             db.execSQL("CREATE TABLE IF NOT EXISTS overrides(src TEXT NOT NULL,lang TEXT NOT NULL,term TEXT NOT NULL,value TEXT NOT NULL,replacement TEXT NOT NULL,category TEXT NOT NULL,origin TEXT NOT NULL,enabled INTEGER NOT NULL,prefix TEXT NOT NULL,alternatives TEXT NOT NULL DEFAULT '',PRIMARY KEY(src,lang,term))")
@@ -69,6 +78,7 @@ class TranslationGlossaryRepository(private val context: Context) {
                 FROM reference.terms b WHERE NOT EXISTS
                 (SELECT 1 FROM overrides u WHERE u.src=b.src AND u.lang=b.lang AND u.term=b.term)
             """.trimIndent())
+            checkCancellation()
             database = db
             return db
         } catch (e: Exception) { db.close(); throw e }
@@ -76,30 +86,75 @@ class TranslationGlossaryRepository(private val context: Context) {
 
     suspend fun matching(text: String, source: String, target: String): List<GlossaryTerm> =
         try {
-            val normalized = Normalizer.normalize(text, Normalizer.Form.NFC)
-            val prefixes = normalized.indices.flatMap { i ->
-                listOf(normalized.substring(i, minOf(i + 2, normalized.length)), normalized.substring(i, i + 1))
-            }.map { it.lowercase(Locale.ROOT) }.distinct()
-            val terms = io {
-                val found = mutableListOf<GlossaryTerm>()
-                prefixes.chunked(200).forEach { chunk ->
-                    database().rawQuery(
-                        "SELECT * FROM effective WHERE src=? AND lang=? AND enabled=1 AND prefix IN (${chunk.joinToString { "?" }})",
-                        (listOf(language(source), language(target)) + chunk).toTypedArray(),
-                    ).use { cursor -> while (cursor.moveToNext()) {
-                        val row = cursor.row()
-                        if (PublicGlossaryHintPolicy.permits(normalized, row.term, row.edited)) {
-                            found.add(row.term)
-                        }
-                    } }
+            val normalized = BoundedGlossaryMatch.normalizedInput(text)
+            if (normalized == null) {
+                warning.value = "긴 문장은 용어 사전 없이 일반 번역을 계속합니다."
+                emptyList()
+            } else {
+                val prefixes = BoundedGlossaryMatch.prefixes(normalized)
+                val terms = if (prefixes.isEmpty()) emptyList() else cancellableMatch { signal, checkCancellation ->
+                    val db = database(checkCancellation)
+                    val pair = listOf(language(source), language(target))
+                    val placeholders = prefixes.joinToString { "?" }
+                    val arguments = (pair + prefixes).toTypedArray()
+                    fun read(table: String, index: String, edited: Boolean): List<GlossaryMatchCandidate> {
+                        checkCancellation()
+                        return db.rawQuery(
+                            "SELECT *,${if (edited) 1 else 0} AS edited FROM $table INDEXED BY $index WHERE src=? AND lang=? AND prefix IN ($placeholders) LIMIT ${BoundedGlossaryMatch.MAX_ROWS_PER_TABLE}",
+                            arguments, signal,
+                        ).use { cursor -> buildList {
+                            while (cursor.moveToNext()) {
+                                checkCancellation()
+                                val row = cursor.row()
+                                add(GlossaryMatchCandidate(row.term, row.edited))
+                            }
+                        } }
+                    }
+                    val overrides = read("overrides", "overlay_lookup", true)
+                    val reference = read("reference.terms", "lookup", false)
+                    if (BoundedGlossaryMatch.saturated(prefixes.size, overrides.size, reference.size)) {
+                        warning.value = "용어 사전 조회 상한에 도달했습니다 · 일부 용어가 생략될 수 있습니다."
+                    }
+                    // All overrides suppress the corresponding reference, including disabled
+                    // overrides outside the bounded prefix candidate page.
+                    val referenceTerms = reference.map { it.term.sourceTerm }.distinct()
+                    val overridden = if (referenceTerms.isEmpty()) emptySet() else {
+                        checkCancellation()
+                        db.rawQuery(
+                            "SELECT term FROM overrides WHERE src=? AND lang=? AND term IN (${referenceTerms.joinToString { "?" }}) LIMIT ${BoundedGlossaryMatch.MAX_ROWS_PER_TABLE}",
+                            (pair + referenceTerms).toTypedArray(), signal,
+                        ).use { cursor -> buildSet {
+                            while (cursor.moveToNext()) { checkCancellation(); add(cursor.getString(0)) }
+                        } }
+                    }
+                    BoundedGlossaryMatch.candidates(overrides, reference, overridden)
+                        .filter { PublicGlossaryHintPolicy.permits(normalized, it.term, it.edited) }.map { it.term }
                 }
-                found.distinctBy { it.sourceTerm }
+                currentCoroutineContext().ensureActive()
+                GlossaryTerms.select(normalized, language(source), language(target), terms)
             }
-            GlossaryTerms.select(normalized, language(source), language(target), terms)
         } catch (e: CancellationException) { throw e }
         catch (e: Exception) {
-            warning.value = "용어 사전 확인 필요 · ${e.message?.take(180)} · 일반 번역은 계속합니다."
+            currentCoroutineContext().ensureActive()
+            warning.value = "용어 사전 확인 필요 · 일반 번역은 계속합니다."
             emptyList()
+        }
+
+    private suspend fun <T> cancellableMatch(block: (CancellationSignal, () -> Unit) -> T): T =
+        withContext(Dispatchers.IO) {
+            lock.withLock {
+                val operationContext = currentCoroutineContext()
+                suspendCancellableCoroutine { continuation ->
+                    val signal = CancellationSignal()
+                    continuation.invokeOnCancellation { signal.cancel() }
+                    try {
+                        operationContext.ensureActive()
+                        continuation.resume(block(signal) { operationContext.ensureActive() })
+                    } catch (failure: Exception) {
+                        continuation.resumeWithException(failure)
+                    }
+                }
+            }
         }
 
     suspend fun search(source: String, target: String, query: String, offset: Int = 0): List<GlossaryRow> = io {

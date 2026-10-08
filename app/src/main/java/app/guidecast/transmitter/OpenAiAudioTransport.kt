@@ -36,6 +36,7 @@ internal class KtorOpenAiAudioWire : OpenAiAudioWire {
                     override suspend fun send(text: String) {
                         currentCoroutineContext().ensureActive(); check(authorized()); session.send(Frame.Text(text))
                     }
+                    override fun abort() { session.cancel() }
                     override suspend fun receive(): String {
                         currentCoroutineContext().ensureActive(); check(authorized())
                         val frame = session.incoming.receive(); check(authorized())
@@ -49,7 +50,8 @@ internal class KtorOpenAiAudioWire : OpenAiAudioWire {
 }
 
 internal fun openAiAudioSetup(model: String, source: String, target: String, domain: String = "",
-    tone: TranslationStyle = TranslationStyle.CONVERSATIONAL, interpreterInstructions: String = "", references: String = ""): String {
+    tone: TranslationStyle = TranslationStyle.CONVERSATIONAL, interpreterInstructions: String = "", references: String = "",
+    liveVoice: RelayVoiceGender = RelayVoiceGender.AUTO): String {
     require(model in OPENAI_REALTIME_MODELS)
     require(source.matches(Regex("[a-z]{2}")))
     val destination = geminiLiveTarget(target)
@@ -63,7 +65,8 @@ internal fun openAiAudioSetup(model: String, source: String, target: String, dom
     val instructions = nativeInterpreterInstructions(destination, tone, domain, interpreterInstructions, references)
     return JSONObject().put("type", "session.update").put("session", JSONObject()
         .put("type", "realtime").put("model", model).put("output_modalities", JSONArray().put("audio"))
-        .put("audio", JSONObject().put("input", input).put("output", JSONObject().put("format", format).put("voice", "marin")))
+        .put("audio", JSONObject().put("input", input).put("output", JSONObject().put("format", format)
+            .put("voice", openAiRelayVoiceName(liveVoice))))
         .put("instructions", instructions).put("tools", JSONArray()).put("max_output_tokens", 2_048)).toString()
 }
 
@@ -130,6 +133,16 @@ internal enum class NativeAudioUsageKind { RESPONSE, TRANSCRIPTION }
 internal class NativeAudioOverload : IllegalStateException("Native audio backlog exceeded")
 internal class NativeAudioIdentityUncertain : IllegalStateException("Expired audio identity cannot be safely admitted")
 
+internal enum class NativeAudioResponseTimeoutStage { REQUEST_SEND, FIRST_AUDIO, COMPLETION, EVENT_CALLBACK }
+internal class NativeAudioResponseTimeout(val stage: NativeAudioResponseTimeoutStage) :
+    IllegalStateException("Native audio response deadline exceeded")
+
+/** Per-request deadlines do not end an idle session or authorize a replacement paid request. */
+internal data class NativeAudioResponseTimeouts(val firstAudioMillis: Long = 30_000L,
+    val completionMillis: Long = 120_000L, val eventCallbackMillis: Long = 5_000L) {
+    init { require(firstAudioMillis > 0 && completionMillis >= firstAudioMillis && eventCallbackMillis > 0) }
+}
+
 /** Recent exact tombstones and a fixed-size older history prevent replay after turn pruning.
  * A filter hit outside the exact window never authorizes another paid response.
  */
@@ -156,14 +169,18 @@ internal data class OpenAiAudioEvent(val inputId: String, val source: String = "
 
 /** One audio upload and one response per committed input. Bounded tombstones prevent paid replay. */
 internal class OpenAiAudioTransport(private val wire: OpenAiAudioWire = KtorOpenAiAudioWire(),
-    private val monotonicMillis: () -> Long = { System.nanoTime() / 1_000_000L }) {
+    private val monotonicMillis: () -> Long = { System.nanoTime() / 1_000_000L },
+    private val responseTimeouts: NativeAudioResponseTimeouts = NativeAudioResponseTimeouts()) {
     suspend fun run(key: String, model: String, source: String, target: String, input: Flow<ByteArray>,
         authorized: () -> Boolean, onReady: () -> Unit, onEvent: suspend (OpenAiAudioEvent) -> Unit,
         domain: String = "", tone: TranslationStyle = TranslationStyle.CONVERSATIONAL,
         onRequest: (inputId: String, sequence: Long, sent: Boolean) -> Unit = { _, _, _ -> },
-        durationLimitMillis: Long? = null, interpreterInstructions: String = "", references: String = ""): Unit = nativeLiveSessionWindow(durationLimitMillis) {
-        val setup = openAiAudioSetup(model, source, target, domain, tone, interpreterInstructions, references)
+        durationLimitMillis: Long? = null, interpreterInstructions: String = "", references: String = "",
+        liveVoice: RelayVoiceGender = RelayVoiceGender.AUTO): Unit = nativeLiveSessionWindow(durationLimitMillis) {
+        val setup = openAiAudioSetup(model, source, target, domain, tone, interpreterInstructions, references, liveVoice)
         check(authorized())
+        val deadlines = NativeAudioDeadlineState(responseTimeouts)
+        try {
         wire.connect(model, key, authorized) { socket ->
             suspend fun send(event: JSONObject) { check(authorized()); socket.send(event.toString()) }
             socket.send(setup)
@@ -214,7 +231,8 @@ internal class OpenAiAudioTransport(private val wire: OpenAiAudioWire = KtorOpen
                 data class Turn(val sequence: Long, var source: String = "", var translation: String = "", var response: String? = null,
                     var retired: Boolean = false, var finished: Boolean = false, var committed: Boolean = false,
                     var sourceFinal: Boolean = false, var translationFinal: Boolean = false, var status: String = "queued",
-                    var sourceFailed: Boolean = false, var sourceExpired: Boolean = false, var finishedAt: Long? = null)
+                    var sourceFailed: Boolean = false, var sourceExpired: Boolean = false, var finishedAt: Long? = null,
+                    var requestedAt: Long? = null, var receivedAudio: Boolean = false, var deadlineGeneration: Long? = null)
                 val turns = linkedMapOf<String, Turn>()
                 // Finished audio and pending transcription have separate, finite lifetimes.
                 val lateSources = linkedMapOf<String, Turn>()
@@ -232,8 +250,11 @@ internal class OpenAiAudioTransport(private val wire: OpenAiAudioWire = KtorOpen
                     status: String? = row.status, usage: OpenAiAudioUsage? = null,
                     usageKind: NativeAudioUsageKind = NativeAudioUsageKind.RESPONSE) {
                     check(authorized())
-                    onEvent(OpenAiAudioEvent(id, row.source, row.translation, row.finished, interrupted, audio, row.response,
-                        status, usage, usageKind, row.sequence, row.sourceFinal, row.sourceFailed, row.sourceExpired, row.translationFinal))
+                    val watching = deadlines.beginCallback(monotonicMillis())
+                    try {
+                        onEvent(OpenAiAudioEvent(id, row.source, row.translation, row.finished, interrupted, audio, row.response,
+                            status, usage, usageKind, row.sequence, row.sourceFinal, row.sourceFailed, row.sourceExpired, row.translationFinal))
+                    } finally { deadlines.completeCallback(watching) }
                 }
                 suspend fun expireSource(id: String, row: Turn) {
                     row.sourceExpired = true
@@ -268,28 +289,63 @@ internal class OpenAiAudioTransport(private val wire: OpenAiAudioWire = KtorOpen
                     expireSources()
                     return Turn(nextSequence++).also { turns[id] = it }
                 }
+                suspend fun failResponseDeadline(failure: NativeAudioResponseTimeout): Nothing {
+                    val id = requireNotNull(activeInput)
+                    val row = turns.getValue(id)
+                    row.retired = true
+                    row.status = "incomplete"
+                    // Termination has already been claimed atomically; no later watch can replace it.
+                    socket.abort()
+                    throw failure
+                }
+                suspend fun checkResponseDeadline() {
+                    val observed = deadlines.observe(monotonicMillis()) ?: return
+                    deadlines.claim(observed)?.let { failResponseDeadline(it) }
+                }
                 suspend fun startNext() {
                     if (activeInput != null) return
                     val id = pending.pollFirst() ?: return
                     val row = turns.getValue(id)
                     activeInput = id
                     row.status = "generating"
+                    row.requestedAt = monotonicMillis()
+                    row.deadlineGeneration = deadlines.beginResponse(requireNotNull(row.requestedAt))
                     emit(id, row, status = "generating")
                     onRequest(id, row.sequence, false)
-                    send(JSONObject().put("type", "response.create").put("response", JSONObject()
-                        .put("conversation", "none").put("output_modalities", JSONArray().put("audio"))
-                        .put("input", JSONArray().put(JSONObject().put("type", "item_reference").put("id", id)))
-                        .put("metadata", JSONObject().put("input_item_id", id)).put("max_output_tokens", 2_048)))
+                    try {
+                        withTimeout(responseTimeouts.firstAudioMillis) {
+                            send(JSONObject().put("type", "response.create").put("response", JSONObject()
+                                .put("conversation", "none").put("output_modalities", JSONArray().put("audio"))
+                                .put("input", JSONArray().put(JSONObject().put("type", "item_reference").put("id", id)))
+                                .put("metadata", JSONObject().put("input_item_id", id)).put("max_output_tokens", 2_048)))
+                        }
+                    } catch (timeout: TimeoutCancellationException) {
+                        currentCoroutineContext().ensureActive()
+                        deadlines.claimRequestSendTimeout(requireNotNull(row.deadlineGeneration))?.let { failResponseDeadline(it) }
+                    }
+                    deadlines.requestSent(requireNotNull(row.deadlineGeneration))
                     onRequest(id, row.sequence, true)
+                }
+                // This child remains runnable while an event consumer is suspended. Its failure cancels
+                // capture/send/receive siblings; abort precedes structured-concurrency cleanup.
+                val watchdog = launch {
+                    while (isActive) {
+                        delay(1_000L)
+                        val observed = deadlines.observe(monotonicMillis()) ?: continue
+                        deadlines.claim(observed)?.let { failure ->
+                            socket.abort()
+                            throw failure
+                        }
+                    }
                 }
                 var incoming = async { socket.receive() }
                 try {
                     while (currentCoroutineContext().isActive) {
-                        check(authorized()); expireSources()
+                        check(authorized()); expireSources(); checkResponseDeadline()
                         // Waiting for metadata expiry never cancels a partially received provider event.
                         val raw = withTimeoutOrNull(1_000L) { incoming.await() } ?: continue
                         incoming = async { socket.receive() }
-                        requireBoundedJson(raw, 262_144); check(authorized())
+                        requireBoundedJson(raw, 262_144); check(authorized()); checkResponseDeadline()
                         val event = JSONObject(raw)
                         if (event.has("event_id")) {
                             if (!seenEvents.add(identity(event, "event_id"))) continue
@@ -350,6 +406,8 @@ internal class OpenAiAudioTransport(private val wire: OpenAiAudioWire = KtorOpen
                                         "response.output_audio.delta" -> {
                                             val bytes = Base64.getDecoder().decode(event.getString("delta"))
                                             require(bytes.isNotEmpty() && bytes.size % 2 == 0 && bytes.size <= 96_000)
+                                            row.receivedAudio = true
+                                            deadlines.audioReceived(requireNotNull(row.deadlineGeneration))
                                             emit(id, row, (bytes.indices step 4_800).map { bytes.copyOfRange(it, minOf(it + 4_800, bytes.size)) })
                                         }
                                         else -> {
@@ -368,6 +426,7 @@ internal class OpenAiAudioTransport(private val wire: OpenAiAudioWire = KtorOpen
                                 val id = responses[rid] ?: if (expiredResponses.possible(rid)) continue else error("Uncorrelated audio completion")
                                 val row = turns.getValue(id)
                                 if (!row.finished) {
+                                    deadlines.completeResponse(requireNotNull(row.deadlineGeneration))
                                     row.finished = true
                                     row.finishedAt = monotonicMillis()
                                     val status = response.getString("status")
@@ -385,8 +444,14 @@ internal class OpenAiAudioTransport(private val wire: OpenAiAudioWire = KtorOpen
                             }
                         }
                     }
-                } finally { incoming.cancel(); sender.cancel(); revocation.cancel() }
+                } finally { watchdog.cancel(); incoming.cancel(); sender.cancel(); revocation.cancel() }
             }
+        }
+        } catch (failure: Exception) {
+            currentCoroutineContext().ensureActive()
+            // Socket cancellation can race a receive failure. Keep the locally established deadline
+            // as the primary cause, while an external stop/revocation still owns its cancellation.
+            throw deadlines.failure ?: failure
         }
     }
 }

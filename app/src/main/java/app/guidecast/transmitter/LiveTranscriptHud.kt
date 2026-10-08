@@ -5,12 +5,12 @@ import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -20,19 +20,25 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import kotlinx.coroutines.flow.collect
 
 // Purpose-specific high-contrast HUD roles; the operator screens retain their daylight theme.
 private val HudBackground = Color.Black
 private val HudSource = Color(0xFF8BE9FD)
 private val HudTranslation = Color(0xFFFFE082)
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun LiveTranscriptHud(
     transcripts: List<TranslationTranscriptLine>,
@@ -40,29 +46,33 @@ internal fun LiveTranscriptHud(
     onBack: () -> Unit,
     onReconnect: (() -> Unit)? = null,
     recoveryMessage: String? = null,
+    sourceLanguageTag: String? = null,
 ) {
     BackHandler(onBack = onBack)
     var controls by rememberSaveable { mutableStateOf(false) }
     var follow by rememberSaveable { mutableStateOf(true) }
     val context = LocalContext.current
     val preferences = remember(context) { context.getSharedPreferences("transcript_hud", android.content.Context.MODE_PRIVATE) }
-    // Display preferences never mutate broadcast targets or request a translation.
-    var selectedLanguages by remember {
-        mutableStateOf(preferences.getStringSet("languages", setOf("source"))!!.toSet())
-    }
-    var size by remember { mutableStateOf(preferences.getInt("size", 32).takeIf { it in listOf(24, 32, 44) } ?: 32) }
-    fun selectLanguage(tag: String, checked: Boolean) {
-        val next = if (checked) selectedLanguages + tag else selectedLanguages - tag
-        if (next.isNotEmpty()) {
-            selectedLanguages = next
-            preferences.edit().putStringSet("languages", next).apply()
-        }
-    }
-    val rows = remember(transcripts) { liveTranscriptDisplayLines(transcripts) }
     val languages = remember(transcripts, targetLanguageTags) {
-        (targetLanguageTags + transcripts.flatMap { it.translations.keys } + (selectedLanguages - "source")).distinct().sorted()
+        transcriptHudLanguageTags(targetLanguageTags, transcripts)
+    }
+    // Display preferences never mutate broadcast targets or request a translation.
+    var showSource by remember {
+        mutableStateOf(preferences.getBoolean("show_source", "source" in
+            preferences.getStringSet("languages", setOf("source")).orEmpty()))
+    }
+    val sourceVisible = showSource || languages.isEmpty()
+    var size by remember { mutableStateOf(preferences.getInt("size", 32).takeIf { it in listOf(24, 32, 44) } ?: 32) }
+    var selectedTranslationTag by rememberSaveable { mutableStateOf<String?>(null) }
+    var languageMenu by remember { mutableStateOf(false) }
+    val groups = remember(transcripts) { relayCaptionPresentation(transcripts).take(100) }
+    val rows = remember(groups, selectedTranslationTag) { relayCaptionDisplayGroups(groups, selectedTranslationTag) }
+    val displayedTranslationLanguages = relayCaptionDisplayLanguages(languages, selectedTranslationTag)
+    LaunchedEffect(languages) {
+        if (selectedTranslationTag != null && selectedTranslationTag !in languages) selectedTranslationTag = null
     }
     val list = rememberLazyListState()
+    var followingScroll by remember { mutableStateOf(false) }
     val view = LocalView.current
     DisposableEffect(view) {
         val window = (view.context as? Activity)?.window
@@ -83,70 +93,122 @@ internal fun LiveTranscriptHud(
             if (oldBehavior != null) bars.systemBarsBehavior = oldBehavior
         }
     }
-    LaunchedEffect(rows, follow, selectedLanguages, size) {
-        if (follow && rows.isNotEmpty()) list.scrollToItem(0)
+    LaunchedEffect(rows, follow, sourceVisible, size) {
+        if (follow && rows.isNotEmpty()) {
+            followingScroll = true
+            try { list.scrollToItem(0) } finally { followingScroll = false }
+        }
+    }
+    LaunchedEffect(list) {
+        snapshotFlow { list.isScrollInProgress && !followingScroll }.collect { manuallyScrolling ->
+            if (manuallyScrolling) follow = false
+        }
     }
     Surface(Modifier.fillMaxSize().semantics { paneTitle = "실시간 스크립트 HUD" }, color = HudBackground) {
-        Box(Modifier.fillMaxSize()) {
-            LazyColumn(state = list, reverseLayout = true,
-                modifier = Modifier.fillMaxSize().pointerInput(Unit) {
+      BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
+        val shortViewport = maxHeight < 360.dp
+        Column(Modifier.fillMaxSize()) {
+            FlowRow(Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (!shortViewport) Text("스크립트", color = Color.White, style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(vertical = 12.dp).semantics { heading() })
+                TextButton(onClick = onBack,
+                    modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).testTag("hud-close")) {
+                    Text("HUD 닫기", color = Color.White)
+                }
+                Box {
+                    TextButton(onClick = { languageMenu = true },
+                        modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).testTag("hud-language-picker")
+                            .semantics {
+                                contentDescription = "표시할 통역 언어 선택"
+                                stateDescription = selectedTranslationTag?.let(::relayCaptionLanguageLabel) ?: "전체"
+                            }) {
+                        Text("언어 · ${selectedTranslationTag?.let(::relayCaptionLanguageLabel) ?: "전체"}", color = HudTranslation)
+                    }
+                    DropdownMenu(expanded = languageMenu, onDismissRequest = { languageMenu = false }) {
+                        DropdownMenuItem(text = { Text("전체") }, onClick = { selectedTranslationTag = null; languageMenu = false })
+                        languages.forEach { tag ->
+                            DropdownMenuItem(text = { Text(relayCaptionLanguageLabel(tag)) },
+                                onClick = { selectedTranslationTag = tag; languageMenu = false })
+                        }
+                    }
+                }
+                TextButton(onClick = { follow = !follow },
+                    modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).testTag("hud-follow-toggle")
+                        .semantics { stateDescription = if (follow) "자동 따라가기 켜짐" else "자동 따라가기 꺼짐" }) {
+                    Text(if (follow) "따라가기 중지" else "실시간 따라가기", color = HudSource)
+                }
+                TextButton(onClick = { controls = true },
+                    modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).testTag("hud-display-settings")
+                        .semantics { contentDescription = "HUD 표시 설정 열기" }) {
+                    Text("설정", color = Color.White)
+                }
+            }
+            if (rows.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Text("아직 표시할 스크립트가 없습니다. 원문·통역문을 수신하면 여기에 표시합니다.",
+                    color = Color.White, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(24.dp))
+            } else LazyColumn(state = list, reverseLayout = true,
+                modifier = Modifier.weight(1f).fillMaxWidth().testTag("hud-transcript-list").pointerInput(Unit) {
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false)
                         follow = false
-                        controls = true
                     }
                 }, contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(28.dp)) {
-                items(rows, key = { it.sequence }) { row ->
+                items(rows, key = { it.id }) { group ->
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        row.liveSegmentLanguage?.let { tag ->
-                            row.liveStatusLabel?.let { Text(it, color = Color.LightGray) }
-                            Text("Live $tag 독립 구간 · 다른 언어와 발화 정렬 미확인", color = Color.LightGray, style = MaterialTheme.typography.labelLarge)
-                            if (row.sourceText.isBlank()) Text("원문 미확인 · 음성 출력만으로 번역 정확도를 확인할 수 없습니다", color = Color.LightGray)
-                        }
-                        if ("source" in selectedLanguages) {
-                            Text("원문 · ${row.sourceLanguageTag ?: "언어 미확인"} · ${if (row.sourceText.isBlank()) "미확인" else if (row.isFinal) "확정" else "인식 중"}",
+                        if (sourceVisible) {
+                            Text("원문 · ${group.sourceLanguageTag ?: sourceLanguageTag ?: "언어 미확인"} · ${if (group.sourceText.isBlank()) "미확인" else group.sourceStatusLabel}",
                                 color = HudSource, style = MaterialTheme.typography.labelLarge)
-                            Text(row.sourceText.ifBlank { "원문 미확인" }, color = HudSource, fontSize = size.sp, lineHeight = (size * 1.4f).sp)
+                            Text(group.sourceText.ifBlank { "원문 미확인" }, color = HudSource, fontSize = size.sp, lineHeight = (size * 1.4f).sp)
                         }
-                        languages.filter { it in selectedLanguages }.forEach { tag ->
-                            Text("번역 · $tag", color = HudTranslation, style = MaterialTheme.typography.labelLarge)
-                            val translated = row.translations[tag]
-                            Text(translated ?: if (row.liveSegmentLanguage != null && tag != row.liveSegmentLanguage) "별도 Live 구간 · 동일 발화 여부 미확인" else if (tag in targetLanguageTags) "미완료 · 번역 결과 없음" else "미완료 · 방송 언어로 선택되지 않음",
-                                color = if (translated == null) Color.LightGray else HudTranslation,
+                        val rowLanguages = if (group.alignment == RelayCaptionAlignment.SHARED_UTTERANCE) displayedTranslationLanguages
+                            else (group.segments.mapNotNull { it.liveSegmentLanguage } + group.translations.keys)
+                                .distinct().filter { it in displayedTranslationLanguages }
+                        rowLanguages.forEach { tag ->
+                            val segment = group.segmentFor(tag)
+                            val translated = group.translations[tag]
+                            Text("번역 · ${relayCaptionLanguageLabel(tag)} · ${segment?.liveOutputState?.label ?: if (segment?.isFinal == true) "완료" else "처리 중"}",
+                                color = HudTranslation, style = MaterialTheme.typography.labelLarge)
+                            Text(translated?.takeIf { it.isNotBlank() } ?: segment?.nativeMissingCaptionLabel(tag) ?: "통역 자막 대기",
+                                color = if (translated.isNullOrBlank()) Color.LightGray else HudTranslation,
                                 fontSize = size.sp, lineHeight = (size * 1.4f).sp)
                         }
+                        group.alignmentNotice?.let { Text(it, color = Color.LightGray, style = MaterialTheme.typography.bodySmall) }
                     }
-                }
-            }
-            if (controls) Surface(Modifier.align(Alignment.TopCenter).fillMaxWidth().safeDrawingPadding(),
-                color = Color(0xFF202020), contentColor = Color.White) {
-                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        TextButton(onClick = onBack) { Text("HUD 닫기", color = Color.White) }
-                        TextButton(onClick = { follow = true; controls = false }) { Text("실시간 따라가기", color = HudSource) }
-                    }
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        (listOf("source") + languages).forEach { tag ->
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Checkbox(checked = tag in selectedLanguages,
-                                    onCheckedChange = { selectLanguage(tag, it) },
-                                    enabled = selectedLanguages.size > 1 || tag !in selectedLanguages)
-                                Text(if (tag == "source") "원문" else "번역 $tag", color = Color.White)
-                            }
-                        }
-                    }
-                    Text("표시 언어만 변경합니다. 추가 번역 요청이나 음성 방송 언어 변경은 없습니다.", style = MaterialTheme.typography.bodySmall)
-                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf(24, 32, 44).forEach { value ->
-                            FilterChip(selected = size == value, onClick = { size = value; preferences.edit().putInt("size", value).apply() },
-                                label = { Text("${value}sp", color = if (size == value) Color.Black else Color.White) })
-                        }
-                        TextButton(onClick = { controls = false }) { Text("읽기", color = Color.White) }
-                    }
-                    if (onReconnect != null) TextButton(onClick = onReconnect) { Text("통역 다시 연결", color = HudTranslation) }
-                    recoveryMessage?.let { Text(it, color = HudTranslation, style = MaterialTheme.typography.bodyMedium) }
                 }
             }
         }
+      }
     }
+    if (controls) AlertDialog(onDismissRequest = { controls = false }, title = { Text("HUD 표시 설정") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("표시 언어와 글씨만 변경합니다. 번역 요청이나 음성 방송 설정은 바뀌지 않습니다.",
+                    style = MaterialTheme.typography.bodySmall)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = sourceVisible, enabled = languages.isNotEmpty(),
+                        onClick = { showSource = !showSource; preferences.edit().putBoolean("show_source", showSource).apply() },
+                        label = { Text("원문 보기") }, modifier = Modifier.sizeIn(minHeight = 48.dp))
+                    FilterChip(selected = follow, onClick = { follow = !follow },
+                        label = { Text(if (follow) "따라가기 켜짐" else "따라가기 꺼짐") },
+                        modifier = Modifier.sizeIn(minHeight = 48.dp).testTag("hud-follow-setting"))
+                }
+                Text("글씨 크기", style = MaterialTheme.typography.titleSmall)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(24 to "작게", 32 to "보통", 44 to "크게").forEach { (value, label) ->
+                        FilterChip(selected = size == value,
+                            onClick = { size = value; preferences.edit().putInt("size", value).apply() },
+                            label = { Text(label) }, modifier = Modifier.sizeIn(minHeight = 48.dp))
+                    }
+                }
+                if (onReconnect != null) TextButton(onClick = onReconnect) { Text("통역 다시 연결") }
+                recoveryMessage?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+            }
+        }, confirmButton = { TextButton(onClick = { controls = false }) { Text("닫기") } })
 }
+
+internal fun transcriptHudLanguageTags(targetLanguageTags: List<String>, transcripts: List<TranslationTranscriptLine>): List<String> =
+    (targetLanguageTags + transcripts.flatMap { it.translations.keys }).filter { it.isNotBlank() }.distinct().sorted()
+
+internal fun transcriptHudSelection(selected: Set<String>, languages: List<String>): Set<String> =
+    selected.intersect((languages + "source").toSet()).ifEmpty { setOf("source") }

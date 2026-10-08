@@ -28,6 +28,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.resume
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.ProducerScope
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -127,6 +128,7 @@ class AudioCaptureEngine(
     val routeController: BluetoothAudioRouteController = BluetoothAudioRouteController(context),
 ) {
     private val appContext = context.applicationContext
+    private val captureLifetime = AudioCaptureLifetime()
     private val audioManager = appContext
         .getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val mutableProcessingStatus = MutableStateFlow(AudioProcessingStatus())
@@ -141,7 +143,7 @@ class AudioCaptureEngine(
     fun frames(
         preferredDeviceId: Int?,
         config: AudioCaptureConfig = AudioCaptureConfig(),
-    ): Flow<PcmFrame> = callbackFlow {
+    ): Flow<PcmFrame> = captureFlow {
         require(config.noiseMode != MicrophoneNoiseMode.AI || config.sampleRateHz == 16_000)
         val captureRate = if (config.noiseMode == MicrophoneNoiseMode.AI) 48_000 else config.sampleRateHz
         val minBufferBytes = AudioRecord.getMinBufferSize(
@@ -152,8 +154,13 @@ class AudioCaptureEngine(
         check(minBufferBytes > 0) { "Unsupported audio capture format: $minBufferBytes" }
 
         val routeLease = routeController.acquireRoute(preferredDeviceId)
-        val platformDevice = routeLease.activeInput?.rawDeviceInfo
-            ?: preferredDeviceId?.let(::findInputDevice)
+        val platformDevice = try {
+            (routeLease.activeInput?.rawDeviceInfo ?: preferredDeviceId?.let(::findInputDevice)).also {
+                requireSelectedMicrophoneAvailable(preferredDeviceId, it?.let(::AndroidPlatformAudioDeviceInfo))
+            }
+        } catch (missing: Throwable) { routeLease.close(); throw missing }
+        val expectedNonBluetoothInput = platformDevice?.takeUnless { routeLease.isBluetooth }
+            ?.let(::AndroidPlatformAudioDeviceInfo)
         val recorder = try {
             AudioRecord.Builder()
                 .setAudioSource(platformDevice.captureAudioSource(isBluetoothRoute = routeLease.isBluetooth))
@@ -176,7 +183,7 @@ class AudioCaptureEngine(
             if (!preferredSet && !routeLease.isBluetooth) {
                 recorder.release()
                 routeLease.close()
-                throw BluetoothRouteException.DeviceMismatch("Android rejected audio input device ${platformDevice.id}")
+                throw NonBluetoothMicrophoneRouteException(NonBluetoothMicrophoneRouteFailure.PREFERRED_DEVICE_REJECTED)
             }
         }
         check(recorder.state == AudioRecord.STATE_INITIALIZED) {
@@ -207,6 +214,8 @@ class AudioCaptureEngine(
                 requestedInput = routeLease.requestedInput,
                 getRoutedDevice = { recorder.routedDevice?.let(::AndroidPlatformAudioDeviceInfo) },
             )
+            awaitNonBluetoothMicrophoneRoute(expectedNonBluetoothInput,
+                getRoutedDevice = { recorder.routedDevice?.let(::AndroidPlatformAudioDeviceInfo) })
         } catch (mismatch: Throwable) {
             effects.close()
             runCatching { recorder.stop() }
@@ -240,6 +249,7 @@ class AudioCaptureEngine(
         val routingListener = AudioRecord.OnRoutingChangedListener { record ->
             try {
                 routeController.verifyRoutedDevice(routeLease.requestedInput, record.routedDevice)
+                verifyNonBluetoothMicrophoneRoute(expectedNonBluetoothInput, record.routedDevice?.let(::AndroidPlatformAudioDeviceInfo))
                 captureDiagnostics.route(record.routedDevice?.type)
                 publishDiagnostics()
                 focusStatus.set(focusForCurrentRoute())
@@ -311,7 +321,9 @@ class AudioCaptureEngine(
             var lastDiagnosticNanos = 0L
             while (true) {
                 captureDiagnostics.beginRead(SystemClock.elapsedRealtimeNanos())
-                val count = recorder.read(buffer, 0, buffer.size, AudioRecord.READ_BLOCKING)
+                val count = readCapturePcm {
+                    recorder.read(buffer, 0, buffer.size, AudioRecord.READ_NON_BLOCKING)
+                }
                 val now = SystemClock.elapsedRealtimeNanos()
                 fun heartbeat() {
                     if (now - lastDiagnosticNanos >= 1_000_000_000L) {
@@ -321,20 +333,23 @@ class AudioCaptureEngine(
                     }
                 }
                 if (count > 0) {
-                    val raw = buffer.copyOf(count)
-                    captureDiagnostics.read(raw, buffer.size, now)
-                    val aligned = readAssembler.accept(raw, raw.size)
-                    val bytes = denoiser?.process(aligned) ?: aligned
-                    captureDiagnostics.emitted(bytes)
-                    heartbeat()
-                    if (bytes.isEmpty()) continue
-                    send(
-                        PcmFrame(
-                            bytes = bytes,
-                            sampleRateHz = config.sampleRateHz,
-                            capturedAtElapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos(),
-                        ),
-                    )
+                    try {
+                        withVerifiedNonBluetoothMicrophoneRoute(expectedNonBluetoothInput,
+                            getRoutedDevice = { recorder.routedDevice?.let(::AndroidPlatformAudioDeviceInfo) }) {
+                            val raw = buffer.copyOf(count)
+                            captureDiagnostics.read(raw, buffer.size, now)
+                            val aligned = readAssembler.accept(raw, raw.size)
+                            val bytes = denoiser?.process(aligned) ?: aligned
+                            heartbeat()
+                            if (bytes.isNotEmpty()) {
+                                captureDiagnostics.emitted(bytes)
+                                send(PcmFrame(bytes, config.sampleRateHz, SystemClock.elapsedRealtimeNanos()))
+                            }
+                        }
+                    } catch (mismatch: NonBluetoothMicrophoneRouteException) {
+                        close(mismatch)
+                        break
+                    }
                 } else if (count < 0) {
                     captureDiagnostics.emptyRead(error = true, now = now)
                     publishDiagnostics()
@@ -347,21 +362,30 @@ class AudioCaptureEngine(
             }
         }
 
-        awaitClose {
-            if (callbackRegistered) runCatching { recorder.unregisterAudioRecordingCallback(recordingCallback) }
-            recorder.removeOnRoutingChangedListener(routingListener)
-            readJob.cancel()
-            runCatching { recorder.stop() }
-            captureDiagnostics.close(readAssembler.pendingBytes, denoiser?.pendingInputBytes() ?: 0)
-            publishDiagnostics()
-            denoiser?.close()
-            effects.close()
-            recorder.release()
-            routeLease.close()
-            if (processingGeneration.compareAndSet(processingSession, processingSession + 1)) {
-                mutableProcessingStatus.value = AudioProcessingStatus()
-                mutableClientSilenced.value = false
-            }
+        try { awaitClose() }
+        finally {
+            shutDownCaptureReadWorker(readJob,
+                stopRead = {
+                    if (callbackRegistered) runCatching { recorder.unregisterAudioRecordingCallback(recordingCallback) }
+                    runCatching { recorder.removeOnRoutingChangedListener(routingListener) }
+                    recorder.stop()
+                },
+                releaseAfterWorker = {
+                    try {
+                        captureDiagnostics.close(readAssembler.pendingBytes, denoiser?.pendingInputBytes() ?: 0)
+                        publishDiagnostics()
+                    } finally {
+                        runCatching { denoiser?.close() }
+                        effects.close()
+                        runCatching { recorder.release() }
+                        runCatching { routeLease.close() }
+                        if (processingGeneration.compareAndSet(processingSession, processingSession + 1)) {
+                            mutableProcessingStatus.value = AudioProcessingStatus()
+                            mutableClientSilenced.value = false
+                        }
+                    }
+                },
+            )
         }
     // Keep only a short, lossless hand-off reserve. A deep/drop-oldest capture queue masks CPU
     // overload by deleting sentence onsets and then playing increasingly stale recognition input.
@@ -377,7 +401,7 @@ class AudioCaptureEngine(
         mediaProjection: MediaProjection,
         targetUid: Int? = null,
         config: AudioCaptureConfig = AudioCaptureConfig(),
-    ): Flow<PcmFrame> = callbackFlow {
+    ): Flow<PcmFrame> = captureFlow {
         val minBufferBytes = AudioRecord.getMinBufferSize(
             config.sampleRateHz,
             AudioFormat.CHANNEL_IN_MONO,
@@ -426,7 +450,9 @@ class AudioCaptureEngine(
         val readJob = launch(Dispatchers.IO) {
             val buffer = ByteArray(minBufferBytes)
             while (true) {
-                val count = recorder.read(buffer, 0, buffer.size, AudioRecord.READ_BLOCKING)
+                val count = readCapturePcm {
+                    recorder.read(buffer, 0, buffer.size, AudioRecord.READ_NON_BLOCKING)
+                }
                 if (count > 0) {
                     send(
                         PcmFrame(
@@ -442,15 +468,22 @@ class AudioCaptureEngine(
             }
         }
 
-        awaitClose {
-            readJob.cancel()
-            runCatching { recorder.stop() }
-            recorder.release()
-            if (processingGeneration.compareAndSet(processingSession, processingSession + 1)) {
-                mutableProcessingStatus.value = AudioProcessingStatus()
-            }
+        try { awaitClose() }
+        finally {
+            shutDownCaptureReadWorker(readJob,
+                stopRead = recorder::stop,
+                releaseAfterWorker = {
+                    runCatching { recorder.release() }
+                    if (processingGeneration.compareAndSet(processingSession, processingSession + 1)) {
+                        mutableProcessingStatus.value = AudioProcessingStatus()
+                    }
+                },
+            )
         }
     }.buffer(capacity = CAPTURE_HANDOFF_FRAMES)
+
+    private fun captureFlow(block: suspend ProducerScope<PcmFrame>.() -> Unit): Flow<PcmFrame> =
+        callbackFlow { captureLifetime.withSession { block(this@callbackFlow) } }
 
     private fun findInputDevice(id: Int): AudioDeviceInfo? = audioManager
         .getDevices(AudioManager.GET_DEVICES_INPUTS)

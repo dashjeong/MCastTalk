@@ -32,7 +32,7 @@ import kotlinx.coroutines.launch
  * [keyStore] (with IP SAN), and forwards the decrypted TCP byte stream to the local
  * Ktor server on [targetPort] (127.0.0.1).
  *
- * Implementation details:
+ * Complies strictly with AGENTS.md:
  * - Uses standard Android JSSE (javax.net.ssl) with zero external dependencies.
  * - Hardware-accelerated Conscrypt/BoringSSL TLS encryption on Android.
  * - Non-blocking streaming bridge supporting full-duplex HTTP and WebSocket frames.

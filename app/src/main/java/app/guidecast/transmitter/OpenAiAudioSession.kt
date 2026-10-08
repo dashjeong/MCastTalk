@@ -12,6 +12,8 @@ internal interface LiveAudioSession : java.io.Closeable {
     fun offer(frame: PcmAudioFrame)
 }
 
+internal fun openAiAudioTurnSequence(sequenceBase: Long, inputSequence: Long): Long = sequenceBase + inputSequence
+
 /** Covers a frame already dequeued by a playback worker when its turn is cancelled. */
 internal class NativeAudioRetiredTurns {
     private val retired = linkedSetOf<Long>()
@@ -43,9 +45,10 @@ internal class NativeAudioTermination(private val onEnded: (NativeAudioEndReason
     private val requested = java.util.concurrent.atomic.AtomicReference<NativeAudioEndReason?>(null)
     private val ended = java.util.concurrent.atomic.AtomicBoolean(false)
     val isEnded: Boolean get() = ended.get()
+    val reason: NativeAudioEndReason get() = requested.get() ?: NativeAudioEndReason.FAILURE
     fun request(reason: NativeAudioEndReason) { requested.compareAndSet(null, reason) }
     fun failed(failure: Throwable, authorized: Boolean = true, active: Boolean = true) = request(when {
-        failure is TimeoutCancellationException -> NativeAudioEndReason.TIMEOUT
+        failure is TimeoutCancellationException || failure is NativeAudioResponseTimeout -> NativeAudioEndReason.TIMEOUT
         failure is NativeAudioOverload -> NativeAudioEndReason.OVERLOAD
         !authorized -> NativeAudioEndReason.CONSENT_REVOKED
         !active -> NativeAudioEndReason.SESSION_ENDED
@@ -53,7 +56,7 @@ internal class NativeAudioTermination(private val onEnded: (NativeAudioEndReason
         else -> NativeAudioEndReason.FAILURE
     })
     fun finish() {
-        if (ended.compareAndSet(false, true)) onEnded(requested.get() ?: NativeAudioEndReason.FAILURE)
+        if (ended.compareAndSet(false, true)) onEnded(reason)
     }
 }
 
@@ -148,13 +151,13 @@ internal class NativeAudioEventRouter(
 }
 
 internal class OpenAiAudioSegments(private val target: String, private val source: String,
-    private val sessionId: Long? = null) {
+    private val sessionId: Long? = null, private val sequenceBase: Long = 2_000_000_000L) {
     private val identities = linkedMapOf<String, Pair<Long, Long>>()
     private var nextSequence = 0L
     @Synchronized fun accept(event: OpenAiAudioEvent, now: Long): TranslationTranscriptLine {
         val (sequence, started) = identities.getOrPut(event.inputId) {
             while (identities.size >= 2048) identities.remove(identities.keys.first())
-            (2_000_000_000L + (event.inputSequence ?: nextSequence++)) to now
+            openAiAudioTurnSequence(sequenceBase, event.inputSequence ?: nextSequence++) to now
         }
         return TranslationTranscriptLine(sequence, event.source, started,
             event.finished && event.sourceFinal && !event.sourceFailed && !event.sourceExpired && !event.interrupted && event.status == "completed",
@@ -192,8 +195,10 @@ internal class OpenAiAudioSession(
     private val onDiagnostic: (ServiceFlowAction) -> Unit = {},
     transport: OpenAiAudioTransport = OpenAiAudioTransport(),
     private val references: NativeReferenceSnapshot = NativeReferenceSnapshot(),
+    private val sequenceBase: Long = 2_000_000_000L,
 ) : LiveAudioSession {
     private val sessionId = UUID.randomUUID().toString()
+    private val diagnosticTarget = geminiLiveTarget(target)
     private val termination = NativeAudioTermination(onEnded)
     private val ready = CompletableDeferred<Unit>()
     private var responses = 0L
@@ -208,7 +213,7 @@ internal class OpenAiAudioSession(
     }, discarded = { monitor.loss(target, LiveAudioLoss.OUTPUT_BLOCKED, it) })
     private val router = NativeAudioEventRouter(output,
         onCancelled = { event ->
-            onTurnInterrupted(2_000_000_000L + requireNotNull(event.inputSequence))
+            onTurnInterrupted(openAiAudioTurnSequence(sequenceBase, requireNotNull(event.inputSequence)))
         }, onTranscript = { event ->
             if (event.sourceFailed || event.sourceExpired) {
                 onDiagnostic(if (event.sourceExpired) ServiceFlowAction.LIVE_CAPTION_EXPIRED else ServiceFlowAction.LIVE_CAPTION_FAILED)
@@ -230,6 +235,7 @@ internal class OpenAiAudioSession(
             RuntimeDiagnosticLog.durableRecord("native_audio_usage", org.json.JSONObject().put("provider", "OPENAI_REALTIME")
                 .put("model", options.model.takeIf { it in OPENAI_REALTIME_MODELS } ?: "CUSTOM")
                 .put("session_id", sessionId).put("input_sequence", event.inputSequence ?: org.json.JSONObject.NULL)
+                .put("target", diagnosticTarget)
                 .put("response_index", responses).put("kind", event.usageKind.name)
                 .put("measurement_status", if (event.sourceExpired && event.usageKind == NativeAudioUsageKind.TRANSCRIPTION)
                     "EXPIRED" else if (usage == null) "UNKNOWN" else "PROVIDER_REPORTED")
@@ -258,6 +264,7 @@ internal class OpenAiAudioSession(
             RuntimeDiagnosticLog.durableRecord("native_audio_connection", org.json.JSONObject().put("provider", "OPENAI_REALTIME")
                 .put("model", options.model.takeIf { it in OPENAI_REALTIME_MODELS } ?: "CUSTOM")
                 .put("session_id", sessionId).put("settings_revision", options.revision)
+                .put("target", diagnosticTarget)
                 .put("stage", "SESSION_ATTEMPT").put("actual_usage", org.json.JSONObject.NULL).toString())
             coroutineScope {
                 val publisher = launch { output.run() }
@@ -275,9 +282,9 @@ internal class OpenAiAudioSession(
                             while (requests.size > 128) requests.remove(requests.keys.first())
                             if (sent) requestsSent++ else requestAttempts++
                             RuntimeDiagnosticLog.durableRecord("native_audio_request", "session_id=$sessionId input_sequence=$sequence " +
-                                "phase=${if (sent) "SENT" else "ATTEMPT"} target_count=1")
+                                "phase=${if (sent) "SENT" else "ATTEMPT"} target=$diagnosticTarget target_count=1")
                         }, interpreterInstructions = options.interpreterInstructions,
-                        references = if (options.allowDomainReferences) references.payload else "")
+                        references = if (options.allowDomainReferences) references.payload else "", liveVoice = options.liveVoice)
                 } finally { output.close(); publisher.cancel() }
             }
         } catch (cancelled: CancellationException) {
@@ -288,15 +295,20 @@ internal class OpenAiAudioSession(
             termination.failed(failure, settings.authorized(options), allowed())
             onInterrupted()
             onFailure(if (failure is NativeAudioIdentityUncertain) "오래된 발화 식별을 확인할 수 없어 중지했습니다. 다시 시작하세요. 이전 음성을 자동 재전송하지 않습니다."
+                else if (failure is NativeAudioResponseTimeout) "OpenAI 통역 처리 시간 초과 · 해당 언어 연결을 종료했습니다. 다시 시작하세요. 음성을 자동 재전송하지 않습니다."
                 else if (failure is NativeAudioOverload) "OpenAI 통역 대기열 초과 · 미완료 통역이 있어 중지했습니다. 음성을 자동 재전송하지 않습니다."
                 else "OpenAI 음성 통역 중지 · ${onlineConnectionFailureResult(failure).message} 미전송 음성은 재전송하지 않습니다.")
-            RuntimeDiagnosticLog.record("native_audio", "session_id=$sessionId state=FAILED responses=$responses")
+            val failed = termination.reason in setOf(NativeAudioEndReason.FAILURE,
+                NativeAudioEndReason.TIMEOUT, NativeAudioEndReason.OVERLOAD)
+            RuntimeDiagnosticLog.record("native_audio", "session_id=$sessionId target=$diagnosticTarget " +
+                "state=${if (failed) "FAILED" else "ENDED"} reason=${termination.reason.name} responses=$responses")
         } finally {
             termination.finish()
             if (!ready.isCompleted) ready.completeExceptionally(IllegalStateException("Audio preparation incomplete"))
             input.close(); output.close(); onInterrupted(); onDiagnostic(ServiceFlowAction.LIVE_CLOSED)
-            RuntimeDiagnosticLog.record("native_audio_session", "session_id=$sessionId attempts=$requestAttempts " +
-                "sent=$requestsSent responses=$responses transcriptions=$transcriptions final_usage=UNKNOWN", true)
+            RuntimeDiagnosticLog.durableRecord("native_audio_session", "session_id=$sessionId target=$diagnosticTarget attempts=$requestAttempts " +
+                "sent=$requestsSent responses=$responses transcriptions=$transcriptions " +
+                "end_reason=${termination.reason.name} final_usage=UNKNOWN")
             monitor.update { it.copy(state = "OpenAI $target 중지 · 최종 사용량 미확인",
                 unknownSessions = it.unknownSessions + if (connected) 1 else 0) }
         }

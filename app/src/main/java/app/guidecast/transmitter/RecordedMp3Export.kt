@@ -38,7 +38,7 @@ private class NativeRecordedMp3Encoder(rate: Int) : RecordedMp3Encoder {
 internal data class RecordedAudioChoice(val channel: String, val rate: Int) {
     val key: String get() = "$channel-$rate"
     val label: String get() = if (channel == "source") "원음" else
-        "${java.util.Locale.forLanguageTag(channel).getDisplayLanguage(java.util.Locale.KOREAN)} 통역"
+        "${recordedChannelDisplayName(channel, channel)} 통역"
     val fileLabel: String get() = "$key.mp3"
 }
 internal fun recordedAudioChoices(segments: List<RecordedPcmSegment>): List<RecordedAudioChoice> =

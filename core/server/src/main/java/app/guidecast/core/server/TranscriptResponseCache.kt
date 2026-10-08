@@ -110,7 +110,10 @@ private fun GuideCastTranscriptLine.matchesProjection(
         sequence != providerLine.sequence ||
         sourceText != providerLine.sourceText ||
         isFinal != providerLine.isFinal ||
-        capturedAtElapsedRealtimeNanos != providerLine.capturedAtElapsedRealtimeNanos
+        capturedAtElapsedRealtimeNanos != providerLine.capturedAtElapsedRealtimeNanos ||
+        liveSegmentLanguage != providerLine.liveSegmentLanguage ||
+        liveOutputState != providerLine.liveOutputState ||
+        displayGroupSequence != providerLine.displayGroupSequence
     ) {
         return false
     }
@@ -120,13 +123,10 @@ private fun GuideCastTranscriptLine.matchesProjection(
             firstAudioLatencyMillis == providerLine.firstAudioLatencyMillis &&
             synthesisLatencyMillis == providerLine.synthesisLatencyMillis
     }
-    return translations[requestedChannel] == providerLine.translations[requestedChannel] &&
-        translationLatencyMillis[requestedChannel] ==
-        providerLine.translationLatencyMillis[requestedChannel] &&
-        firstAudioLatencyMillis[requestedChannel] ==
-        providerLine.firstAudioLatencyMillis[requestedChannel] &&
-        synthesisLatencyMillis[requestedChannel] ==
-        providerLine.synthesisLatencyMillis[requestedChannel]
+    return translations == providerLine.translations.copyEntry(requestedChannel) &&
+        translationLatencyMillis == providerLine.translationLatencyMillis.copyEntry(requestedChannel) &&
+        firstAudioLatencyMillis == providerLine.firstAudioLatencyMillis.copyEntry(requestedChannel) &&
+        synthesisLatencyMillis == providerLine.synthesisLatencyMillis.copyEntry(requestedChannel)
 }
 
 private fun GuideCastTranscriptLine.frozenProjection(
@@ -148,7 +148,7 @@ private fun GuideCastTranscriptLine.frozenProjection(
 }
 
 private fun <Value : Any> Map<String, Value>.copyEntry(key: String): Map<String, Value> =
-    get(key)?.let { value -> mapOf(key to value) } ?: emptyMap()
+    filterKeys { it.equals(key, ignoreCase = true) }
 
 private fun ByteArray.strongSha256Etag(): String {
     val digest = MessageDigest.getInstance("SHA-256").digest(this)

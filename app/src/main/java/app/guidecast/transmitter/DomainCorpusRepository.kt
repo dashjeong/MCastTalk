@@ -186,8 +186,12 @@ open class DomainCorpusRepository internal constructor(
                 val snapshot = publishedIndex
                 val active = snapshot.profiles[normalizeSourceLanguageTag(source) to normalizeTargetLanguageTag(target)]
                     ?.takeIf { style == TranslationStyle.AUTO || it.profile.style == TranslationStyle.AUTO || it.profile.style == style }
-                active?.pairs?.take(3)?.forEach { pair -> entries += NativeReferenceEntry(active.profile.name,
-                    "TRANSLATION_EXAMPLE", "원문: ${pair.sourceText}\n번역: ${pair.targetText}") }
+                active?.pairs?.take(3)?.forEach { pair ->
+                    val exampleStyle = pair.reviewedStyle ?: active.profile.style
+                    if (style == TranslationStyle.AUTO || exampleStyle == TranslationStyle.AUTO || style == exampleStyle)
+                        entries += NativeReferenceEntry(active.profile.name,
+                            "TRANSLATION_EXAMPLE", "원문: ${pair.sourceText}\n번역: ${pair.targetText}")
+                }
                 val prepared = prepareNativeReferencePayload(entries)
                 NativeReferenceSnapshot(prepared.payload, prepared.includedEntries, documents + (active?.pairs?.size ?: 0),
                     mutableReferenceRevision.value, snapshot.revision, prepared.omittedTermLines)
@@ -200,12 +204,13 @@ open class DomainCorpusRepository internal constructor(
         val targetText: String,
         val sourceNfcTrimmed: String,
         val tokens: Set<String>,
+        val reviewedStyle: TranslationStyle? = null,
     )
 
     private data class CachedActiveProfile(
         val profile: DomainCorpusProfile,
         val pairs: List<CachedPair>,
-        val exactMap: Map<String, String>,
+        val exactMap: Map<String, CachedPair>,
         val lexicalIndex: BoundedDomainLexicalIndex,
     )
 
@@ -333,7 +338,7 @@ open class DomainCorpusRepository internal constructor(
         }
     }
 
-    /** Copy the active profile for review; preserve its original rows. */
+    /** PoC review workflow: copy the active profile; never overwrite its original rows. */
     suspend fun applyReviewedComparison(comparison: ShadowComparison, corrected: String,
         humanReviewed: Boolean, nativeAdmission: NativeComparisonCommitAdmission? = null): DomainLearningRevision = withContext(indexDispatcher) {
         require(comparison.nativeIdentity == null || nativeAdmission != null) { "중계 예문의 현재 검수 권한을 확인하세요." }
@@ -347,10 +352,12 @@ open class DomainCorpusRepository internal constructor(
             check(comparison.style == TranslationStyle.AUTO || active.profile.style == TranslationStyle.AUTO || comparison.style == active.profile.style) {
                 "비교 문체와 활성 자료의 문체가 다릅니다."
             }
-            val pairs = active.pairs.filterNot { it.sourceNfcTrimmed == pair.normalizedSource }
-                .map { it.sourceText to it.targetText } + (pair.original to pair.corrected)
+            val pairs = active.pairs.filterNot { it.sourceNfcTrimmed == pair.normalizedSource } +
+                CachedPair(pair.original, pair.corrected, pair.normalizedSource,
+                    extractMeaningfulTokens(pair.normalizedSource),
+                    comparison.style.takeUnless { it == TranslationStyle.AUTO })
             check(pairs.size <= DomainCorpusFormat.MAX_PAIRS)
-            val serialized = pairs.joinToString("\n", postfix = "\n") { it.first + "\t" + it.second }
+            val serialized = pairs.joinToString("\n", postfix = "\n") { it.sourceText + "\t" + it.targetText }
             check(DomainCorpusFormat.parseAndValidate(serialized.byteInputStream()) is DomainCorpusFormat.ParseResult.Success) {
                 "자료 용량 또는 예문 형식을 확인하세요."
             }
@@ -365,10 +372,11 @@ open class DomainCorpusRepository internal constructor(
                     put("source_lang", source); put("target_lang", target); put("style", active.profile.style.name)
                     put("pair_count", pairs.size); put("active", 0); put("created_at", System.currentTimeMillis())
                 })
-                db.compileStatement("INSERT INTO domain_pairs (profile_id, source_text, target_text, source_nfc) VALUES (?, ?, ?, ?)").use { statement ->
-                    pairs.forEach { (original, translated) ->
-                        statement.bindLong(1, newId); statement.bindString(2, original); statement.bindString(3, translated)
-                        statement.bindString(4, Normalizer.normalize(original.trim(), Normalizer.Form.NFC))
+                db.compileStatement("INSERT INTO domain_pairs (profile_id, source_text, target_text, source_nfc, reviewed_style) VALUES (?, ?, ?, ?, ?)").use { statement ->
+                    pairs.forEach { saved ->
+                        statement.bindLong(1, newId); statement.bindString(2, saved.sourceText); statement.bindString(3, saved.targetText)
+                        statement.bindString(4, saved.sourceNfcTrimmed)
+                        if (saved.reviewedStyle == null) statement.bindNull(5) else statement.bindString(5, saved.reviewedStyle.name)
                         statement.executeInsert(); statement.clearBindings()
                     }
                 }
@@ -523,11 +531,10 @@ open class DomainCorpusRepository internal constructor(
 
             // 1. Exact substitution: only active matching domain/language + style and NFC+trim exact whole source
             // Current request style authoritative; exact only same style or request AUTO. Never fuzzy or ASR correction.
-            if (style == TranslationStyle.AUTO || style == active.profile.style) {
-                val exact = active.exactMap[normalized]
-                if (exact != null) {
-                    return@withContext DomainCorpusMatch(exactTranslation = exact, hints = "", revision = snapshot.revision)
-                }
+            val exact = active.exactMap[normalized]
+            val exactStyle = exact?.reviewedStyle ?: active.profile.style
+            if (exact != null && (style == TranslationStyle.AUTO || style == exactStyle)) {
+                return@withContext DomainCorpusMatch(exactTranslation = exact.targetText, hints = "", revision = snapshot.revision)
             }
 
             // If request style is specific and conflicts with profile style, do not provide mismatched style hints
@@ -549,6 +556,7 @@ open class DomainCorpusRepository internal constructor(
             if (inputTokens.isNotEmpty()) {
                 for (id in candidateIds) {
                     val cand = active.pairs[id]
+                    if (style != TranslationStyle.AUTO && cand.reviewedStyle != null && cand.reviewedStyle != style) continue
                     val intersectionSize = cand.tokens.count { it in inputTokens }
                     if (intersectionSize == 0) continue
 
@@ -639,25 +647,25 @@ open class DomainCorpusRepository internal constructor(
         val map = HashMap<Pair<String, String>, CachedActiveProfile>()
         for (profile in activeProfiles) {
             val pairs = ArrayList<CachedPair>()
-            val exactMap = HashMap<String, String>()
+            val exactMap = HashMap<String, CachedPair>()
 
             db.rawQuery(
-                "SELECT source_text, target_text, source_nfc FROM domain_pairs WHERE profile_id = ?",
+                "SELECT source_text, target_text, source_nfc, reviewed_style FROM domain_pairs WHERE profile_id = ?",
                 arrayOf(profile.id.toString()),
             ).use { pc ->
                 while (pc.moveToNext()) {
                     val sText = pc.getString(0)
                     val tText = pc.getString(1)
                     val sNfc = pc.getString(2)
-                    exactMap[sNfc] = tText
-                    pairs.add(
-                        CachedPair(
-                            sourceText = sText,
-                            targetText = tText,
-                            sourceNfcTrimmed = sNfc,
-                            tokens = extractMeaningfulTokens(sNfc),
-                        )
+                    val saved = CachedPair(
+                        sourceText = sText,
+                        targetText = tText,
+                        sourceNfcTrimmed = sNfc,
+                        tokens = extractMeaningfulTokens(sNfc),
+                        reviewedStyle = if (pc.isNull(3)) null else TranslationStyle.valueOf(pc.getString(3)),
                     )
+                    exactMap[sNfc] = saved
+                    pairs.add(saved)
                 }
             }
 
@@ -723,19 +731,18 @@ open class DomainCorpusRepository internal constructor(
         rawPairs: List<Pair<String, String>>,
     ) {
         val pairs = ArrayList<CachedPair>()
-        val exactMap = HashMap<String, String>()
+        val exactMap = HashMap<String, CachedPair>()
         for ((s, t) in rawPairs) {
             val sNfc = Normalizer.normalize(s.trim(), Normalizer.Form.NFC).trim()
             val tTrimmed = t.trim()
-            exactMap[sNfc] = tTrimmed
-            pairs.add(
-                CachedPair(
-                    sourceText = s.trim(),
-                    targetText = tTrimmed,
-                    sourceNfcTrimmed = sNfc,
-                    tokens = extractMeaningfulTokens(sNfc),
-                )
+            val saved = CachedPair(
+                sourceText = s.trim(),
+                targetText = tTrimmed,
+                sourceNfcTrimmed = sNfc,
+                tokens = extractMeaningfulTokens(sNfc),
             )
+            exactMap[sNfc] = saved
+            pairs.add(saved)
         }
         val cached = CachedActiveProfile(profile, pairs.toList(), exactMap.toMap(), BoundedDomainLexicalIndex(pairs.map { it.tokens }))
         val current = activeProfilesCache?.toMutableMap() ?: HashMap()
@@ -793,7 +800,7 @@ open class DomainCorpusRepository internal constructor(
 }
 
 private class DomainCorpusDatabase(context: Context, databaseName: String = "domain_corpus.db") :
-    SQLiteOpenHelper(context, databaseName, null, 3) {
+    SQLiteOpenHelper(context, databaseName, null, 4) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -819,6 +826,7 @@ private class DomainCorpusDatabase(context: Context, databaseName: String = "dom
                 source_text TEXT NOT NULL,
                 target_text TEXT NOT NULL,
                 source_nfc TEXT NOT NULL,
+                reviewed_style TEXT,
                 FOREIGN KEY(profile_id) REFERENCES domain_profiles(id) ON DELETE CASCADE
             )
             """.trimIndent()
@@ -838,9 +846,10 @@ private class DomainCorpusDatabase(context: Context, databaseName: String = "dom
         db.execSQL("CREATE INDEX idx_reference_documents_active_kind ON domain_reference_documents(enabled,kind,id)")
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        if (oldVersion in 1..2 && newVersion == 3) {
+        if (oldVersion in 1..3 && newVersion == 4) {
             if (oldVersion == 1) createLearningHistory(db)
-            createReferenceDocuments(db)
+            if (oldVersion <= 2) createReferenceDocuments(db)
+            db.execSQL("ALTER TABLE domain_pairs ADD COLUMN reviewed_style TEXT")
             return
         }
         throw SQLiteException("Destructive database schema changes are prohibited to preserve user domain data.")

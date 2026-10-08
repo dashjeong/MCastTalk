@@ -50,10 +50,17 @@ internal class BroadcastTranscriptPublication(
                 .map(ArchivedTranscriptLine::line)
                 .toList()
         }.orEmpty()
-        val publishedLines = mergeTranscriptLines(
+        val mergedLines = mergeTranscriptLines(
             archivedFinalLines = archivedForSession,
             currentLines = currentLines,
-        ).map { line ->
+        )
+        // Share the operator's conservative visual grouping with web listeners. This is a
+        // presentation hint, not proof that independent provider turns share an utterance.
+        val displayGroups = relayCaptionPresentation(mergedLines)
+            .filter { it.alignment == RelayCaptionAlignment.NEARBY_NATIVE_UNCONFIRMED }
+            .flatMap { group -> group.segments.map { it.sequence to group.segments.first().sequence } }
+            .toMap()
+        val publishedLines = mergedLines.map { line ->
             // Freeze nested maps once per source revision. The HTTP cache can safely reuse its
             // strong ETag/body without defensive copies on every listener request.
             GuideCastTranscriptLine(
@@ -65,6 +72,9 @@ internal class BroadcastTranscriptPublication(
                 translationLatencyMillis = line.translationLatencyMillis.toMap(),
                 firstAudioLatencyMillis = line.firstAudioLatencyMillis.toMap(),
                 synthesisLatencyMillis = line.synthesisLatencyMillis.toMap(),
+                liveSegmentLanguage = line.liveSegmentLanguage,
+                liveOutputState = line.liveOutputState?.name,
+                displayGroupSequence = displayGroups[line.sequence],
             )
         }.let { lines -> Collections.unmodifiableList(ArrayList(lines)) }
 

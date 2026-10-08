@@ -41,9 +41,15 @@ internal data class VoiceNoteUiState(
 internal class VoiceNoteViewModel(application: Application, private val savedState: SavedStateHandle) : AndroidViewModel(application) {
     val editorDraft = VoiceNoteEditorDraft()
     private val app = application as GuideCastApplication
+    val apiSettings = app.serviceMenuProfiles.settings(ServiceMenuProfile.NOTES)
+    val apiService = app.serviceMenuProfiles.service(ServiceMenuProfile.NOTES)
     private val repository = VoiceNoteRepository(File(app.filesDir, "voice-notes"))
     private val mutableState = MutableStateFlow(VoiceNoteUiState())
     val state = mutableState.asStateFlow()
+    val webBroadcast = app.menuBroadcast.state
+    private var webStart: Job? = null
+    @Volatile private var webGeneration: Long? = null
+    @Volatile private var liveWebGeneration: Long? = null
     private var work: Job? = null
     private val workOwner = Any()
     @Volatile private var cleared = false
@@ -69,8 +75,9 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
         viewModelScope.launch { refresh() }
         viewModelScope.launch {
             combine(app.broadcastRuntime.state, app.localFileWorkActive, app.localModelWorkActive,
-                app.localVoiceNoteWorkActive) { runtime, file, model, _ ->
-                runtime.dataTransferUnavailable() || file || model || app.voiceNoteWorkOwners.hasOther(workOwner)
+                app.localVoiceNoteWorkActive, app.menuBroadcast.state) { runtime, file, model, _, menu ->
+                runtime.dataTransferUnavailable() || file || model || app.voiceNoteWorkOwners.hasOther(workOwner) ||
+                    menuBroadcastBlocks(MenuBroadcastOrigin.NOTES, menu)
             }.distinctUntilChanged().collect { unavailable ->
                 mutableState.update { it.copy(unavailable = unavailable) }
                 if (unavailable) {
@@ -87,12 +94,89 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
     }
     private fun canWork(): Boolean = !cleared && !state.value.recording && !state.value.busy && !playWhenPrepared &&
         !app.voiceNoteWorkOwners.hasOther(workOwner) &&
-        !app.broadcastRuntime.state.value.dataTransferUnavailable() && !app.localFileWorkActive.value && !app.localModelWorkActive.value
+        !app.broadcastRuntime.state.value.dataTransferUnavailable() && !app.localFileWorkActive.value && !app.localModelWorkActive.value &&
+        !menuBroadcastBlocks(MenuBroadcastOrigin.NOTES, app.menuBroadcast.state.value)
     private suspend fun refresh() {
         val notes = withContext(Dispatchers.IO) { repository.list() }
         mutableState.update { it.copy(library = notes) }
     }
     fun permissionDenied() { mutableState.update { it.copy(message = "마이크 권한을 허용한 뒤 다시 시작하세요.") } }
+
+    /** Reuses the note's one capture source after the web channel has become ready. */
+    fun startLiveWebBroadcast(title: String, source: String, target: String, liveTranscription: Boolean = true) {
+        if (webStart?.isActive == true || !canWork()) return
+        if (source !in VOICE_NOTE_LANGUAGES || target !in VOICE_NOTE_LANGUAGES) return
+        if (ContextCompat.checkSelfPermission(app, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            permissionDenied(); return
+        }
+        if (liveTranscription && !app.speechRecognitionEngine.status.value.isReady) {
+            mutableState.update { it.copy(message = "먼저 공통 설정에서 음성 인식을 준비하세요. 준비 없이 원음을 방송하려면 ‘녹음만’을 선택하세요. 웹 방송 시작으로 모델을 자동 다운로드하지 않습니다.") }
+            return
+        }
+        audio.close()
+        if (!app.menuBroadcast.startLiveNote(source, setOf(target), title, translateFinalCaptions = liveTranscription)) {
+            mutableState.update { it.copy(message = app.menuBroadcast.state.value.errorMessage ?: "다른 입력·방송을 종료한 뒤 웹 방송을 시작하세요.") }
+            return
+        }
+        val generation = app.menuBroadcast.state.value.generation
+        webGeneration = generation
+        webStart = viewModelScope.launch {
+            try {
+                val prepared = withTimeout(15_000) {
+                    app.menuBroadcast.state.first { it.generation != generation ||
+                        it.phase !in setOf(MenuBroadcastPhase.STARTING) }
+                }
+                if (prepared.generation != generation || prepared.phase != MenuBroadcastPhase.LIVE) {
+                    mutableState.update { it.copy(message = prepared.errorMessage ?: "웹 방송 준비가 중단됐습니다. 다시 시작하세요.") }
+                    return@launch
+                }
+                liveWebGeneration = generation
+                record(title, source, target, liveTranscription)
+                if (work?.isActive != true) {
+                    stopOwnedWebBroadcast(generation)
+                    mutableState.update { it.copy(message = "녹음을 시작하지 못했습니다. 마이크 권한·다른 음성 작업을 확인하세요.") }
+                }
+            } catch (cancelled: CancellationException) {
+                stopOwnedWebBroadcast(generation)
+                if (cancelled is TimeoutCancellationException) {
+                    mutableState.update { it.copy(message = "웹 방송 준비 시간이 초과됐습니다. 네트워크 상태를 확인한 뒤 다시 시작하세요.") }
+                } else throw cancelled
+            }
+        }
+    }
+
+    /** Opens only this app-private note and the translations already saved with it. */
+    fun startWebBroadcast() {
+        if (webStart?.isActive == true || !canWork()) return
+        val note = state.value.selected ?: return
+        if (note.interrupted) {
+            mutableState.update { it.copy(message = "중단된 녹음을 먼저 복구한 뒤 웹 방송을 시작하세요.") }; return
+        }
+        val file = repository.audio(note.id)
+        if (!file.isFile || !file.canRead() || file.length() <= 44) {
+            mutableState.update { it.copy(message = "보관된 음원을 읽을 수 없습니다. 녹음을 확인한 뒤 다시 시작하세요.") }; return
+        }
+        audio.close()
+        if (app.menuBroadcast.startMedia(MenuBroadcastOrigin.NOTES, Uri.fromFile(file), note.title,
+                note.sourceLanguage ?: "und", voiceNoteBroadcastCaptions(note))) {
+            webGeneration = app.menuBroadcast.state.value.generation
+            mutableState.update { it.copy(message = "보관한 원음과 저장된 스크립트로 웹 방송을 준비합니다. 새 번역 요청은 하지 않습니다.") }
+        } else mutableState.update { it.copy(message = app.menuBroadcast.state.value.errorMessage ?: "다른 입력·방송을 종료한 뒤 다시 시작하세요.") }
+    }
+
+    fun stopWebBroadcast() {
+        webStart?.cancel(); webStart = null
+        val generation = webGeneration
+        if (generation != null && generation == liveWebGeneration) stopRecording()
+        if (generation != null) stopOwnedWebBroadcast(generation)
+    }
+
+    private fun stopOwnedWebBroadcast(generation: Long) {
+        if (app.menuBroadcast.state.value.generation == generation && app.menuBroadcast.owns(MenuBroadcastOrigin.NOTES))
+            app.menuBroadcast.stop(generation)
+        if (webGeneration == generation) webGeneration = null
+        if (liveWebGeneration == generation) liveWebGeneration = null
+    }
 
     fun record(title: String, source: String?, target: String, liveTranscription: Boolean = true) {
         if (!canWork()) return
@@ -110,11 +194,17 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
             liveLines = emptyList(), partialTranscript = "", recognitionMessage = null,
             message = if (liveTranscription) "음성 인식 준비 중 · 준비가 끝나면 녹음과 받아쓰기를 함께 시작합니다. 아직 녹음하지 않았습니다." else "녹음 준비 중") }
         updateOwnership()
+        val webCaptureGeneration = liveWebGeneration
         work = viewModelScope.launch(Dispatchers.IO) {
+            var webCaptureFinished = false
             try {
-                if (liveTranscription) withPreparedVoiceNoteRecognition(app, requireNotNull(source)) { engine ->
-                    captureNote(title, source, target, engine)
-                } else captureNote(title, source, target, null)
+                webCaptureFinished = if (liveTranscription && webCaptureGeneration != null) app.withTranslationBackendUse {
+                    check(app.speechRecognitionEngine.status.value.isReady)
+                    check(app.speechRecognitionEngine.capability(requireNotNull(source)).available)
+                    captureNote(title, source, target, app.speechRecognitionEngine, webCaptureGeneration)
+                } else if (liveTranscription) withPreparedVoiceNoteRecognition(app, requireNotNull(source)) { engine ->
+                    captureNote(title, source, target, engine, webCaptureGeneration)
+                } else captureNote(title, source, target, null, webCaptureGeneration)
             } catch (cancelled: CancellationException) {
                 mutableState.update { it.copy(message = "작업을 중지했습니다. 저장된 녹음과 문장은 유지됩니다.") }
                 throw cancelled
@@ -122,12 +212,19 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
                 mutableState.update { it.copy(message = if (error is FileTranscriptionException) error.message else
                     "음성 인식을 준비하지 못했습니다. 인터넷·저장 공간·언어팩을 확인한 뒤 다시 시작하세요. ‘녹음만’도 선택할 수 있습니다.") }
             } finally {
+                if (webCaptureGeneration != null) {
+                    if (webCaptureFinished) {
+                        app.menuBroadcast.finishLiveNoteInput(webCaptureGeneration)
+                        if (liveWebGeneration == webCaptureGeneration) liveWebGeneration = null
+                    } else stopOwnedWebBroadcast(webCaptureGeneration)
+                }
                 mutableState.update { it.copy(recording = false, busy = false) }; updateOwnership()
             }
         }
     }
 
-    private suspend fun captureNote(title: String, source: String?, target: String, engine: SpeechRecognitionEngine?) = supervisorScope {
+    private suspend fun captureNote(title: String, source: String?, target: String, engine: SpeechRecognitionEngine?,
+        webCaptureGeneration: Long? = null) = supervisorScope {
             var note: VoiceNote? = null
             var recorder: AudioRecord? = null
             val duration = AtomicLong(0L)
@@ -174,6 +271,7 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
                     updateOwnership()
                     if (engine != null && stream != null) recognition = launch {
                         var savedLineCount = 0
+                        var webLineCount = 0
                         try {
                             collectVoiceNoteLiveTranscript(engine, stream.flow(), requireNotNull(source), startedAt,
                                 stream::deliveredDurationMs, availability = app.speechRecognitionEngine.status.map { it.isReady }) { snapshot ->
@@ -184,6 +282,13 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
                                     savedLineCount = snapshot.lines.size
                                 }
                                 mutableState.update { it.copy(liveLines = snapshot.lines, partialTranscript = snapshot.partial) }
+                                webCaptureGeneration?.let { generation ->
+                                    snapshot.lines.drop(webLineCount).forEach { line ->
+                                        app.menuBroadcast.offerNoteLine(MenuBroadcastCaption(line.startMs, line.endMs, line.original,
+                                            if (line.translation.isBlank()) emptyMap() else mapOf(target to line.translation)), generation)
+                                    }
+                                    webLineCount = snapshot.lines.size
+                                }
                             }
                             if (!captureDone.get()) mutableState.update { it.copy(recognitionMessage = "받아쓰기 연결이 종료됐습니다. 원음과 저장한 문장은 보존되며 녹음은 계속됩니다.") }
                         } catch (cancelled: CancellationException) { throw cancelled }
@@ -205,6 +310,9 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
                         lastRead = android.os.SystemClock.elapsedRealtime()
                         val retained = minOf(count.toLong(), VOICE_NOTE_MAX_BYTES - wav.byteCount).toInt()
                         wav.append(buffer, retained)
+                        webCaptureGeneration?.let { generation ->
+                            app.menuBroadcast.offerNotePcm(buffer.copyOf(retained), VOICE_NOTE_SAMPLE_RATE, generation)
+                        }
                         duration.set(wav.byteCount / 32)
                         if (engine != null && !recognitionStopped.get()) {
                             stream?.onBytesCommitted(wav.byteCount)
@@ -247,11 +355,13 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
                     runCatching { refresh() }
                 }
             }
+            finalized
     }
     fun stopRecording() { stopRequested.set(true) }
     fun refreshLibrary() = task { refresh() }
 
     fun open(id: String) = task {
+        stopWebBroadcast()
         playWhenPrepared = false
         audio.close()
         val note = withContext(Dispatchers.IO) { repository.load(id) }
@@ -305,15 +415,18 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
         task { audio.pause(); translateSaved(note, target) }
     }
     private suspend fun translateSaved(note: VoiceNote, target: String) {
-        mutableState.update { it.copy(message = "원문 저장 완료 · 기기 내 번역 준비 중 (최초 사용 시 모델 다운로드)") }
+        mutableState.update { it.copy(message = if (apiSettings.state.value.provider == TranslationApiProvider.LOCAL)
+            "원문 저장 완료 · 준비된 기기 내 모델로 번역합니다. 모델이 없으면 공통 설정에서 먼저 준비하세요."
+            else "원문 저장 완료 · 이 메뉴에서 선택·허용한 API로 번역합니다.") }
         try {
             var qualityNotes = emptyList<String>()
             val updated = translateVoiceNote(note, target, ::saveSelected) { pending, onLine ->
                 val entry = FileLibraryEntry(note.id, note.title, "", note.id, note.durationMs,
                     note.sourceLanguage, note.createdAt,
                     pending.mapIndexed { index, line -> FileSpeechSegment(index.toLong(), line.startMs, line.endMs, line.original, line.language) })
-                val result = translateFileScript(app, entry, target, FileTranslationEngine.MLKIT,
-                    allowCloudReview = false, onLine = onLine) { done, total ->
+                val result = translateFileScript(app, entry, target,
+                    app.serviceMenuProfiles.state.value.getValue(ServiceMenuProfile.NOTES).localEngine,
+                    allowCloudReview = false, apiSettings = apiSettings, apiService = apiService, onLine = onLine) { done, total ->
                     mutableState.update { it.copy(message = if (target != note.targetLanguage)
                         "새 언어 번역 $done / $total · 모두 완료할 때까지 기존 번역을 보관합니다."
                         else "남은 구간 번역 $done / $total · 완료 구간은 순차 저장합니다.") }
@@ -360,6 +473,7 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
         }
     }
     fun delete(id: String) = task {
+        stopWebBroadcast()
         audio.close(); withContext(Dispatchers.IO) { repository.delete(id) }
         mutableState.update { it.copy(selected = if (it.selected?.id == id) null else it.selected, message = "음성노트를 삭제했습니다.") }; refresh()
     }
@@ -449,8 +563,14 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
     fun skipPlayback(deltaMs: Long) { if (canWork()) audio.seek(state.value.playback.positionMs + deltaMs.coerceIn(-10_000, 10_000)) }
     fun setPlaybackSpeed(speed: Float) { if (canWork() && speed in listOf(0.75f, 1f, 1.25f, 1.5f)) audio.setSpeed(speed) }
     fun cancel() { if (state.value.recording) stopRecording() else work?.cancel() }
-    fun pauseForBackground() { stopRecording(); playWhenPrepared = false; seekWhenPrepared = null; audio.pause(); if (!state.value.recording) work?.cancel() }
-    fun leave() { pauseForBackground(); audio.close(); mutableState.update { it.copy(selected = null) } }
+    fun pauseForBackground() {
+        // Stored media belongs to the foreground broadcast service. Microphone capture
+        // belongs to this visible note screen and is finalized when it leaves the foreground.
+        if (webStart?.isActive == true) stopWebBroadcast()
+        stopRecording(); playWhenPrepared = false; seekWhenPrepared = null; audio.pause()
+        if (!state.value.recording) work?.cancel()
+    }
+    fun leave() { stopWebBroadcast(); pauseForBackground(); audio.close(); mutableState.update { it.copy(selected = null) } }
     private fun task(block: suspend () -> Unit) {
         if (!canWork()) return
         if (!app.voiceNoteWorkOwners.tryAcquire(workOwner)) return
@@ -463,6 +583,7 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
         }
     }
     override fun onCleared() {
+        stopWebBroadcast()
         cleared = true
         retiringWork = work?.takeUnless { it.isCompleted }
         stopRecording(); playWhenPrepared = false; seekWhenPrepared = null

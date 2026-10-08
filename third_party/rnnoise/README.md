@@ -13,11 +13,11 @@
 - NDK Darwin ZIP SHA-1 was checked against Google's repository manifest:
   `0217c10ffbec496bb9fbfbb3c6fc2477c6b77297`. Toolchain is not packaged in APK.
 - JNI binary SHA-256 `46f8cd40b4ea6d37ccd18c0f897d3adcaabe9daf7a599eca6c55d80e4614469e`.
-- Upstream source unchanged. Our `os_support.h` supplies the single OPUS_CLEAR macro referenced
+- Upstream source unchanged. Our `android/os_support.h` supplies the single OPUS_CLEAR macro referenced
   by 0.2's NEON header; it does not replace the RNN or import allocation hooks. JNI validates the
   fixed 480-float boundary. Instances are synchronized across process/close and do not share state.
 - No new network, permissions, runtime model downloader, analytics, GPU or license activation.
-  Native code still requires device validation; this audit is not a claim of vulnerability freedom.
+  Native source and binary identity do not guarantee accuracy or suitability in every environment.
 
 Rebuild offline:
 

@@ -58,13 +58,16 @@ internal fun VoiceNoteLifecycle(model: VoiceNoteViewModel) {
 internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
     val state by model.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
-    val defaultSourceTag = remember(context) {
-        val tag = (context.applicationContext as? GuideCastApplication)?.operatorSettings?.state?.value?.sourceLanguageTag
-        if (tag != null && VOICE_NOTE_LANGUAGES.containsKey(tag)) tag else "ko-KR"
-    }
+    val app = context.applicationContext as GuideCastApplication
+    val profiles by app.serviceMenuProfiles.state.collectAsStateWithLifecycle()
+    val profile = profiles.getValue(ServiceMenuProfile.NOTES)
+    val commonDefaults by app.serviceDefaults.state.collectAsStateWithLifecycle()
+    val commonApi by app.commonServiceApiSettings.state.collectAsStateWithLifecycle()
+    val defaultSourceTag = supportedMenuLanguageTag(profile.sourceTag, VOICE_NOTE_LANGUAGES.keys) ?: "ko-KR"
     var title by rememberSaveable { mutableStateOf("") }
     var source by rememberSaveable { mutableStateOf<String?>(defaultSourceTag) }
-    var target by rememberSaveable { mutableStateOf("ko-KR") }
+    var target by rememberSaveable { mutableStateOf(profile.targetTags.firstNotNullOfOrNull {
+        supportedMenuLanguageTag(it, VOICE_NOTE_LANGUAGES.keys) } ?: "en-US") }
     var transcribePermission by rememberSaveable { mutableStateOf(false) }
     var liveTranscription by rememberSaveable { mutableStateOf(true) }
     var showDetailedView by rememberSaveable { mutableStateOf(false) }
@@ -94,6 +97,15 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
     var renameAttempted by model.editorDraft.renameAttempted
     var speakerAttempted by model.editorDraft.speakerAttempted
     val note = state.selected
+    LaunchedEffect(commonDefaults, commonApi.revision, state.busy, state.recording) {
+        if (!state.busy && !state.recording) app.serviceMenuProfiles.refreshInheritedDefaults(ServiceMenuProfile.NOTES)
+    }
+    LaunchedEffect(profile, note?.id, state.recording, state.busy) {
+        if (note == null && !state.recording && !state.busy) {
+            source = supportedMenuLanguageTag(profile.sourceTag, VOICE_NOTE_LANGUAGES.keys) ?: "ko-KR"
+            target = profile.targetTags.firstNotNullOfOrNull { supportedMenuLanguageTag(it, VOICE_NOTE_LANGUAGES.keys) } ?: "en-US"
+        }
+    }
     val transcriptionUnavailable = if (note != null) model.transcriptionUnavailableReason(source) else null
     val listState = rememberLazyListState()
     val toolsListState = rememberLazyListState()
@@ -148,6 +160,10 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (!granted) model.permissionDenied()
         else if (transcribePermission) model.transcribe(source, target) else model.record(title, source, target, liveTranscription)
+    }
+    val webMicrophonePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) model.startLiveWebBroadcast(title, source ?: "ko-KR", target, liveTranscription)
+        else model.permissionDenied()
     }
     val txt = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { model.exportPrepared(it, "txt") }
     val srt = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/x-subrip")) { model.exportPrepared(it, "srt") }
@@ -303,6 +319,12 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
                 }
             }
 
+            MenuWebBroadcastCard(context.applicationContext as GuideCastApplication, MenuBroadcastOrigin.NOTES,
+                canStart = !state.busy && !state.recording && !state.unavailable,
+                onStart = { if (note != null) model.startWebBroadcast()
+                    else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
+                        model.startLiveWebBroadcast(title, source ?: "ko-KR", target, liveTranscription)
+                    else webMicrophonePermission.launch(Manifest.permission.RECORD_AUDIO) }, onStop = model::stopWebBroadcast)
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 LazyColumn(
                     state = if (showTools) toolsListState else listState,
@@ -366,8 +388,8 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
                                             label = { Text("녹음만") })
                                     }
                                     VoiceNoteLanguagePicker("말하는 언어", source, enabled,
-                                        Build.VERSION.SDK_INT >= 34 && !liveTranscription) { source = it }
-                                    VoiceNoteLanguagePicker("괄호 안에 표시할 번역 언어", target, enabled, false) { target = requireNotNull(it) }
+                                        Build.VERSION.SDK_INT >= 34 && !liveTranscription) { source = it; app.serviceMenuProfiles.setLanguages(ServiceMenuProfile.NOTES, it, setOf(target)) }
+                                    VoiceNoteLanguagePicker("괄호 안에 표시할 번역 언어", target, enabled, false) { target = requireNotNull(it); app.serviceMenuProfiles.setLanguages(ServiceMenuProfile.NOTES, source, setOf(target)) }
                                     Text(if (liveTranscription) "말하는 언어를 선택하세요. 시작을 누르면 저장된 인식 모델을 확인하고 녹음과 받아쓰기를 함께 시작합니다. 최초 준비에는 인터넷이 필요할 수 있습니다."
                                         else "녹음 후 자동 언어 감지는 Android 14 이상과 기기의 오프라인 언어팩 지원이 필요합니다.", style = MaterialTheme.typography.bodySmall)
                                     if (liveTranscription && source == null) Text("실시간 받아쓰기는 말하는 언어를 직접 선택해 주세요.", color = MaterialTheme.colorScheme.error)
@@ -412,8 +434,8 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
                                         }
                                         Text("번역 ${note.lines.size - missing} / ${note.lines.size}개 구간 · Google Translate 기기 내 번역", style = MaterialTheme.typography.bodySmall)
                                     }
-                                    VoiceNoteLanguagePicker("말하는 언어", source, enabled, Build.VERSION.SDK_INT >= 34) { source = it }
-                                    VoiceNoteLanguagePicker("괄호 안에 표시할 번역 언어", target, enabled, false) { target = requireNotNull(it) }
+                                    VoiceNoteLanguagePicker("말하는 언어", source, enabled, Build.VERSION.SDK_INT >= 34) { source = it; app.serviceMenuProfiles.setLanguages(ServiceMenuProfile.NOTES, it, setOf(target)) }
+                                    VoiceNoteLanguagePicker("괄호 안에 표시할 번역 언어", target, enabled, false) { target = requireNotNull(it); app.serviceMenuProfiles.setLanguages(ServiceMenuProfile.NOTES, source, setOf(target)) }
                                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         OutlinedButton(onClick = { if (model.prepareExport("wav")) wav.launch("MCastTalk-${note.id}.wav") },
                                             enabled = enabled && note.durationMs > 0, modifier = Modifier.defaultMinSize(minHeight = 48.dp)) {

@@ -28,6 +28,19 @@ internal class RecordedAudioPlaybackControl {
     fun resume() { paused = false; resumeTrack?.invoke() }
 }
 
+/** The server reuses these committed channels; replay never creates a new translation request. */
+internal fun startRecordedWebBroadcast(
+    app: GuideCastApplication,
+    recording: RecordedBroadcast,
+    channelIds: Set<String>,
+): Boolean {
+    if (channelIds.isEmpty()) return false
+    val recordedIds = recording.segments.filter { it.committedBytes > 0 }.mapTo(mutableSetOf()) { it.channel.id }
+    if (!recordedIds.containsAll(channelIds)) return false
+    return app.menuBroadcast.startRecording(recording.id, channelIds,
+        recording.title.ifBlank { "방송 다시 듣기" })
+}
+
 internal suspend fun playRecordedPcm(segments: List<RecordedPcmSegment>, ownership: RecordedPlaybackOwnership,
     control: RecordedAudioPlaybackControl? = null, onProgress: (Long, Long) -> Unit = { _, _ -> },
     onStarted: suspend () -> Unit = {}) = withContext(Dispatchers.IO) {

@@ -48,6 +48,15 @@
 -keep class androidx.compose.foundation.ScrollKt { *; }
 -keep class androidx.compose.foundation.ScrollState { *; }
 -keep class androidx.compose.material3.TextKt { *; }
+# Preserve signatures used by the separate APK that verifies the production layout.
+-keep class androidx.compose.ui.semantics.SemanticsModifierKt { public static androidx.compose.ui.Modifier semantics(...); }
+-keep class androidx.compose.ui.semantics.SemanticsProperties_androidKt { public static void setTestTagsAsResourceId(...); }
+-keep class androidx.compose.material3.ScaffoldKt { public static void Scaffold-*(...); }
+-keep class androidx.compose.foundation.layout.PaddingKt { public static androidx.compose.ui.Modifier padding(androidx.compose.ui.Modifier, androidx.compose.foundation.layout.PaddingValues); }
+-keep class androidx.compose.foundation.layout.ColumnKt { public static androidx.compose.ui.layout.MeasurePolicy columnMeasurePolicy(...); }
+-keep class androidx.compose.foundation.layout.Arrangement { public static androidx.compose.foundation.layout.Arrangement INSTANCE; public androidx.compose.foundation.layout.Arrangement$Vertical getTop(); }
+-keep class androidx.compose.runtime.RecomposeScopeImplKt { public static int updateChangedFlags(int); }
+-keep class androidx.compose.runtime.ScopeUpdateScope { public void updateScope(kotlin.jvm.functions.Function2); }
 
 # GuideCast is open-source and its public app/provider surface is called from the separately
 # installed device-test APK and from Android component/JNI boundaries. Keep that surface stable;

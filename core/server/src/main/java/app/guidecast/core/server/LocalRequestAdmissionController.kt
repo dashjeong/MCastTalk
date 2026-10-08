@@ -22,10 +22,10 @@ internal class LocalRequestAdmissionController(
         maxConcurrentRequests = 3,
     ),
     readApiLimit: LocalRequestLimit = LocalRequestLimit(
-        // The listener polls transcripts every 1.2 seconds. Keep normal use comfortably below
-        // this ceiling while stopping an unbounded tight polling loop.
-        maxRequestsPerWindow = 90,
-        maxConcurrentRequests = 3,
+        // Eight listener tabs each poll transcripts every 1.2 seconds and status every 2.4
+        // seconds. Allow their 600 reads per minute plus bounded setup/replay headroom.
+        maxRequestsPerWindow = 720,
+        maxConcurrentRequests = 16,
     ),
     webSocketLimit: LocalRequestLimit = LocalRequestLimit(
         // This lease remains owned for the full WebSocket lifetime. Eight tabs from one handset

@@ -131,6 +131,7 @@ internal fun AdvancedTranslationApiPanel(settings: TranslationApiSettings, servi
                                     LiveAudioLoss.BEFORE_READY -> "연결 준비 전 미전송"
                                     LiveAudioLoss.INPUT_OVERFLOW -> "입력 대기열 초과"
                                     LiveAudioLoss.INPUT_ABANDONED -> "중지 후 미전송·대기열 폐기"
+                                    LiveAudioLoss.INPUT_SEND_UNCONFIRMED -> "음성 전송 결과 미확인"
                                     LiveAudioLoss.OUTPUT_BLOCKED -> "출력 송출 차단"
                                     LiveAudioLoss.LISTENER_OVERFLOW -> "청취자 대기열 누락 (청취자별 합계)"
                                 }
