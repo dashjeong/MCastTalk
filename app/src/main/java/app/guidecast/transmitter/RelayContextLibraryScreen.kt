@@ -42,7 +42,8 @@ internal fun readReferenceDocument(input: InputStream): String {
 }
 
 @Composable
-internal fun RelayContextLibraryScreen(app: GuideCastApplication, onBack: () -> Unit) {
+internal fun RelayContextLibraryScreen(app: GuideCastApplication, onBack: () -> Unit,
+    settingsRequest: Int = 0, onSettingsRequestHandled: () -> Unit = {}, onOpenSettings: () -> Unit = onBack) {
     var corpus by rememberSaveable { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val revision by app.domainCorpus.referenceRevision.collectAsState()
@@ -73,12 +74,16 @@ internal fun RelayContextLibraryScreen(app: GuideCastApplication, onBack: () -> 
         originalBodyDigest = referenceEditorBodyDigest("")
         message = null
         if (action == "BACK_LIBRARY") onBack()
+        else if (action == "OPEN_SETTINGS") { corpus = false; onOpenSettings() }
     }
     fun requestEditorAction(action: String) {
-        if (loading || saveRequested) return
-        if (editing && (title != originalTitle || kind != originalKind ||
-                referenceEditorBodyDigest(body) != originalBodyDigest)) pendingEditorAction = action
-        else finishEditorAction(action)
+        when (referenceNavigationDecision(loading, saveRequested, editing) {
+            title != originalTitle || kind != originalKind || referenceEditorBodyDigest(body) != originalBodyDigest
+        }) {
+            ReferenceNavigationDecision.BUSY -> return
+            ReferenceNavigationDecision.CONFIRM -> pendingEditorAction = action
+            ReferenceNavigationDecision.LEAVE -> finishEditorAction(action)
+        }
     }
     fun requestSave(action: String) {
         if (loading || saveRequested || title.isBlank() || body.isBlank()) return
@@ -122,6 +127,13 @@ internal fun RelayContextLibraryScreen(app: GuideCastApplication, onBack: () -> 
         } catch (_: Exception) {
             saveRequested = false
             message = "저장하지 못했습니다. 내용과 크기를 확인해 주세요. API 키는 자료에 넣지 마세요."
+        }
+    }
+    LaunchedEffect(settingsRequest) {
+        if (settingsRequest > 0) {
+            if (controlsEnabled) requestEditorAction("OPEN_SETTINGS")
+            else message = "자료를 처리 중입니다. 완료한 뒤 중계 설정을 다시 열어 주세요."
+            onSettingsRequestHandled()
         }
     }
     if (corpus) { DomainCorpusScreen(app.domainCorpus, onBack = { corpus = false }); return }
@@ -220,4 +232,13 @@ private fun referenceEditorBodyDigest(text: String): String {
         bytes[index * 2 + 1] = character.code.toByte()
     }
     return MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+}
+
+internal enum class ReferenceNavigationDecision { BUSY, CONFIRM, LEAVE }
+
+internal fun referenceNavigationDecision(loading: Boolean, saving: Boolean, editing: Boolean,
+    isDirty: () -> Boolean): ReferenceNavigationDecision = when {
+    loading || saving -> ReferenceNavigationDecision.BUSY
+    editing && isDirty() -> ReferenceNavigationDecision.CONFIRM
+    else -> ReferenceNavigationDecision.LEAVE
 }

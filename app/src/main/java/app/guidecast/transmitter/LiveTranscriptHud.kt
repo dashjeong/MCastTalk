@@ -47,27 +47,32 @@ internal fun LiveTranscriptHud(
     onReconnect: (() -> Unit)? = null,
     recoveryMessage: String? = null,
     sourceLanguageTag: String? = null,
+    initialShowSource: Boolean? = null,
+    displayTargetFilter: List<String>? = null,
 ) {
     BackHandler(onBack = onBack)
     var controls by rememberSaveable { mutableStateOf(false) }
     var follow by rememberSaveable { mutableStateOf(true) }
     val context = LocalContext.current
     val preferences = remember(context) { context.getSharedPreferences("transcript_hud", android.content.Context.MODE_PRIVATE) }
-    val languages = remember(transcripts, targetLanguageTags) {
-        transcriptHudLanguageTags(targetLanguageTags, transcripts)
+    val languages = remember(transcripts, targetLanguageTags, displayTargetFilter) {
+        transcriptHudLanguageTags(targetLanguageTags, transcripts).filter { displayTargetFilter == null || it in displayTargetFilter }
     }
     // Display preferences never mutate broadcast targets or request a translation.
     var showSource by remember {
-        mutableStateOf(preferences.getBoolean("show_source", "source" in
+        mutableStateOf(initialShowSource ?: preferences.getBoolean("show_source", "source" in
             preferences.getStringSet("languages", setOf("source")).orEmpty()))
     }
-    val sourceVisible = showSource || languages.isEmpty()
+    val sourceVisible = showSource || (initialShowSource == null && languages.isEmpty())
     var size by remember { mutableStateOf(preferences.getInt("size", 32).takeIf { it in listOf(24, 32, 44) } ?: 32) }
     var selectedTranslationTag by rememberSaveable { mutableStateOf<String?>(null) }
     var languageMenu by remember { mutableStateOf(false) }
     val groups = remember(transcripts) { relayCaptionPresentation(transcripts).take(100) }
-    val rows = remember(groups, selectedTranslationTag) { relayCaptionDisplayGroups(groups, selectedTranslationTag) }
     val displayedTranslationLanguages = relayCaptionDisplayLanguages(languages, selectedTranslationTag)
+    val rows = remember(groups, selectedTranslationTag, sourceVisible, displayedTranslationLanguages) {
+        transcriptHudVisibleGroups(relayCaptionDisplayGroups(groups, selectedTranslationTag), sourceVisible,
+            displayedTranslationLanguages)
+    }
     LaunchedEffect(languages) {
         if (selectedTranslationTag != null && selectedTranslationTag !in languages) selectedTranslationTag = null
     }
@@ -144,8 +149,9 @@ internal fun LiveTranscriptHud(
                     Text("설정", color = Color.White)
                 }
             }
-            if (rows.isEmpty()) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Text("아직 표시할 스크립트가 없습니다. 원문·통역문을 수신하면 여기에 표시합니다.",
+            if (rows.isEmpty() || (!sourceVisible && displayedTranslationLanguages.isEmpty())) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Text(if (!sourceVisible && displayedTranslationLanguages.isEmpty()) "표시할 언어가 없습니다. HUD를 닫고 원문이나 통역 언어를 선택하세요."
+                    else "아직 표시할 스크립트가 없습니다. 원문·통역문을 수신하면 여기에 표시합니다.",
                     color = Color.White, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(24.dp))
             } else LazyColumn(state = list, reverseLayout = true,
                 modifier = Modifier.weight(1f).fillMaxWidth().testTag("hud-transcript-list").pointerInput(Unit) {
@@ -212,3 +218,10 @@ internal fun transcriptHudLanguageTags(targetLanguageTags: List<String>, transcr
 
 internal fun transcriptHudSelection(selected: Set<String>, languages: List<String>): Set<String> =
     selected.intersect((languages + "source").toSet()).ifEmpty { setOf("source") }
+
+internal fun transcriptHudVisibleGroups(groups: List<RelayCaptionGroup>, showSource: Boolean,
+    displayedTranslationLanguages: List<String>): List<RelayCaptionGroup> = groups.filter { group ->
+    showSource || displayedTranslationLanguages.any { language ->
+        group.alignment == RelayCaptionAlignment.SHARED_UTTERANCE || group.segmentFor(language) != null
+    }
+}

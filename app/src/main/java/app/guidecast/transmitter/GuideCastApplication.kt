@@ -174,6 +174,58 @@ class GuideCastApplication : Application() {
         return !info.lowMemory && info.availMem > maxOf(info.threshold, 512L * 1024 * 1024)
     }
 
+    internal val reviewedRelayComparison by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        ReviewedRelayComparisonController(nativeLearningScopeDelegate.value,
+            environment = { source, target -> reviewedRelayComparisonEnvironment(source, target) },
+            compare = { request, expected, current ->
+                check(current())
+                val lease = tryAcquireReviewedRelayBackendUse(current)
+                if (lease == null) null else try {
+                    check(current())
+                    app.guidecast.core.translation.requireProtectedTranslationMeaning(
+                        request.original, request.translation, request.source, request.target)
+                    val captured = DomainCorpusTranslationEngine(gemmaTranslationProvider.preparedEngineFor(request.target), domainCorpus)
+                        .capture(request.original, request.source, request.target, request.style)
+                    check(current() && captured.capturedRevision == expected.corpusRevision)
+                    val offline = withContext(app.guidecast.core.translation.TranslationStyleContext(request.style)) {
+                        captured.translateWithContext(request.original, null, request.source, request.target)
+                    }
+                    check(current())
+                    ShadowComparison(request.original, null, request.source, request.target,
+                        expected.corpusRevision, request.translation, offline, request.style,
+                        offlineModel = if (captured.capturedExactMatch) "검수한 번역 예문 재사용" else expected.modelId)
+                } finally { withContext(NonCancellable) { lease.close() } }
+            }, commitLocks = listOf(interpreterRelaySettings, translationApiSettings, preparationOwners.reviewLock))
+    }
+
+    private fun reviewedRelayComparisonEnvironment(source: String, target: String): ReviewedRelayComparisonEnvironment {
+        val prepared = gemmaTranslationProviderDelegate.isInitialized() && gemmaTranslationProvider.hasActivePreparedWorker()
+        val broadcast = broadcastRuntime.state.value
+        return ReviewedRelayComparisonEnvironment(domainCorpus.revision.value,
+            if (prepared) gemmaTranslationProvider.modelManager.selectedVariant.id else null,
+            preparationOwners.currentGeneration, broadcastRuntime.inputRequestEpoch,
+            translationApiSettings.state.value.revision, interpreterRelaySettings.comparisonGeneration,
+            prepared, GemmaTranslationProvider.supportsTranslation(source, target),
+            webBroadcastOwnership.isOwned || broadcast.phase != BroadcastPhase.IDLE ||
+                broadcast.inputPhase != InputPhase.IDLE || broadcast.inputStopping,
+            localFileWorkActive.value || localVoiceNoteWorkActive.value || localModelWorkActive.value,
+            learningResourcesAvailable())
+    }
+
+    /** Optional local comparison never waits for or replaces a native backend owner. */
+    private fun tryAcquireReviewedRelayBackendUse(current: () -> Boolean): ReviewedRelayBackendUseLease? {
+        if (!nativeEngineLifecycleMutex.tryLock()) return null
+        return try {
+            val standbyOwners = if (settingsStandbyLease != null) 1 else 0
+            if (!current() || !backendUseState.mayClaimReviewedComparison(standbyOwners)) null else {
+                pendingBackendCleanup?.cancel()
+                pendingBackendCleanup = null
+                backendUseState.claim()
+                ReviewedRelayBackendUseLease(::releaseTranslationBackendUseAndAwait)
+            }
+        } finally { nativeEngineLifecycleMutex.unlock() }
+    }
+
     internal fun createNativeLearningSession(sessionId: Long, options: TranslationApiOptions,
         source: String, target: String, captureStartsAfterAdmission: Boolean, isCurrent: () -> Boolean): NativeLearningSession? =
         nativeLearningSessionFor(options, sessionId, interpreterRelaySettings.state.value.compareOffline, nativeLearningMonitor) {
@@ -521,24 +573,24 @@ class GuideCastApplication : Application() {
     }
 
     private fun releaseTranslationBackendUse() {
-        nativeEngineScope.launch {
-            val cleanupEpoch = nativeEngineLifecycleMutex.withLock {
-                backendUseState.release()?.also { epoch ->
-                    pendingBackendCleanup?.cancel()
-                    pendingBackendCleanup = nativeEngineScope.launch {
-                        delay(BACKEND_IDLE_RELEASE_GRACE_MILLIS)
-                        try {
-                            releaseIdleTranslationBackends(epoch)
-                        } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                            throw cancelled
-                        } catch (error: Throwable) {
-                            Log.e(LOG_TAG, "Idle translation backend cleanup failed", error)
-                        }
+        nativeEngineScope.launch { releaseTranslationBackendUseAndAwait() }
+    }
+
+    private suspend fun releaseTranslationBackendUseAndAwait() {
+        nativeEngineLifecycleMutex.withLock {
+            backendUseState.release()?.also { epoch ->
+                pendingBackendCleanup?.cancel()
+                pendingBackendCleanup = nativeEngineScope.launch {
+                    delay(BACKEND_IDLE_RELEASE_GRACE_MILLIS)
+                    try {
+                        releaseIdleTranslationBackends(epoch)
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                        throw cancelled
+                    } catch (error: Throwable) {
+                        Log.e(LOG_TAG, "Idle translation backend cleanup failed", error)
                     }
                 }
             }
-            // A sibling owner still exists, so no cleanup was scheduled.
-            if (cleanupEpoch == null) return@launch
         }
     }
 
@@ -699,6 +751,14 @@ class GuideCastApplication : Application() {
     }
 }
 
+/** Reviewed work waits for its use counter to release before the next optional comparison. */
+private class ReviewedRelayBackendUseLease(private val release: suspend () -> Unit) {
+    private val closed = java.util.concurrent.atomic.AtomicBoolean(false)
+    suspend fun close() {
+        if (closed.compareAndSet(false, true)) release()
+    }
+}
+
 internal class TranslationBackendUseLease(
     private val release: () -> Unit,
 ) : AutoCloseable {
@@ -787,6 +847,10 @@ internal class TranslationBackendUseState {
 
     fun activeOwnerCount(): Int = activeOwners
 
+    /** A retained warm settings lease owns memory, not an active inference. */
+    fun mayClaimReviewedComparison(standbyOwners: Int): Boolean =
+        standbyOwners in 0..1 && activeOwners == standbyOwners
+
     private fun Long.nextEpoch(): Long = if (this == Long.MAX_VALUE) 1L else this + 1L
 }
 
@@ -803,6 +867,8 @@ internal data class TranslationPreparationOwnerToken(
 internal class TranslationPreparationOwnerState {
     private val lock = Any()
     private var generation = 0L
+    internal val currentGeneration: Long get() = synchronized(lock) { generation }
+    internal val reviewLock: Any get() = lock
     private var settingsOwner: TranslationPreparationOwnerToken? = null
     private var broadcastOwner: TranslationPreparationOwnerToken? = null
 

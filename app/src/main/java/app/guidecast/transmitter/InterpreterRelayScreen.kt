@@ -31,10 +31,12 @@ import app.guidecast.core.stream.RECORDING_TITLE_MAX_CODE_POINTS
 internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: BroadcastSnapshot,
     microphoneGranted: Boolean, onRequestMicrophone: () -> Unit, onStart: () -> Unit,
     onPause: () -> Unit, onResume: () -> Unit, onStop: () -> Unit, onBack: () -> Unit,
-    onOpenHud: () -> Unit = {}, onStartMicrophone: () -> Unit = {}, onStopMicrophone: () -> Unit = {}, settingsRequest: Int = 0, onSettingsRequestHandled: () -> Unit = {}) {
+    onOpenHud: () -> Unit = {}, onStartMicrophone: () -> Unit = {}, onStopMicrophone: () -> Unit = {}, settingsRequest: Int = 0,
+    onSettingsRequestHandled: () -> Unit = {}, onOpenFilteredHud: ((List<String>, Boolean) -> Unit)? = null) {
     val api by app.translationApiSettings.state.collectAsState()
     LaunchedEffect(api.revision) { app.interpreterRelaySettings.rememberRelayApi(app.translationApiSettings.state.value) }
     var contextLibrary by rememberSaveable { mutableStateOf(false) }
+    var librarySettingsRequest by rememberSaveable { mutableStateOf(0) }
     var professionalSettings by rememberSaveable { mutableStateOf(false) }
     var domainDraft by rememberSaveable { mutableStateOf(api.domainPrompt) }
     var instructionDraft by rememberSaveable { mutableStateOf(api.interpreterInstructions) }
@@ -58,17 +60,24 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
     val levelGuidance = levelTracker.observe(broadcast.inputRms, broadcast.inputPeak, broadcast.inputFrameCount,
         android.os.SystemClock.elapsedRealtime(), inputActive = broadcast.inputPhase == InputPhase.ACTIVE,
         clientSilenced = captureDiagnostics.clientSilenced == true, systemMuted = captureDiagnostics.systemMicrophoneMuted == true)
-    var captionLanguage by rememberSaveable { mutableStateOf<String?>(null) }
-    var captionPicker by remember { mutableStateOf(false) }
+    var captionDisplayTargets by rememberSaveable { mutableStateOf<ArrayList<String>?>(null) }
+    var captionDisplaySource by rememberSaveable { mutableStateOf(true) }
+    var titleDialog by rememberSaveable { mutableStateOf(false) }
     var confirmEnd by remember { mutableStateOf(false) }
-    val captionLanguages = remember(relay.targetLanguageTags, broadcast.transcripts) {
-        (relay.targetLanguageTags + broadcast.transcripts.flatMap { it.translations.keys }).distinct()
+    var endingRecordingId by remember { mutableStateOf<String?>(null) }
+    var endingCleanupRetry by remember { mutableStateOf(false) }
+    var endingWasStarting by remember { mutableStateOf(false) }
+    var endingInputEpoch by remember { mutableStateOf(-1L) }
+    var endActionMessage by remember { mutableStateOf<String?>(null) }
+    val menuBroadcast by app.menuBroadcast.state.collectAsState()
+    val workspace = relayWorkspaceControlState(broadcast, menuBroadcast.isActive,
+        app.webBroadcastOwnership.currentOwner == "streaming")
+    val captionLanguages = remember(relay.targetLanguageTags, workspace.displayedBroadcast.transcripts) {
+        (relay.targetLanguageTags + workspace.displayedBroadcast.transcripts.flatMap { it.translations.keys }).distinct()
     }
-    LaunchedEffect(captionLanguages) { if (captionLanguage !in captionLanguages) captionLanguage = null }
-    val captionGroups = remember(broadcast.transcripts, captionLanguage) {
-        relayCaptionDisplayGroups(relayCaptionPresentation(broadcast.transcripts), captionLanguage).take(30)
-    }
-    val busy = broadcast.phase in setOf(BroadcastPhase.STARTING, BroadcastPhase.LIVE, BroadcastPhase.PAUSED)
+    val visibleCaptionTargets = workspaceDisplayLanguages(captionLanguages, captionDisplayTargets)
+    val busy = broadcast.phase in setOf(BroadcastPhase.STARTING, BroadcastPhase.LIVE, BroadcastPhase.PAUSED) ||
+        (broadcast.phase == BroadcastPhase.FAILED && app.webBroadcastOwnership.currentOwner == "streaming")
     val comparisonChoice = nativeComparisonPresentation(api, relay.compareOffline, busy, broadcast.relayContext?.model,
         learning.nativeControlGeneration, app.interpreterRelaySettings.comparisonGeneration)
     val learningSupported = comparisonChoice.supported
@@ -90,9 +99,6 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var setupFocus by rememberSaveable { mutableStateOf<RelaySetupItem?>(null) }
     var setupMessage by rememberSaveable { mutableStateOf<String?>(null) }
-    LaunchedEffect(settingsRequest) {
-        if (settingsRequest > 0) { showSettings = true; setupFocus = null; setupMessage = null; onSettingsRequestHandled() }
-    }
     var showUsage by remember { mutableStateOf(false) }
     var inputIssue by remember { mutableStateOf<RelayInputIssue?>(null) }
     fun discardDraft() {
@@ -145,6 +151,9 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
             "BACK" -> onBack()
             "CLOSE_PROFESSIONAL" -> professionalSettings = false
             "CLOSE_SETTINGS" -> showSettings = false
+            "OPEN_SETTINGS" -> {
+                professionalSettings = false; showSettings = true; setupFocus = null; setupMessage = null
+            }
             "DISCARD" -> discardDraft()
         }
     }
@@ -152,13 +161,28 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
         if (draftDirty) { draftError = null; pendingDraftAction = action }
         else completeDraftAction(action)
     }
+    LaunchedEffect(settingsRequest) {
+        if (settingsRequest > 0) {
+            if (contextLibrary) librarySettingsRequest += 1 else guardedAction("OPEN_SETTINGS")
+            onSettingsRequestHandled()
+        }
+    }
     BackHandler(enabled = !contextLibrary && (professionalSettings || showSettings || (!busy && draftDirty))) {
         if (showSettings && setupFocus != null && !professionalSettings) { setupFocus = null; setupMessage = null }
         else guardedAction(if (professionalSettings) "CLOSE_PROFESSIONAL" else if (showSettings) "CLOSE_SETTINGS" else "BACK")
     }
-    if (confirmEnd) AlertDialog(onDismissRequest = { confirmEnd = false }, title = { Text("방송을 종료할까요?") },
-        text = { Text("마이크와 통역 연결도 종료합니다. 음성과 스크립트는 방송 이력에서 확인할 수 있습니다. 다음 방송에는 새 접속 권한을 만듭니다.") },
-        confirmButton = { TextButton(onClick = { confirmEnd = false; onStop() }) { Text("방송 종료") } },
+    if (confirmEnd) AlertDialog(onDismissRequest = { confirmEnd = false },
+        title = { Text(if (endingCleanupRetry) "남아 있는 방송 종료 정리를 다시 시도할까요?" else "방송을 종료할까요?") },
+        text = { Text(if (endingCleanupRetry) "남아 있는 방송 연결의 종료를 다시 확인합니다. 새 방송이나 마이크·AI 연결은 시작하지 않습니다."
+            else "마이크와 통역 연결도 종료합니다. 음성과 스크립트는 방송 이력에서 확인할 수 있습니다. 다음 방송에는 새 접속 권한을 만듭니다.") },
+        confirmButton = { TextButton(enabled = workspace.broadcastActive, onClick = {
+            val current = app.broadcastRuntime.state.value
+            confirmEnd = false
+            if (relayEndRequestMatches(current, endingRecordingId, endingWasStarting, endingInputEpoch,
+                    app.broadcastRuntime.inputRequestEpoch, endingCleanupRetry,
+                    app.webBroadcastOwnership.currentOwner == "streaming")) onStop()
+            else endActionMessage = "방송 상태가 바뀌었습니다. 현재 방송을 확인한 뒤 종료를 다시 눌러 주세요."
+        }) { Text(if (endingCleanupRetry) "종료 정리 재시도" else "방송 종료") } },
         dismissButton = { TextButton(onClick = { confirmEnd = false }) { Text("취소") } })
     if (pendingDraftAction != null) AlertDialog(
         onDismissRequest = { pendingDraftAction = null; draftError = null },
@@ -179,7 +203,12 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
             }) { Text("입력 버리고 계속") }
             TextButton(onClick = { pendingDraftAction = null; draftError = null }) { Text("편집 계속") }
         } })
-    if (contextLibrary) { RelayContextLibraryScreen(app, onBack = { contextLibrary = false }); return }
+    if (contextLibrary) {
+        RelayContextLibraryScreen(app, onBack = { contextLibrary = false },
+            settingsRequest = librarySettingsRequest, onSettingsRequestHandled = { librarySettingsRequest = 0 },
+            onOpenSettings = { contextLibrary = false; guardedAction("OPEN_SETTINGS") })
+        return
+    }
     if (professionalSettings) {
         Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).semantics { paneTitle = "전문 분야·내 통역 지침" },
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -351,6 +380,22 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
                     }
                     if (!microphoneGranted) Button(onClick = onRequestMicrophone, enabled = !microphoneBusy) { Text("마이크 접근 허용") }
                     Text("음성 입력 처리 · 마이크 켜기/끄기는 운영 화면에서 따로 조작합니다.", style = MaterialTheme.typography.bodySmall)
+                    if (broadcast.isInterpreterRelay) {
+                        Text("마이크 · ${if (broadcast.inputStopping) "끄는 중" else when (broadcast.inputPhase) {
+                            InputPhase.ACTIVE -> "입력 중"; InputPhase.STARTING -> "준비 중";
+                            InputPhase.FAILED -> "입력 중단"; else -> "꺼짐" }}")
+                        LinearProgressIndicator(progress = { broadcast.inputPeak.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
+                        Text("통역 · ${broadcast.relayPhase.shortLabel} · ${if (!relay.localPlayback) "기기 재생 끔"
+                            else if (broadcast.relayPlayedBytes > 0) "기기 음성 출력 확인됨" else "기기 재생 대기"}")
+                        broadcast.inputProcessingSummary?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                        if (broadcast.inputPhase == InputPhase.ACTIVE) {
+                            Text(levelGuidance.label, color = if (levelGuidance.attention) MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.onSurface)
+                            Text(levelGuidance.detail, style = MaterialTheme.typography.bodySmall)
+                        }
+                        (broadcast.inputErrorMessage ?: broadcast.errorMessage ?: broadcast.translationWarning)?.let { ServiceConnectionFeedback(it) }
+                        broadcast.recordingWarning?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    }
                     MicrophoneNoiseOptions(microphoneProfile.noiseMode, !microphoneBusy,
                         { app.microphoneNoiseSettings.selectProfile(microphoneGroup, microphoneProfile.copy(noiseMode = it)) },
                         microphoneProfile.nearSpeakerFocus,
@@ -412,7 +457,9 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
             Text("오프라인 비교 · ${learning.completed}건 완료 · ${learning.incomplete}건 미완료 · ${learning.skipped}건 건너뜀")
             learning.lastPause?.let { Text(it) }
             LearningComparisonReview(if (app.translationApiSettings.authorized(api)) learning.last else null, app.domainCorpus,
-                commitAdmission = app::nativeComparisonCommitAdmission, isComparisonCurrent = app::isNativeComparisonCurrent)
+                commitAdmission = app::nativeComparisonCommitAdmission, isComparisonCurrent = app::isNativeComparisonCurrent,
+                showEntry = learning.last != null)
+            ReviewedRelayComparisonUi(app, broadcast, onOpenExampleMaterials = { guardedAction("LIBRARY") })
             ServiceExperienceToggle("오프라인 결과와 비교 (선택)",
                 "기기에서 들을 언어를 오프라인 번역과 비교합니다. 지원하지 않는 모델은 비교를 보류합니다. " + if (learningSupported)
                     "확정된 원문·통역 쌍과 준비된 Gemma 모델을 사용하며 추가 API 요청은 없습니다. 검수·저장한 예문만 다음 오프라인 번역에 적용됩니다."
@@ -433,101 +480,91 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
         }
         return
     }
-    LazyColumn(Modifier.fillMaxSize().semantics { paneTitle = "통역 중계" }, contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                TextButton(onClick = { guardedAction("BACK") }) { Text("서비스 목록") }
-                TextButton(onClick = { showSettings = true; setupFocus = null; setupMessage = null }) { Text("중계 설정") }
-            }
-            Text("통역 중계", style = MaterialTheme.typography.headlineMedium)
-        }
-        stickyHeader {
-            Surface(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("방송 · ${when (broadcast.phase) { BroadcastPhase.LIVE -> "송출 중"; BroadcastPhase.PAUSED -> "송출 일시정지"; BroadcastPhase.STARTING -> "준비 중"; else -> "시작 전" }}",
-                        style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
-                    if (!busy) {
-                        val validTitle = relay.broadcastTitle.isBlank() || normalizedRecordingTitle(relay.broadcastTitle) != null
-                        OutlinedTextField(value = relay.broadcastTitle, onValueChange = {
-                            if (it.codePointCount(0, it.length) <= RECORDING_TITLE_MAX_CODE_POINTS)
-                                app.interpreterRelaySettings.update(relay.copy(broadcastTitle = it))
-                        }, label = { Text("방송 제목 (선택)") }, placeholder = { Text("예: 오늘의 한국어 강의") },
-                            singleLine = true, isError = !validTitle, modifier = Modifier.fillMaxWidth())
-                        Button(onClick = { guardedAction("START_BROADCAST") }, enabled = validTitle, modifier = Modifier.fillMaxWidth().heightIn(min = 56.dp)) { Text("방송 시작") }
-                        Text("방송을 시작한 뒤 마이크를 켜세요. 마이크가 꺼져 있을 때에는 AI에 음성을 보내지 않습니다.", style = MaterialTheme.typography.bodySmall)
-                    } else {
-                        if (broadcast.broadcastTitle.isNotBlank()) Text(broadcast.broadcastTitle, style = MaterialTheme.typography.titleMedium)
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (broadcast.phase == BroadcastPhase.PAUSED) Button(onClick = onResume, modifier = Modifier.weight(1f)) { Text("송출 재개") }
-                            else OutlinedButton(onClick = onPause, enabled = broadcast.phase == BroadcastPhase.LIVE, modifier = Modifier.weight(1f)) { Text("송출 일시정지") }
-                            Button(onClick = { confirmEnd = true }, modifier = Modifier.weight(1f)) { Text("방송 종료") }
-                        }
-                        Text("송출과 마이크는 별도로 조작합니다. 마이크가 켜져 있으면 기기 통역·녹음은 계속되고, 재개 후 기록을 공유합니다.", style = MaterialTheme.typography.bodySmall)
+    val validTitle = relay.broadcastTitle.isBlank() || normalizedRecordingTitle(relay.broadcastTitle) != null
+    if (titleDialog) AlertDialog(onDismissRequest = { titleDialog = false }, title = { Text("방송 제목") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (busy) Text(broadcast.broadcastTitle.ifBlank { "제목 없는 방송" })
+            else OutlinedTextField(value = relay.broadcastTitle, onValueChange = {
+                if (it.codePointCount(0, it.length) <= RECORDING_TITLE_MAX_CODE_POINTS)
+                    app.interpreterRelaySettings.update(app.interpreterRelaySettings.state.value.copy(broadcastTitle = it))
+            }, label = { Text("방송 제목 (선택)") }, placeholder = { Text("예: 오늘의 한국어 강의") },
+                singleLine = true, isError = !validTitle, modifier = Modifier.fillMaxWidth())
+            Text(if (busy) "방송 제목은 방송 이력에서 바꿀 수 있습니다."
+                else "비워 두어도 방송할 수 있습니다. 제목은 방송 이력에 저장됩니다.", style = MaterialTheme.typography.bodySmall)
+        } }, confirmButton = { TextButton(onClick = { titleDialog = false }) { Text("닫기") } })
+    Scaffold(contentWindowInsets = WindowInsets(0, 0, 0, 0), bottomBar = {
+        StreamingWorkspaceFooter(workspace.displayedBroadcast, workspace.broadcastActive, standalone = false,
+            otherBroadcastActive = workspace.otherActive, inputKind = selected?.kind, inputRequestPending = false,
+            onStartBroadcast = { guardedAction("START_BROADCAST") },
+            onStopBroadcast = {
+                endActionMessage = null
+                endingRecordingId = broadcast.recordingId; endingCleanupRetry = workspace.cleanupRetry
+                endingWasStarting = broadcast.phase == BroadcastPhase.STARTING
+                endingInputEpoch = app.broadcastRuntime.inputRequestEpoch; confirmEnd = true
+            },
+            onStartInput = { start() }, onPauseInput = onStopMicrophone,
+            onOpenHud = { onOpenFilteredHud?.invoke(visibleCaptionTargets, captionDisplaySource) ?: onOpenHud() },
+            startBroadcastEnabled = validTitle, startInputEnabled = workspace.startInputEnabled,
+            stopBroadcastLabel = "방송 종료")
+    }) { padding ->
+        StreamingTranscriptWorkspace(workspace.displayedBroadcast, captionLanguages, visibleCaptionTargets,
+            showSource = captionDisplaySource,
+            onToggleSource = { captionDisplaySource = !captionDisplaySource },
+            onToggleTarget = { tag -> captionDisplayTargets = ArrayList(toggleWorkspaceDisplayLanguage(
+                captionLanguages, captionDisplayTargets, tag)) },
+            onOpenSettings = { showSettings = true; setupFocus = RelaySetupItem.LANGUAGES; setupMessage = null },
+            onOpenStatus = { showSettings = true; setupFocus = RelaySetupItem.INPUT; setupMessage = null },
+            modifier = Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).semantics { paneTitle = "통역 중계" },
+            additionalIssue = if (workspace.otherActive) "다른 서비스에서 방송 또는 입력을 사용 중입니다. 해당 서비스에서 종료하세요."
+                else broadcast.recordingWarning ?: endActionMessage ?: levelGuidance.label.takeIf {
+                    broadcast.isInterpreterRelay && broadcast.inputPhase == InputPhase.ACTIVE && levelGuidance.attention },
+            emptyMessage = "방송 시작을 누른 뒤 마이크를 켜세요. 인식한 원문과 선택한 통역 자막이 여기에 표시됩니다.",
+            operatingActions = {
+                Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { titleDialog = true }, enabled = !workspace.otherActive && !workspace.cleanupRetry,
+                        modifier = Modifier.weight(1f)) {
+                        Text(if (workspace.broadcastActive) broadcast.broadcastTitle.ifBlank { "방송 제목" }
+                            else relay.broadcastTitle.ifBlank { "방송 제목 (선택)" }, maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                     }
+                    if (workspace.broadcastActive && broadcast.phase == BroadcastPhase.LIVE)
+                        TextButton(onClick = onPause) { Text("송출 일시정지") }
+                    if (workspace.broadcastActive && broadcast.phase == BroadcastPhase.PAUSED)
+                        TextButton(onClick = onResume) { Text("송출 재개") }
                 }
-            }
-        }
-        item {
-            OutlinedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("마이크 · ${if (broadcast.inputStopping) "끄는 중" else when (broadcast.inputPhase) { InputPhase.ACTIVE -> "입력 중"; InputPhase.STARTING -> "준비 중"; InputPhase.PAUSED -> "꺼짐"; InputPhase.FAILED -> "입력 중단"; else -> "꺼짐" }}", style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
-                    TextButton(onClick = { showSettings = true; setupFocus = RelaySetupItem.INPUT; setupMessage = null }) { Text("입력 설정") }
-                }
-                Text(selected?.label ?: "입력 마이크 선택 필요", style = MaterialTheme.typography.bodySmall)
-                if (setupMessage != null && !showSettings) Text(requireNotNull(setupMessage), style = MaterialTheme.typography.bodySmall)
-                LinearProgressIndicator(progress = { broadcast.inputPeak.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
-                if (broadcast.inputStopping) Button(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) { Text("마이크 끄는 중") }
-                else if (microphoneBusy) OutlinedButton(onClick = onStopMicrophone, modifier = Modifier.fillMaxWidth()) { Text("마이크 끄기") }
-                else Button(onClick = { start() }, enabled = broadcast.phase in setOf(BroadcastPhase.LIVE, BroadcastPhase.PAUSED),
-                    modifier = Modifier.fillMaxWidth()) { Text("마이크 켜기") }
-                Text("통역 · ${broadcast.relayPhase.shortLabel} · ${if (!relay.localPlayback) "기기 재생 끔" else if (broadcast.relayPlayedBytes > 0) "기기 음성 출력 확인됨" else "기기 재생 대기"}")
-                broadcast.inputProcessingSummary?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                if (broadcast.inputPhase == InputPhase.ACTIVE) {
-                    Text(levelGuidance.label, color = if (levelGuidance.attention) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
-                    Text(levelGuidance.detail, style = MaterialTheme.typography.bodySmall)
-                }
-                (broadcast.inputErrorMessage ?: broadcast.errorMessage ?: broadcast.translationWarning.takeIf {
-                    broadcast.relayPhase == InterpreterRelayPhase.FAILED || broadcast.translationChannels.any { channel ->
-                        channel.translationState == BroadcastChannelWorkerState.DEGRADED || channel.synthesisState == BroadcastChannelWorkerState.DEGRADED }
-                })?.let { ServiceConnectionFeedback(it) }
-                broadcast.recordingWarning?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            } }
-            OutlinedButton(onClick = onOpenHud, modifier = Modifier.fillMaxWidth()) { Text("실시간 스크립트 HUD") }
-        }
-        if (relay.networkBroadcast) item {
-            RelayListenerAccessCard(broadcast.listenerUrl, busy)
-        }
-        item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("원문 · 통역 자막", style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
-                Box {
-                    TextButton(onClick = { captionPicker = true }) { Text("통역 언어 · ${captionLanguage?.let(::relayCaptionLanguageLabel) ?: "전체"}") }
-                    DropdownMenu(expanded = captionPicker, onDismissRequest = { captionPicker = false }) {
-                        DropdownMenuItem(text = { Text("전체") }, onClick = { captionLanguage = null; captionPicker = false })
-                        captionLanguages.forEach { tag -> DropdownMenuItem(text = { Text(relayCaptionLanguageLabel(tag)) },
-                            onClick = { captionLanguage = tag; captionPicker = false }) }
-                    }
-                }
-            }
-        }
-        if (captionGroups.isEmpty()) item { Text("발화하면 원문 한 개 아래에 선택한 언어의 통역 자막을 표시합니다.") }
-        captionGroups.forEach { group -> item(key = group.id) {
-            OutlinedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("원문 · ${group.sourceStatusLabel}", style = MaterialTheme.typography.labelLarge)
-                Text(group.sourceText.ifBlank { "전사 대기" })
-                val tags = if (group.alignment == RelayCaptionAlignment.SHARED_UTTERANCE) captionLanguages
-                    else (group.segments.mapNotNull { it.liveSegmentLanguage } + group.translations.keys).distinct()
-                relayCaptionDisplayLanguages(tags, captionLanguage).forEach { tag ->
-                    val line = group.segmentFor(tag)
-                    Text("${relayCaptionLanguageLabel(tag)} · ${line?.liveOutputState?.label ?: if (line?.isFinal == true) "완료" else "처리 중"}",
-                        style = MaterialTheme.typography.labelLarge)
-                    Text(group.translations[tag].orEmpty().ifBlank { line?.nativeMissingCaptionLabel(tag) ?: "전사 대기" })
-                }
-                group.alignmentNotice?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-            } }
-        } }
+            })
     }
+}
+
+internal data class RelayWorkspaceControlState(val displayedBroadcast: BroadcastSnapshot,
+    val broadcastActive: Boolean, val otherActive: Boolean, val startInputEnabled: Boolean, val cleanupRetry: Boolean)
+
+internal fun relayWorkspaceControlState(broadcast: BroadcastSnapshot, menuActive: Boolean,
+    streamingOwnerPresent: Boolean): RelayWorkspaceControlState {
+    val activePhase = broadcast.phase in setOf(BroadcastPhase.STARTING, BroadcastPhase.LIVE, BroadcastPhase.PAUSED)
+    val cleanupPending = broadcast.phase == BroadcastPhase.FAILED && streamingOwnerPresent
+    val own = broadcast.isInterpreterRelay
+    val other = menuActive || (!own && !cleanupPending && (activePhase || broadcast.inputStopping ||
+        broadcast.inputPhase in setOf(InputPhase.STARTING, InputPhase.ACTIVE, InputPhase.PAUSED)))
+    val shown = when {
+        own -> broadcast
+        cleanupPending -> BroadcastSnapshot(phase = BroadcastPhase.FAILED, errorMessage = broadcast.errorMessage,
+            inputStopping = broadcast.inputStopping)
+        else -> BroadcastSnapshot()
+    }
+    return RelayWorkspaceControlState(shown, own && activePhase || cleanupPending, other,
+        own && broadcast.phase in setOf(BroadcastPhase.LIVE, BroadcastPhase.PAUSED) && !other,
+        cleanupPending)
+}
+
+internal fun relayEndRequestMatches(current: BroadcastSnapshot, expectedRecordingId: String?, wasStarting: Boolean,
+    capturedInputEpoch: Long, currentInputEpoch: Long, cleanupRequested: Boolean, streamingOwnerPresent: Boolean): Boolean {
+    if (cleanupRequested) return current.phase == BroadcastPhase.FAILED && streamingOwnerPresent
+    if (!current.isInterpreterRelay || current.phase !in setOf(BroadcastPhase.STARTING, BroadcastPhase.LIVE, BroadcastPhase.PAUSED) ||
+        current.recordingId != expectedRecordingId) return false
+    return expectedRecordingId != null || (wasStarting && current.phase == BroadcastPhase.STARTING &&
+        capturedInputEpoch == currentInputEpoch)
 }
 
 internal val InterpreterRelayPhase.label: String get() = when (this) {

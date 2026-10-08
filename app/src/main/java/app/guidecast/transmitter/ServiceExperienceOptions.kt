@@ -32,8 +32,8 @@ internal fun serviceExperience(options: TranslationApiOptions): ServiceExperienc
                 if (options.allowDomainReferences) append(" 참고 자료를 허용했으며 준비된 짧은 발췌가 있을 때만 함께 보냅니다.")
             } else "마이크 음성을 Google로 보냅니다.",
             agent, agent, false,
-            if (agent) "선택 자료의 짧은 발췌를 연결할 때 전달합니다. Gemini 음성 중계는 원문·통역 대응을 보장할 수 없어 비교 학습을 지원하지 않습니다. 통역 언어마다 별도 연결을 사용합니다."
-            else "이 번역 전용 모델은 참고 자료·사용자 지침을 지원하지 않습니다. Gemini 음성 중계는 원문·통역 대응을 보장할 수 없어 비교 학습을 지원하지 않습니다. 통역 언어마다 별도 연결을 사용합니다.",
+            if (agent) "선택 자료의 짧은 발췌를 연결할 때 전달합니다. Gemini 음성 중계는 원문·통역 대응을 자동 확인할 수 없어 자동 비교를 지원하지 않습니다. 직접 확인한 예문은 별도로 비교할 수 있습니다. 통역 언어마다 별도 연결을 사용합니다."
+            else "이 번역 전용 모델은 참고 자료·사용자 지침을 지원하지 않습니다. Gemini 음성 중계는 원문·통역 대응을 자동 확인할 수 없어 자동 비교를 지원하지 않습니다. 직접 확인한 예문은 별도로 비교할 수 있습니다. 통역 언어마다 별도 연결을 사용합니다.",
         )
     }
     else -> if (options.usesNativeLiveAudio) ServiceExperience(

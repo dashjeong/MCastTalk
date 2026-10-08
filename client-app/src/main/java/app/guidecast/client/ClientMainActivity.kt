@@ -165,6 +165,7 @@ private fun ClientScreen(
                         enabled = !state.sessionActive,
                         singleLine = true,
                         label = { Text("송출기 웹 주소") },
+                        placeholder = { Text("방송 주소를 붙여넣으세요") },
                         supportingText = { Text("QR로 연 주소를 붙여넣어도 됩니다.") },
                     )
                     OutlinedTextField(
@@ -241,7 +242,7 @@ private fun ClientScreen(
                     Button(
                         onClick = onStart,
                         modifier = Modifier.fillMaxWidth(),
-                        enabled = !state.sessionActive && !busy,
+                        enabled = !state.sessionActive && !busy && state.address.isNotBlank(),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1267E8)),
                     ) {
                         Text("통역 시작")

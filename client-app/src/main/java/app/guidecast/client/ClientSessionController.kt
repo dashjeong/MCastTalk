@@ -33,7 +33,7 @@ enum class ClientSessionPhase {
 }
 
 data class ClientUiState(
-    val address: String = "http://192.168.43.1:8787/",
+    val address: String = "",
     val pin: String = "",
     val target: ClientTargetLanguage = ClientTargetLanguage.JAPANESE,
     val phase: ClientSessionPhase = ClientSessionPhase.IDLE,
@@ -51,6 +51,9 @@ data class ClientUiState(
             phase == ClientSessionPhase.LISTENING ||
             phase == ClientSessionPhase.PAUSED
 }
+
+internal fun rejectBlankClientStart(state: ClientUiState, address: String): ClientUiState? =
+    if (address.isBlank()) state.copy(errorMessage = "송출기 웹 주소를 입력하세요.") else null
 
 class ClientSessionController(
     private val application: GuideCastClientApplication,
@@ -111,6 +114,10 @@ class ClientSessionController(
     }
 
     fun start(address: String, pin: String, target: ClientTargetLanguage) {
+        if (address.isBlank()) {
+            mutableState.update { rejectBlankClientStart(it, address) ?: it }
+            return
+        }
         modelJob?.cancel()
         modelJob = null
         stopSession(resetMessage = false)

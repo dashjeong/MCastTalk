@@ -371,8 +371,15 @@ internal fun conservativeReviewAccepted(original: String, draft: String, candida
     if (numericTokens(candidate) != originalNumbers.ifEmpty { numericTokens(draft) }) return false
     val common = setOf("The", "A", "An", "I", "We", "You", "They", "It", "This", "That", "Please", "Can", "Could",
         "Would", "Will", "May", "Let", "Our", "Your", "My", "Hello", "Welcome")
-    val names = Regex("\\b[A-Z][A-Za-z0-9]*(?:[-'][A-Za-z]+)*\\b").findAll(draft)
-        .map { it.value }.filter { it.length >= 2 && it !in common }.toSet() +
+    val affirmativePronounContractions = setOf(
+        "I'm", "I've", "I'll", "I'd", "We're", "We've", "We'll", "We'd",
+        "You're", "You've", "You'll", "You'd", "They're", "They've", "They'll", "They'd",
+        "He's", "He'll", "He'd", "She's", "She'll", "She'd", "It's", "It'll", "It'd",
+    )
+    val names = Regex("\\b[A-Z][A-Za-z0-9]*(?:[-'’][A-Za-z]+)*\\b").findAll(draft)
+        .map { it.value }.filter {
+            it.length >= 2 && it !in common && it.replace('’', '\'') !in affirmativePronounContractions
+        }.toSet() +
         Regex("\\b[A-Z]{2,}[A-Z0-9]*\\b").findAll(original).map { it.value }.toSet()
     if (names.any { name -> !Regex("(?<![A-Za-z0-9])${Regex.escape(name)}(?![A-Za-z0-9])").containsMatchIn(candidate) }) return false
     val letters = candidate.codePoints().toArray()

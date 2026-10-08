@@ -37,10 +37,11 @@ the exported content to another app.
 ## Offline correction memory
 
 Review and approve candidates from a supported online comparison path before activating
-correction memory. Gemini audio relay currently does not support comparison because
-source/translation correspondence cannot be guaranteed. Use a supported online sentence
-translation path for comparison. Check approval and activation, and roll back if needed.
-This feature does not retrain model weights.
+correction memory. Gemini audio relay captions are not automatically paired. Use
+“직접 확인한 예문 비교” in the relay screen to edit and confirm both the original and
+translation, then compare with a prepared offline model after broadcasting ends. Review
+the result before saving locally; rollback is available. This makes no additional API
+request and does not retrain model weights.
 
 Report the app version and reproduction steps. Never publish API keys, PINs or private
 recordings/transcripts. [User guide](USER_GUIDE_EN.md) · [Privacy](../SECURITY.md)
