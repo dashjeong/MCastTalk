@@ -395,7 +395,7 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
                                     if (liveTranscription && source == null) Text("실시간 받아쓰기는 말하는 언어를 직접 선택해 주세요.", color = MaterialTheme.colorScheme.error)
                                     Text(if (liveTranscription) "녹음 중 확정 문장은 자동 저장됩니다. 화면을 벗어나거나 잠그면 녹음과 마지막 문장을 저장하고 중지합니다. 최대 60분."
                                         else "원음만 녹음하며 실시간 문장을 만들지 않습니다. 화면을 벗어나거나 잠그면 녹음을 저장하고 중지합니다. 최대 60분.", style = MaterialTheme.typography.bodySmall)
-                                    Text("음성과 문장은 기기 안에서 처리합니다. 번역 모델의 최초 준비에는 인터넷이 필요할 수 있습니다.", style = MaterialTheme.typography.bodySmall)
+                                    Text("녹음과 받아쓰기는 기기에서 처리합니다. 번역은 이 메뉴의 AI 설정을 사용하며, 온라인 번역을 허용하면 문장을 선택한 서비스로 전송합니다. 기기 내 모델의 최초 준비에는 인터넷이 필요할 수 있습니다.", style = MaterialTheme.typography.bodySmall)
                                     TextButton(onClick = { transferVisible = true }, enabled = enabled && !state.playback.isPlaying,
                                         modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)) { Text("노트 백업·가져오기") }
                                 }
@@ -432,7 +432,7 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
                                         }, enabled = enabled && (missing > 0 || target != note.targetLanguage), modifier = Modifier.fillMaxWidth().defaultMinSize(minHeight = 48.dp)) {
                                             Text(if (target != note.targetLanguage) "선택한 언어로 번역" else "남은 구간 번역 ($missing)")
                                         }
-                                        Text("번역 ${note.lines.size - missing} / ${note.lines.size}개 구간 · Google Translate 기기 내 번역", style = MaterialTheme.typography.bodySmall)
+                                        Text("번역 ${note.lines.size - missing} / ${note.lines.size}개 구간", style = MaterialTheme.typography.bodySmall)
                                     }
                                     VoiceNoteLanguagePicker("말하는 언어", source, enabled, Build.VERSION.SDK_INT >= 34) { source = it; app.serviceMenuProfiles.setLanguages(ServiceMenuProfile.NOTES, it, setOf(target)) }
                                     VoiceNoteLanguagePicker("괄호 안에 표시할 번역 언어", target, enabled, false) { target = requireNotNull(it); app.serviceMenuProfiles.setLanguages(ServiceMenuProfile.NOTES, source, setOf(target)) }

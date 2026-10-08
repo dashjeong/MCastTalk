@@ -141,5 +141,10 @@ internal class GeminiPcmPacketizer {
         }
         return packets
     }
+    fun finishAndFlush(): ByteArray {
+        check(!ended)
+        ended = true
+        return pending.toByteArray().also { pending.reset() }
+    }
     fun finish(): Int { ended = true; return pending.size().also { pending.reset() } }
 }

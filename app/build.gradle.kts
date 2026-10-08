@@ -136,8 +136,8 @@ android {
         applicationId = "app.guidecast.transmitter"
         minSdk = 30
         targetSdk = 36
-        versionCode = 65
-        versionName = "0.2.52-preview.1"
+        versionCode = 66
+        versionName = "0.2.52-preview.2"
 
         // Supported production devices use ARM64. Keeping only the required ABI
         // avoids shipping an unused second LiteRT-LM native runtime in the sideload APK.

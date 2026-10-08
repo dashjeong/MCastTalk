@@ -432,6 +432,11 @@ private fun GuideCastScreen(
     var showGlossary by rememberSaveable { mutableStateOf(false) }
     var showSpeechCorrections by rememberSaveable { mutableStateOf(false) }
     var showDomainCorpus by rememberSaveable { mutableStateOf(false) }
+    var returnToCommonTools by rememberSaveable { mutableStateOf(false) }
+    fun closeCommonTool() {
+        showGlossary = false; showDomainCorpus = false
+        if (returnToCommonTools) { returnToCommonTools = false; showCommonSettings = true }
+    }
     var settingsCategory by rememberSaveable { mutableStateOf(SettingsCategory.LANGUAGES) }
     var streamSettingsDetail by rememberSaveable { mutableStateOf<String?>(null) }
     var streamApiItem by rememberSaveable { mutableStateOf<String?>(null) }
@@ -480,9 +485,9 @@ private fun GuideCastScreen(
     BackHandler(enabled = showLicenses) { showLicenses = false }
     BackHandler(enabled = showCommonSettings) { showCommonSettings = false }
     BackHandler(enabled = menuSettingsProfile != null) { menuSettingsProfile = null }
-    BackHandler(enabled = showGlossary) { showGlossary = false }
+    BackHandler(enabled = showGlossary) { closeCommonTool() }
     BackHandler(enabled = showSpeechCorrections) { showSpeechCorrections = false }
-    BackHandler(enabled = showDomainCorpus) { showDomainCorpus = false }
+    BackHandler(enabled = showDomainCorpus) { closeCommonTool() }
     val inputActive = broadcast.inputPhase == InputPhase.STARTING ||
         broadcast.inputPhase == InputPhase.ACTIVE ||
         broadcast.inputPhase == InputPhase.PAUSED
@@ -613,7 +618,7 @@ private fun GuideCastScreen(
         val destination = if (selected == MCastService.VOICE) MCastService.MULTILINGUAL else selected
         section = GuideCastSection.BROADCAST
         showCommonSettings = false; menuSettingsProfile = null; showHistorySettings = false; showServiceStatus = false
-        showLicenses = false; showGlossary = false; showSpeechCorrections = false; showDomainCorpus = false
+        showLicenses = false; showGlossary = false; showSpeechCorrections = false; showDomainCorpus = false; returnToCommonTools = false
         showAssistant = false; showDataTransfer = false; showSentenceMemory = false
         showDeveloperLab = false; showFileTranslation = false; showLiveHud = false; showLiveTranscript = false
         service = destination
@@ -631,7 +636,7 @@ private fun GuideCastScreen(
     }
     fun navigateSection(destination: GuideCastSection) {
         showServiceStatus = false; menuSettingsProfile = null; showHistorySettings = false
-        showLicenses = false; showGlossary = false; showSpeechCorrections = false; showDomainCorpus = false
+        showLicenses = false; showGlossary = false; showSpeechCorrections = false; showDomainCorpus = false; returnToCommonTools = false
         showAssistant = false; showDataTransfer = false; showSentenceMemory = false; showDeveloperLab = false; showFileTranslation = false
         streamApiItem = null; streamSettingsDetail = null; streamSetupMessage = null
         if (destination == GuideCastSection.MODELS) showCommonSettings = true
@@ -798,7 +803,7 @@ private fun GuideCastScreen(
                     onOpenStatus = { showCommonSettings = false; menuSettingsProfile = null; showHistorySettings = false; showServiceStatus = true },
                     onOpenSettings = {
                         showCommonSettings = false; menuSettingsProfile = null; showHistorySettings = false
-                        showLicenses = false; showGlossary = false; showSpeechCorrections = false; showDomainCorpus = false
+                        showLicenses = false; showGlossary = false; showSpeechCorrections = false; showDomainCorpus = false; returnToCommonTools = false
                         when (service) {
                             MCastService.NOTES -> { showServiceStatus = false; menuSettingsProfile = ServiceMenuProfile.NOTES }
                             MCastService.FILES -> { showServiceStatus = false; menuSettingsProfile = ServiceMenuProfile.FILES }
@@ -840,7 +845,10 @@ private fun GuideCastScreen(
     ) { scaffoldPadding ->
         if (showCommonSettings) {
             Box(Modifier.fillMaxSize().padding(scaffoldPadding).consumeWindowInsets(scaffoldPadding)) {
-                CommonServiceSettingsScreen(app, onBack = { showCommonSettings = false })
+                CommonServiceSettingsScreen(app, onBack = { showCommonSettings = false },
+                    onOpenGlossary = { returnToCommonTools = true; showCommonSettings = false; showGlossary = true },
+                    onOpenDomainCorpus = { returnToCommonTools = true; showCommonSettings = false; showDomainCorpus = true },
+                    onRecheckSpeechVoices = onRecheckSpeechVoices)
             }
             return@Scaffold
         }
@@ -945,9 +953,10 @@ private fun GuideCastScreen(
             }
             return@Scaffold
         }
-        if (showAssistant || showDataTransfer || showSentenceMemory || (showDeveloperLab && developerInfo) || showFileTranslation ||
-            (!showLicenses && !showGlossary && !showSpeechCorrections && section == GuideCastSection.BROADCAST &&
-                service !in setOf(MCastService.VOICE, MCastService.MULTILINGUAL))) {
+        if (!showDomainCorpus && !showGlossary &&
+            (showAssistant || showDataTransfer || showSentenceMemory || (showDeveloperLab && developerInfo) || showFileTranslation ||
+            (!showLicenses && !showSpeechCorrections && section == GuideCastSection.BROADCAST &&
+                service !in setOf(MCastService.VOICE, MCastService.MULTILINGUAL)))) {
             Box(Modifier.fillMaxSize().padding(scaffoldPadding).consumeWindowInsets(scaffoldPadding)) {
                 when {
                     showAssistant -> OperatorAssistantScreen(broadcast, translationModels, onBack = { showAssistant = false }, onNavigate = { destination ->
@@ -997,7 +1006,7 @@ private fun GuideCastScreen(
         if (showDomainCorpus) {
             DomainCorpusScreen(
                 repository = app.domainCorpus,
-                onBack = { showDomainCorpus = false },
+                onBack = { closeCommonTool() },
                 modifier = Modifier.padding(scaffoldPadding),
             )
             return@Scaffold
@@ -1011,7 +1020,7 @@ private fun GuideCastScreen(
             return@Scaffold
         }
         if (showGlossary) {
-            GlossaryScreen(Modifier.padding(scaffoldPadding), onBack = { showGlossary = false })
+            GlossaryScreen(Modifier.padding(scaffoldPadding), onBack = { closeCommonTool() })
             return@Scaffold
         }
         if (showLicenses) {
@@ -1139,7 +1148,7 @@ private fun GuideCastScreen(
                             style = MaterialTheme.typography.bodySmall)
                         OutlinedButton(onClick = onStopInput, enabled = !broadcast.inputStopping,
                             modifier = Modifier.fillMaxWidth().sizeIn(minHeight = 48.dp)) {
-                            Text(if (broadcast.inputStopping) "입력 끄는 중" else "마이크·입력 끄기")
+                            Text(if (broadcast.inputDraining) "남은 통역 처리 중" else if (broadcast.inputStopping) "입력 끄는 중" else "마이크·입력 끄기")
                         }
                     }
                     if (streamSettingsDetail != "overview") Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1265,10 +1274,18 @@ private fun GuideCastScreen(
                         OutlinedButton(onClick = onStopInput, modifier = Modifier.fillMaxWidth()) { Text("입력 끄고 변경") }
                     }
                     key(sectionTopRequest) {
+                    val consentRoomId = broadcast.recordingId
+                    val consentInputEpoch = app.broadcastRuntime.inputRequestEpoch
                     TranslationApiPanel(app.translationApiSettings, app.translationApiService, corpus = app.domainCorpus, liveMonitor = app.geminiLiveMonitor,
                         enabled = !inputActive && !broadcastActive && !broadcast.translationTestActive, textOnly = true, openItem = streamApiItem,
+                        consentOnlyAllowed = {
+                            streamingTextConsentRoomCurrent(app.broadcastRuntime.state.value,
+                                app.webBroadcastOwnership.currentOwner, app.menuBroadcast.state.value.isActive,
+                                inputRequestPending, consentRoomId, consentInputEpoch,
+                                app.broadcastRuntime.inputRequestEpoch)
+                        },
                         automaticExampleControls = { AutomaticExampleControls(app.automaticTranslationExamples,
-                            !inputActive && !broadcastActive && !broadcast.translationTestActive) },
+                            !inputActive && !broadcastActive && !broadcast.translationTestActive, reviewRepository = app.domainCorpus) },
                         onOpenItemHandled = { streamApiItem = null })
                     }
                   }
@@ -2144,7 +2161,7 @@ private fun LiveSentenceMonitor(
         ?: languageOptions.firstOrNull()
     val firstLanguage = firstLanguageOption?.languageTag
     val languageLabel = firstLanguageOption?.label
-    val captureState = if (broadcast.inputStopping) "입력 끄는 중" else when (broadcast.inputPhase) {
+    val captureState = if (broadcast.inputDraining) "입력 꺼짐 · 남은 통역 처리 중" else if (broadcast.inputStopping) "입력 끄는 중" else when (broadcast.inputPhase) {
         InputPhase.ACTIVE -> if (latest?.isFinal == true) "최근 문장 확정" else "듣는 중"
         InputPhase.PAUSED -> "입력 꺼짐"
         InputPhase.STARTING -> "입력 준비 중"
@@ -3592,7 +3609,8 @@ private fun InputControls(
             }
 
             if (showRunControls && broadcast.inputStopping) {
-                Text("입력을 끄는 중입니다. 완료되면 다시 켤 수 있습니다.",
+                Text(if (broadcast.inputDraining) "마이크는 꺼졌습니다. 이미 받은 말의 통역을 마치고 있습니다. 완료되면 다시 켤 수 있습니다."
+                    else "입력을 끄는 중입니다. 완료되면 다시 켤 수 있습니다.",
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
             } else if (showRunControls) when (broadcast.inputPhase) {
                 InputPhase.IDLE,

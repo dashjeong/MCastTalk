@@ -114,7 +114,7 @@ internal fun AdvancedTranslationApiPanel(settings: TranslationApiSettings, servi
                         Text("마지막 서버 사용량 표본: 음성 입력 ${live.inputAudioTokens ?: "미확인"} / 출력 ${live.outputAudioTokens ?: "미확인"}, 텍스트 입력 ${live.inputTextTokens ?: "미확인"} / 출력 ${live.outputTextTokens ?: "미확인"}. 누적 청구 총액이 아닙니다.")
                     }
 
-                    Text("마이크 → Gemini Live → 통역 음성. 음성 전송에 동의하면 원음이 Google로 전달됩니다. 직접 음성 중계는 한 출력 언어를 지원하며, 같은 언어의 청취자는 한 연결을 공유합니다.")
+                    Text("마이크 → Gemini Live → 통역 음성. 음성 전송에 동의하면 원음이 Google로 전달됩니다. 직접 음성 중계는 최대 5개 출력 언어를 지원합니다. 언어별로 API 연결을 사용하며 같은 언어의 청취자는 연결을 공유합니다.")
                     Text("gemini-3.5-live-translate-preview: 연속 통역, RAG·텍스트·문체 지시 미지원. gemini-3.8-live: 일반 음성 모델, 통역 지시 사용. 두 모델의 실기기 품질 비교 전 자동 기본 경로로 사용하지 않습니다.")
                     Text(if (options.allowLiveAudio) "선택한 서비스로 음성을 전송하는 데 동의했습니다." else "음성 전송 동의는 연결 확인에서 진행합니다.")
                     Text("BYOK 개인 기기 시험용입니다. 배포 앱에 공용 장기 키를 넣지 마세요. 공용 서비스는 사용자 인증·한도·단기 토큰 발급 서버가 필요하며 아직 배포하지 않았습니다. 무료/유료 데이터 정책과 계정 한도를 확인하세요.")
@@ -122,7 +122,7 @@ internal fun AdvancedTranslationApiPanel(settings: TranslationApiSettings, servi
                 }
                 if (options.provider == TranslationApiProvider.OPENAI_REALTIME) {
                     ServiceExperienceChoices("Realtime 처리 방식", listOf(
-                        ExperienceChoice("audio", "직접 음성 통역", "마이크 음성 → OpenAI 통역 음성·원문/번역 자막. 한 출력 언어를 지원합니다."),
+                        ExperienceChoice("audio", "직접 음성 통역", "마이크 음성 → OpenAI 통역 음성·원문/번역 자막. 출력 언어를 최대 5개 선택합니다."),
                         ExperienceChoice("text", "문장 연결", "기기 음성 인식 → API 문장 번역 → 기기 음성 재생.")),
                         if (options.realtimeAudio) "audio" else "text", enabled) {
                         settings.configure(options.copy(realtimeAudio = it == "audio"))

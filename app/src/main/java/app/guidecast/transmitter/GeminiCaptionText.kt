@@ -15,3 +15,15 @@ internal fun geminiVisibleTranslation(raw: String, target: String, terminal: Boo
 /** An exact no-speech sentinel is not a spoken transcription fragment. */
 internal fun geminiTranscriptionFragment(raw: String?): String? =
     raw?.takeUnless { it.trim() == "<no speech detected>" }
+
+/** Observed caption artifacts are not a provider protocol or a general meaning/completeness test.
+ * Keep the received text; require confirmation instead of claiming a usable terminal caption.
+ */
+internal fun geminiTerminalCaptionNeedsConfirmation(raw: String, target: String): Boolean {
+    val text = geminiVisibleTranslation(raw, target, terminal = true).trim()
+    return OBSERVED_GEMINI_CAPTION_PREAMBLE.containsMatchIn(text) ||
+        text.endsWith("<partial>") || (text.startsWith("<partial>") && !text.contains("</partial>"))
+}
+
+private val OBSERVED_GEMINI_CAPTION_PREAMBLE = Regex(
+    """^(?:🧠\s*)?\[([A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*)]\s*<to\s+\1>""", RegexOption.IGNORE_CASE)

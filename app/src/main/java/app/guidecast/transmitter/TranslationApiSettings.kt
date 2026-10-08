@@ -215,6 +215,11 @@ class TranslationApiSettings(context: Context,
             allowLiveAudio = state.value.usesNativeLiveAudio,
             revision = state.value.revision + 1))
     }
+    @Synchronized fun consentToSelectedService(expected: TranslationApiOptions): Boolean {
+        val next = selectedOnlineConsentUpdate(expected, state.value) ?: return false
+        store(next)
+        return true
+    }
     @Synchronized fun revokeSelectedService() {
         store(state.value.copy(allowOnline = false, allowLiveAudio = false, allowDomainReferences = false,
             revision = state.value.revision + 1))

@@ -3,6 +3,8 @@ package app.guidecast.transmitter
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
@@ -56,6 +58,7 @@ internal fun TranslationApiPanel(settings: TranslationApiSettings, service: Tran
     onOpenItemHandled: () -> Unit = {},
     contentOptionsEnabled: Boolean = true,
     automaticExampleControls: (@Composable () -> Unit)? = null,
+    consentOnlyAllowed: () -> Boolean = { false },
 ) {
     require(!nativeOnly || !textOnly) { "Select either a native or a text translation route" }
     val contentEnabled = enabled && contentOptionsEnabled
@@ -71,6 +74,9 @@ internal fun TranslationApiPanel(settings: TranslationApiSettings, service: Tran
     var keyDialog by remember { mutableStateOf(false) }
     var consentDialog by remember { mutableStateOf(false) }
     var consentForSetup by remember { mutableStateOf(false) }
+    var consentSelection by remember { mutableStateOf<TranslationApiOptions?>(null) }
+    var consentReviewed by remember { mutableStateOf(false) }
+    var consentRoomAdmission by remember { mutableStateOf<(() -> Boolean)?>(null) }
     var keyDraft by remember(options.credentialScope) { mutableStateOf("") }
     var keepKey by remember { mutableStateOf(false) }
     var keyError by remember { mutableStateOf<String?>(null) }
@@ -84,6 +90,17 @@ internal fun TranslationApiPanel(settings: TranslationApiSettings, service: Tran
     val google = options.provider in setOf(TranslationApiProvider.GEMINI, TranslationApiProvider.GEMINI_LIVE)
     val experience = serviceExperience(options)
     val serviceName = if (google) "Google Gemini" else if (options.provider == TranslationApiProvider.COMPATIBLE) "선택한 API 서비스" else "OpenAI"
+    fun openConsent(forSetup: Boolean) {
+        if (!enabled && !(forSetup && textOnly && consentOnlyAllowed())) return
+        consentForSetup = forSetup
+        consentSelection = settings.state.value
+        consentRoomAdmission = if (enabled) null else consentOnlyAllowed
+        consentReviewed = false
+        consentDialog = true
+    }
+    fun consentCanApply(): Boolean = onlineConsentCanApply(consentSelection, settings.state.value,
+        consentReviewed, settingsEnabled = enabled && consentRoomAdmission == null,
+        roomOnlyAllowed = textOnly && consentRoomAdmission?.invoke() == true && consentOnlyAllowed())
     fun startCheck() {
         if (!enabled || checking) return
         val selected = settings.state.value
@@ -91,7 +108,7 @@ internal fun TranslationApiPanel(settings: TranslationApiSettings, service: Tran
             message = "스트리밍은 문장 번역 서비스를 선택하세요. 직접 음성 API는 통역 중계에서 사용합니다."
             return
         }
-        if (!settings.authorized(selected)) { consentForSetup = false; consentDialog = true; return }
+        if (!settings.authorized(selected)) { openConsent(forSetup = false); return }
         checkJob?.cancel(); checkRevision = selected.revision; checking = true; message = null
         checkJob = scope.launch {
             try {
@@ -104,19 +121,24 @@ internal fun TranslationApiPanel(settings: TranslationApiSettings, service: Tran
         }
     }
     LaunchedEffect(options.revision) {
+        consentReviewed = false
         if (checkRevision != null && checkRevision != options.revision) {
             checkJob?.cancel(); checking = false; checkRevision = null; message = null
         }
     }
-    LaunchedEffect(openItem, enabled) {
-        if (enabled && openItem != null) {
+    LaunchedEffect(openItem, enabled, options.revision) {
+        if (!enabled && openItem == "consent" && textOnly && consentOnlyAllowed() &&
+            isOnlineTextApiProfile(options) && options.hasKey) {
+            openConsent(forSetup = true)
+            onOpenItemHandled()
+        } else if (enabled && openItem != null) {
             if (nativeServiceMissing) {
                 if (contentEnabled) servicePicker = true
             } else when (openItem) {
             "key" -> keyDialog = true
             "model" -> if (contentEnabled) aiModelPicker = true
             "service" -> if (contentEnabled) servicePicker = true
-            "consent" -> { consentForSetup = true; consentDialog = true }
+            "consent" -> openConsent(forSetup = true)
             }
             onOpenItemHandled()
         }
@@ -151,10 +173,22 @@ internal fun TranslationApiPanel(settings: TranslationApiSettings, service: Tran
             Text("처리·보관·데이터 활용에는 해당 서비스의 정책과 계정 설정이 적용되며, 사용량에 따라 별도 API 요금이 발생할 수 있습니다.")
             Text("연결 확인은 서버에 접속하지만 음성·대본을 보내거나 번역을 생성하지 않습니다. 실제 통역을 시작할 때 전송하며, 동의는 언제든 철회할 수 있습니다.", style = MaterialTheme.typography.bodySmall)
             TextButton(onClick = { uri.openUri(if (google) "https://ai.google.dev/gemini-api/terms" else "https://platform.openai.com/docs/guides/your-data") }) { Text("서비스의 데이터 처리 안내") }
+            Row(Modifier.fillMaxWidth().heightIn(min = 48.dp).toggleable(consentReviewed,
+                enabled = consentSelection == options, role = Role.Checkbox,
+                onValueChange = { consentReviewed = it })) {
+                Checkbox(checked = consentReviewed, onCheckedChange = null,
+                    enabled = consentSelection == options)
+                Text("위 내용의 전송과 별도 API 요금에 동의합니다.", modifier = Modifier.weight(1f))
+            }
+            if (consentSelection != options)
+                Text("선택한 서비스가 바뀌었습니다. 동의 창을 닫고 현재 서비스를 다시 확인해 주세요.")
         } },
-        confirmButton = { TextButton(enabled = enabled && options.hasKey, onClick = {
-            settings.consentToSelectedService(); consentDialog = false
-            if (consentForSetup) message = "동의 적용됨 · 운영 화면에서 시작해 주세요." else startCheck()
+        confirmButton = { TextButton(enabled = consentCanApply(), onClick = {
+            val selected = consentSelection
+            if (selected != null && consentCanApply() && settings.consentToSelectedService(selected)) {
+                consentDialog = false; consentReviewed = false
+                if (consentForSetup) message = "동의 적용됨 · 운영 화면에서 마이크 켜기를 눌러 시작해 주세요." else startCheck()
+            }
         }) { Text(if (consentForSetup) "동의 적용" else "동의하고 연결 확인") } },
         dismissButton = { TextButton(onClick = { consentDialog = false }) { Text("동의하지 않음") } },
     )
@@ -192,7 +226,12 @@ internal fun TranslationApiPanel(settings: TranslationApiSettings, service: Tran
     OutlinedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("통역 서비스", style = MaterialTheme.typography.titleLarge)
-            if (!enabled) ServiceConnectionFeedback("설정을 변경하려면 진행 중인 입력·방송·통역 시험을 먼저 중지해 주세요.")
+            if (!enabled) {
+                if (textOnly && consentOnlyAllowed()) Text(
+                    "AI·언어 변경은 방송 종료 후 가능합니다. 마이크가 꺼져 있을 때 문장 전송 동의만 적용할 수 있습니다.",
+                    style = MaterialTheme.typography.bodySmall)
+                else ServiceConnectionFeedback("설정을 변경하려면 진행 중인 입력·방송·통역 시험을 먼저 중지해 주세요.")
+            }
             if (textOnly && options.usesNativeLiveAudio) ServiceConnectionFeedback(
                 "현재 Live 음성 서비스는 통역 중계에서 사용합니다. 스트리밍에 사용할 문장 번역 서비스를 직접 선택해 주세요.")
             if (!nativeOnly) ServiceExperienceChoices("사용 방식", listOf(
@@ -237,6 +276,14 @@ internal fun TranslationApiPanel(settings: TranslationApiSettings, service: Tran
                     if (domain != options.domainPrompt) TextButton(enabled = contentEnabled && !checking, onClick = {
                         message = if (settings.setDomainPrompt(domain)) "분야 설정 적용됨" else "분야 내용을 확인해 주세요"
                     }) { Text("분야 적용") }
+                }
+                if (!enabled && textOnly && !options.allowOnline && options.hasKey &&
+                    isOnlineTextApiProfile(options) && consentOnlyAllowed()) {
+                    OutlinedButton(onClick = { openConsent(forSetup = true) }, modifier = Modifier.fillMaxWidth()) {
+                        Text("온라인 문장 전송 동의")
+                    }
+                    Text("방송 주소를 유지합니다. 동의 적용 뒤 운영 화면에서 마이크를 켜 주세요.",
+                        style = MaterialTheme.typography.bodySmall)
                 }
                 Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(enabled = enabled && !checking, onClick = { keyDraft = ""; keyError = null; keepKey = false; keyDialog = true }) {

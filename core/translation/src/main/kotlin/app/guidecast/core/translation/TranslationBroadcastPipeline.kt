@@ -34,6 +34,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 
 enum class TranslationWorkerState {
@@ -1070,6 +1071,17 @@ class RunningTranslationPipeline internal constructor(
         "unobserved", "unobserved", streamSession.generation, { streamSession.isActive() }),
 ) : Closeable {
     private val closed = AtomicBoolean(false)
+
+    /** Waits for normal recognition EOF, queued translation and synthesis; it does not certify quality or playback. */
+    suspend fun awaitInputCompletion(timeoutMillis: Long): Boolean {
+        require(timeoutMillis > 0)
+        if (closed.get()) return false
+        return withTimeoutOrNull(timeoutMillis) {
+            sourceJob.join()
+            workers.forEach { it.join() }
+            !closed.get()
+        } == true
+    }
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return

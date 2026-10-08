@@ -10,6 +10,10 @@ import java.util.UUID
 internal interface LiveAudioSession : java.io.Closeable {
     fun start()
     fun offer(frame: PcmAudioFrame)
+    val supportsInputDrain: Boolean get() = false
+    fun beginInputDrain(): Boolean = false
+    suspend fun awaitInputDrain(timeoutMillis: Long): Boolean = false
+    fun abortInputDrain(reason: NativeAudioEndReason) = close()
 }
 
 internal fun openAiAudioTurnSequence(sequenceBase: Long, inputSequence: Long): Long = sequenceBase + inputSequence

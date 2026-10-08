@@ -31,6 +31,22 @@ internal data class InterpreterRelayOptions(
     }
 }
 
+/** Repair only the in-memory language selection read from this stored relay profile. */
+internal fun normalizeStoredInterpreterRelayOptions(
+    legacy: InterpreterRelayOptions,
+    storedTargets: List<String>,
+): InterpreterRelayOptions {
+    val source = legacy.source.takeIf { tag ->
+        NATIVE_RELAY_SOURCE_LANGUAGE_OPTIONS.any { it.languageTag == tag }
+    } ?: "ko-KR"
+    val available = nativeRelayTargetLanguageOptions(source).map { it.languageTag }.toSet()
+    val valid = storedTargets.filter { it in available }.distinct().take(MAX_RELAY_LANGUAGES)
+    val targets = valid.ifEmpty {
+        listOf(legacy.target.takeIf { it in available } ?: if ("en" in available) "en" else "ko")
+    }
+    return legacy.copy(source = source).withTargets(targets)
+}
+
 /** Separate relay choices and portable service profiles. Credentials remain in the existing vault. */
 internal class InterpreterRelaySettings(context: Context) {
     private val comparisonEpoch = java.util.concurrent.atomic.AtomicLong()
@@ -45,9 +61,7 @@ internal class InterpreterRelaySettings(context: Context) {
         broadcastTitle = preferences.getString("broadcast_title", "").orEmpty(),
     ).let { legacy ->
         val stored = preferences.getString("targets", null)?.split(',').orEmpty()
-        val valid = stored.filter { tag -> nativeRelayTargetLanguageOptions(legacy.source).any { it.languageTag == tag } }
-            .distinct().take(MAX_RELAY_LANGUAGES)
-        legacy.withTargets(valid.ifEmpty { listOf(legacy.target) })
+        normalizeStoredInterpreterRelayOptions(legacy, stored)
     })
     val state = mutable.asStateFlow()
     @Synchronized fun update(options: InterpreterRelayOptions) {

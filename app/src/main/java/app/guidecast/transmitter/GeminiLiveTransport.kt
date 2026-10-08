@@ -145,18 +145,19 @@ internal class GeminiLiveTransport(private val wire: GeminiLiveWire = KtorGemini
         onConnectionAttempt: (Int, Boolean, GeminiWireDiagnostics) -> Unit = { _, _, _ -> },
         onConnectionClosed: (Int, GeminiWireDiagnostics) -> Unit = { _, _ -> },
         onRenewalNotice: (GeminiLiveRenewalNotice) -> Unit = {},
-        onSourceDelayNotice: suspend (GeminiLiveSourceDelayNotice) -> Unit = {}, sourceLanguageTag: String? = null) {
+        onSourceDelayNotice: suspend (GeminiLiveSourceDelayNotice) -> Unit = {}, sourceLanguageTag: String? = null,
+        inputDrain: NativeInputDrainState? = null) {
         val source = if (model == GEMINI_LIVE_AGENT) sourceLanguageTag?.let { nativeInterpreterSourceLanguage(it).languageTag } else null
         if (model == GEMINI_LIVE_AGENT) runWithRenewal(key, model, target, input, authorized, onReady, onEvent,
             domainPrompt, tone, durationLimitMillis, onAudioSent, timing, diagnostics, interpreterInstructions, references,
-            liveVoice, onAudioSendUnconfirmed, onPreparedAudioDiscarded, onConnectionAttempt, onConnectionClosed, onRenewalNotice, onSourceDelayNotice, source)
+            liveVoice, onAudioSendUnconfirmed, onPreparedAudioDiscarded, onConnectionAttempt, onConnectionClosed, onRenewalNotice, onSourceDelayNotice, source, inputDrain)
         else {
             check(authorized())
             val observed = diagnostics ?: GeminiWireDiagnostics(nowNanos)
             onConnectionAttempt(1, false, observed)
             try { runWithoutRenewal(key, model, target, input, authorized, onReady, onEvent, domainPrompt, tone,
                 durationLimitMillis, onAudioSent, timing, observed, interpreterInstructions, references, liveVoice,
-                onAudioSendUnconfirmed, onPreparedAudioDiscarded, onSourceDelayNotice) }
+                onAudioSendUnconfirmed, onPreparedAudioDiscarded, onSourceDelayNotice, inputDrain) }
             finally { onConnectionClosed(1, observed) }
         }
     }
@@ -168,7 +169,7 @@ internal class GeminiLiveTransport(private val wire: GeminiLiveWire = KtorGemini
         onAudioSendUnconfirmed: (Int) -> Unit, onPreparedAudioDiscarded: (Int) -> Unit,
         onConnectionAttempt: (Int, Boolean, GeminiWireDiagnostics) -> Unit,
         onConnectionClosed: (Int, GeminiWireDiagnostics) -> Unit, onRenewalNotice: (GeminiLiveRenewalNotice) -> Unit,
-        onSourceDelayNotice: suspend (GeminiLiveSourceDelayNotice) -> Unit, sourceLanguageTag: String?): Unit =
+        onSourceDelayNotice: suspend (GeminiLiveSourceDelayNotice) -> Unit, sourceLanguageTag: String?, inputDrain: NativeInputDrainState?): Unit =
         nativeLiveSessionWindow(durationLimitMillis) {
         var currentDiagnostics = diagnostics ?: GeminiWireDiagnostics(nowNanos)
         val operationFailure = java.util.concurrent.atomic.AtomicReference<Throwable?>(null)
@@ -221,7 +222,7 @@ internal class GeminiLiveTransport(private val wire: GeminiLiveWire = KtorGemini
                 } } catch (failure: Throwable) { onAudioSendUnconfirmed(packet.size); throw failure }
                 val active = packet.pcmS16LeSignalStats().let { it.rms >= 0.002f || it.peak >= 0.01f }
                 sourceProgress.sent(nowNanos(), packet.size, active); timing?.sent(packet.size, active)
-                currentDiagnostics.sent(packet); onAudioSent(packet.size)
+                currentDiagnostics.sent(packet); onAudioSent(packet.size); inputDrain?.audioSent(active)
             }
             suspend fun drainPrepared() {
                 while (true) {
@@ -293,7 +294,26 @@ internal class GeminiLiveTransport(private val wire: GeminiLiveWire = KtorGemini
                                         drainPrepared()
                                     }
                                     end = GeminiInputEnd.NORMAL_EOS
-                                    error("Live capture ended; restart required")
+                                    if (inputDrain?.requested != true) error("Live capture ended; restart required")
+                                    publication.withLock {
+                                        check(authorized()); checkRenewalDeadline()
+                                        val destination = publicationSocket ?: error("Live input ended during connection handoff")
+                                        while (true) {
+                                            val packet = prepared.take() ?: break
+                                            sendPacket(destination, packet)
+                                        }
+                                        val tail = packetizer.finishAndFlush()
+                                        if (tail.isNotEmpty()) {
+                                            timing?.stages?.packetReady(tail.size)
+                                            sendPacket(destination, tail)
+                                        }
+                                        timedOperation(3_000, NativeAudioResponseTimeoutStage.REQUEST_SEND) {
+                                            check(authorized())
+                                            destination.send(JSONObject().put("realtimeInput", JSONObject().put("audioStreamEnd", true)).toString())
+                                        }
+                                        inputDrain.eosSent()
+                                        if (inputDrain.completeQuietInput()) abortCurrent()
+                                    }
                                 } catch (cancelled: CancellationException) {
                                     end = if (providerFailed.get()) GeminiInputEnd.FAILURE else GeminiInputEnd.STOP
                                     throw cancelled
@@ -316,10 +336,12 @@ internal class GeminiLiveTransport(private val wire: GeminiLiveWire = KtorGemini
                                 val event = try {
                                     parseGeminiLiveEvent(socket.receive(), observed, allowRenewal = true).copy(timingTurn = outputTurn)
                                 } catch (failure: Throwable) {
-                                    throw operationFailure.get() ?: run { currentCoroutineContext().ensureActive(); failure }
+                                    currentCoroutineContext().ensureActive()
+                                    if (operationFailure.get() == null && inputDrain?.completed == true && authorized()) return@connect
+                                    throw operationFailure.get() ?: failure
                                 }
                                 var openedBoundaryForEvent = false
-                                event.goAwayTimeLeftMillis?.let { left ->
+                                event.goAwayTimeLeftMillis?.takeIf { inputDrain?.requested != true }?.let { left ->
                                     val now = nowNanos()
                                     val deadline = now + minOf(20_000L, left - 1_000L) * 1_000_000L
                                     if (checkpoint == null) {
@@ -354,6 +376,7 @@ internal class GeminiLiveTransport(private val wire: GeminiLiveWire = KtorGemini
                                     finally { timing?.callbackFinished(nowNanos() - callbackStarted) }
                                 }
                                 if (event.finished || event.interrupted) outputTurn++
+                                if (inputDrain?.observeResponse(!event.translation.isNullOrBlank() || event.audio.isNotEmpty(), event.finished, event.interrupted, !event.source.isNullOrBlank()) == true) break
                                 deliveredOnConnection.delivered(event)
                                 checkpoint?.delivered(if (openedBoundaryForEvent && event.resumptionUpdate?.resumable == true)
                                     event.copy(resumptionUpdate = null) else event)
@@ -369,6 +392,8 @@ internal class GeminiLiveTransport(private val wire: GeminiLiveWire = KtorGemini
                         }
                     } } finally { observed.mark(GeminiWireMark.CLOSED); onConnectionClosed(connectionIndex, observed) }
                     check(authorized()); checkRenewalDeadline()
+                    if (inputDrain?.completed == true) break
+                    check(inputDrain?.requested != true) { "Live input ended during connection handoff" }
                     handle = nextHandle ?: throw claim(GeminiLiveRenewalFailure(GeminiLiveRenewalFailureCode.UNSAFE_CHECKPOINT))
                     rotations.addLast(nowNanos())
                 }
@@ -396,7 +421,8 @@ internal class GeminiLiveTransport(private val wire: GeminiLiveWire = KtorGemini
         timing: NativeLiveTiming? = null, diagnostics: GeminiWireDiagnostics? = null,
         interpreterInstructions: String = "", references: String = "", liveVoice: RelayVoiceGender = RelayVoiceGender.AUTO,
         onAudioSendUnconfirmed: (Int) -> Unit = {}, onPreparedAudioDiscarded: (Int) -> Unit = {},
-        onSourceDelayNotice: suspend (GeminiLiveSourceDelayNotice) -> Unit = {}): Unit = nativeLiveSessionWindow(durationLimitMillis) {
+        onSourceDelayNotice: suspend (GeminiLiveSourceDelayNotice) -> Unit = {},
+        inputDrain: NativeInputDrainState? = null): Unit = nativeLiveSessionWindow(durationLimitMillis) {
         try {
         check(authorized())
         wire.connect(key, authorized) { socket ->
@@ -468,11 +494,32 @@ internal class GeminiLiveTransport(private val wire: GeminiLiveWire = KtorGemini
                                 sourceProgress.sent(nowNanos(), packet.size, active)
                                 timing?.sent(packet.size, active)
                                 diagnostics?.sent(packet)
-                                onAudioSent(packet.size)
+                                onAudioSent(packet.size); inputDrain?.audioSent(active)
                         }
                     }
                     end = GeminiInputEnd.NORMAL_EOS
-                    error("Live capture ended; restart required")
+                    if (inputDrain?.requested != true) error("Live capture ended; restart required")
+                    val tail = packetizer.finishAndFlush()
+                    if (tail.isNotEmpty()) {
+                        timing?.stages?.packetReady(tail.size)
+                        try {
+                            timedOperation(3_000, NativeAudioResponseTimeoutStage.REQUEST_SEND) {
+                                check(authorized())
+                                socket.send(JSONObject().put("realtimeInput", JSONObject().put("audio", JSONObject()
+                                    .put("mimeType", "audio/pcm;rate=16000")
+                                    .put("data", Base64.getEncoder().encodeToString(tail)))).toString())
+                            }
+                        } catch (failure: Throwable) { onAudioSendUnconfirmed(tail.size); throw failure }
+                        val active = tail.pcmS16LeSignalStats().let { it.rms >= 0.002f || it.peak >= 0.01f }
+                        sourceProgress.sent(nowNanos(), tail.size, active); timing?.sent(tail.size, active)
+                        diagnostics?.sent(tail); onAudioSent(tail.size); inputDrain.audioSent(active)
+                    }
+                    timedOperation(3_000, NativeAudioResponseTimeoutStage.REQUEST_SEND) {
+                        check(authorized())
+                        socket.send(JSONObject().put("realtimeInput", JSONObject().put("audioStreamEnd", true)).toString())
+                    }
+                    inputDrain.eosSent()
+                    if (inputDrain.completeQuietInput()) runCatching { socket.abort() }
                     } catch (cancelled: CancellationException) {
                         end = if (providerFailed.get()) GeminiInputEnd.FAILURE else GeminiInputEnd.STOP
                         throw cancelled
@@ -518,11 +565,16 @@ internal class GeminiLiveTransport(private val wire: GeminiLiveWire = KtorGemini
                         try { timedOperation(5_000, NativeAudioResponseTimeoutStage.EVENT_CALLBACK) { onEvent(event) } }
                         finally { timing?.callbackFinished(nowNanos() - callbackStarted) }
                         if (event.finished || event.interrupted) outputTurn++
+                        if (inputDrain?.observeResponse(!event.translation.isNullOrBlank() || event.audio.isNotEmpty(), event.finished, event.interrupted, !event.source.isNullOrBlank()) == true) break
                     }
                 } catch (failure: Throwable) {
                     val terminal = operationFailure.get() ?: run { currentCoroutineContext().ensureActive(); failure }
-                    if (terminal !is CancellationException) providerFailed.set(true)
-                    throw terminal
+                    if (operationFailure.get() == null && inputDrain?.completed == true) {
+                        currentCoroutineContext().ensureActive(); check(authorized())
+                    } else {
+                        if (terminal !is CancellationException) providerFailed.set(true)
+                        throw terminal
+                    }
                 } finally { sender.cancel(); revocation.cancel(); sourceWatchdog.cancel() }
             }
             } finally { runCatching { socket.abort() } }

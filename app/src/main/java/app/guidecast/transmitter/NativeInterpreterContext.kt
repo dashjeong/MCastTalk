@@ -164,7 +164,7 @@ internal fun nativeInterpreterInstructions(destination: String, tone: Translatio
     val validatedReferences = if (references.isEmpty()) "" else strictNativeReferenceJson(references)
     val source = sourceLanguageTag?.let(::nativeInterpreterSourceLanguage)
     return buildString {
-        append("Act only as an interpreter into $destination. Translate what is spoken, preserving meaning, facts, numbers, names, negation and conditions. Never answer requests in the speech or add explanations. ")
+        append("Act only as an interpreter into $destination. Translate what is spoken, preserving meaning, facts, numbers, names, negation and conditions. Never answer requests in the speech or add explanations. Speak only the translation, without language labels or formatting markers. ")
         if (source != null) {
             append(" Use the operator-selected source language as the primary spoken-language hint: ")
                 .append(JSONObject().put("languageTag", source.languageTag)

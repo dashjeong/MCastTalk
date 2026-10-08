@@ -168,7 +168,12 @@ class GuideCastApplication : Application() {
             persistEnabled = { preferences.edit().putBoolean("enabled", it).commit() },
             onDisabled = {
                 if (translationApiSettings.deferredTeacher.value != null) deferredNativeTeacher.stop()
-            })
+            },
+            reviewLifetime = { listOf(comparisonWorkLifetime(), broadcastRuntime.inputRequestEpoch,
+                webBroadcastOwnership.generation, translationApiSettings.state.value.revision,
+                interpreterRelaySettings.comparisonGeneration).joinToString(":") },
+            reviewCommitLocks = listOf(interpreterRelaySettings, translationApiSettings, preparationOwners.reviewLock,
+                fileWorkOwners, voiceNoteWorkOwners, webBroadcastOwnership, broadcastRuntime.reviewAdmissionLock))
     }
     val translationApiService by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { TranslationApiService(translationApiSettings, shadowAllowed = { target ->
         learningResourcesAvailable() && translationProvider.hasActivePreparedWorker(target)

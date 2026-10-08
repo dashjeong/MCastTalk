@@ -13,8 +13,12 @@ internal fun nativeComparisonIsCurrent(comparison: ShadowComparison, ownsCandida
 }
 
 /** Serialize final local activation with the session owner and the settings mutation locks. */
-class NativeComparisonCommitAdmission internal constructor(private val locks: List<Any>, private val current: () -> Boolean) {
-    internal fun commit(block: () -> Unit) = withLock(0, block)
+class NativeComparisonCommitAdmission internal constructor(private val locks: List<Any>,
+    private val atomicGate: ((() -> Unit) -> Unit)? = null, private val current: () -> Boolean) {
+    internal fun commit(block: () -> Unit) {
+        val gate = atomicGate
+        if (gate == null) withLock(0, block) else gate { withLock(0, block) }
+    }
     private fun withLock(index: Int, block: () -> Unit) {
         if (index < locks.size) synchronized(locks[index]) { withLock(index + 1, block) }
         else {

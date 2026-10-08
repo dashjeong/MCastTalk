@@ -14,6 +14,19 @@ internal enum class RelaySetupItem(val label: String, val message: String) {
     COMPARISON("오프라인 비교·사용량", "기기에서 들을 언어의 비교와 사용량을 확인합니다."),
 }
 
+/** The room starts independently from microphone permission, API keys and transmission consent. */
+internal fun relayBroadcastRequiredSetting(api: TranslationApiOptions, relay: InterpreterRelayOptions): RelaySetupItem? = when {
+    !api.usesNativeLiveAudio -> RelaySetupItem.SERVICE
+    !validTranslationApiOptions(api) -> RelaySetupItem.MODEL
+    NATIVE_RELAY_SOURCE_LANGUAGE_OPTIONS.none { it.languageTag == relay.source } -> RelaySetupItem.LANGUAGES
+    relay.targetLanguageTags.size !in 1..5 || relay.targetLanguageTags.distinct().size != relay.targetLanguageTags.size ||
+        relay.target !in relay.targetLanguageTags || relay.targetLanguageTags.any { target ->
+            nativeRelayTargetLanguageOptions(relay.source).none { it.languageTag == target }
+        } -> RelaySetupItem.LANGUAGES
+    !relay.localPlayback && !relay.networkBroadcast -> RelaySetupItem.OUTPUT
+    else -> null
+}
+
 /** Navigation advice only. The service retains the authoritative transmission admission. */
 internal fun relayRequiredSetting(api: TranslationApiOptions, relay: InterpreterRelayOptions,
     inputKind: AudioInputKind?): RelaySetupItem? = when {
@@ -29,6 +42,9 @@ internal fun relayRequiredSetting(api: TranslationApiOptions, relay: Interpreter
     inputKind !in setOf(AudioInputKind.BUILT_IN, AudioInputKind.WIRED_HEADSET, AudioInputKind.USB, AudioInputKind.BLUETOOTH) -> RelaySetupItem.INPUT
     else -> null
 }
+
+internal fun relayRecoverySetting(api: TranslationApiOptions, relay: InterpreterRelayOptions,
+    inputKind: AudioInputKind?): RelaySetupItem = relayRequiredSetting(api, relay, inputKind) ?: RelaySetupItem.INPUT
 
 internal fun streamingBroadcastRequiredSetting(api: TranslationApiOptions, translate: Boolean): String? =
     if (translate && api.usesNativeLiveAudio) "service" else null

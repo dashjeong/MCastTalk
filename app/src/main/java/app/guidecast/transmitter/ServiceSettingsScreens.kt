@@ -12,7 +12,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun CommonServiceSettingsScreen(app: GuideCastApplication, onBack: () -> Unit) {
+internal fun CommonServiceSettingsScreen(app: GuideCastApplication, onBack: () -> Unit,
+    onOpenGlossary: (() -> Unit)? = null, onOpenDomainCorpus: (() -> Unit)? = null,
+    onRecheckSpeechVoices: () -> Unit = {}) {
     val defaults by app.serviceDefaults.state.collectAsStateWithLifecycle()
     val runtime by app.broadcastRuntime.state.collectAsStateWithLifecycle()
     val menuBroadcast by app.menuBroadcast.state.collectAsStateWithLifecycle()
@@ -63,7 +65,23 @@ internal fun CommonServiceSettingsScreen(app: GuideCastApplication, onBack: () -
             Text("Google·OpenAI 키는 같은 제공자의 메뉴에서 사용합니다. 키를 변경하거나 삭제하면 같은 제공자의 전송 동의가 즉시 해제되어 진행 중인 온라인 통역이 중단될 수 있습니다. 다시 이용하려면 해당 메뉴에서 전송 동의를 확인하세요. 키 등록만으로 방송을 시작하거나 음성·문장 전송에 동의하지는 않습니다.")
             TranslationApiPanel(app.commonServiceApiSettings, app.commonServiceApiService, enabled = true, textOnly = true)
         }
-        item { AutomaticExampleControls(app.automaticTranslationExamples, exampleChangesEnabled) }
+        item {
+            Text("전문 자료·용어집", style = MaterialTheme.typography.titleMedium)
+            onOpenGlossary?.let { open ->
+                OutlinedButton(onClick = open, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                    Text("번역 용어 사전 · 검색 / 수정 / 일괄 등록")
+                }
+            }
+            onOpenDomainCorpus?.let { open ->
+                OutlinedButton(onClick = open, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                    Text("전문 용어·참고 문장 · 검수 예문")
+                }
+            }
+            Text("중계의 강의 대본·참고 글·통역 지침은 ‘통역 중계 → 서비스 설정 → 전문 분야·자료·지침’에서 관리합니다.",
+                style = MaterialTheme.typography.bodySmall)
+        }
+        item { DiagnosticsAndVoiceSettings(onRecheckSpeechVoices) }
+        item { AutomaticExampleControls(app.automaticTranslationExamples, exampleChangesEnabled, reviewRepository = app.domainCorpus) }
     }
 }
 

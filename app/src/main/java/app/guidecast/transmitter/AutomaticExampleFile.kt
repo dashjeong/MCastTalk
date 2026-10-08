@@ -24,17 +24,7 @@ internal class AutomaticExampleFile(file: File) : AutomaticExamplePersistence {
             }
             out.toByteArray()
         }
-        val root = JSONObject(bytes.toString(Charsets.UTF_8))
-        require(root.getInt("version") == 1)
-        val entries = root.getJSONArray("examples")
-        require(entries.length() <= AutomaticTranslationExamples.MAX_EXAMPLES)
-        (0 until entries.length()).map { i ->
-            val r = entries.getJSONObject(i)
-            AutomaticTranslationExample(ShadowComparison(r.getString("sourceText"), r.optString("context"),
-                r.getString("source"), r.getString("target"), r.getLong("corpusRevision"),
-                r.getString("online"), r.getString("offline"), TranslationStyle.valueOf(r.getString("style"))),
-                r.getString("domainIdentity"), r.getString("instructionsIdentity"))
-        }
+        AutomaticExampleJson.decode(bytes)
     }
     override suspend fun save(examples: List<AutomaticTranslationExample>, allowed: () -> Boolean): Boolean =
         write(examples, allowed) { commit -> commit() }
@@ -45,16 +35,7 @@ internal class AutomaticExampleFile(file: File) : AutomaticExamplePersistence {
     private suspend fun write(examples: List<AutomaticTranslationExample>, allowed: () -> Boolean,
         commitAdmission: ((() -> Boolean) -> Boolean)): Boolean = withContext(Dispatchers.IO) {
         require(examples.size <= AutomaticTranslationExamples.MAX_EXAMPLES)
-        val rows = JSONArray()
-        examples.forEach { e ->
-            val c = e.comparison
-            rows.put(JSONObject().put("sourceText", c.original).put("context", c.contextBefore.orEmpty())
-                .put("source", c.source).put("target", c.target).put("corpusRevision", c.corpusRevision)
-                .put("online", c.online).put("offline", c.offline).put("style", c.style.name)
-                .put("domainIdentity", e.domainIdentity).put("instructionsIdentity", e.instructionsIdentity))
-        }
-        val bytes = JSONObject().put("version", 1).put("examples", rows).toString().toByteArray(Charsets.UTF_8)
-        require(bytes.size <= MAX_BYTES)
+        val bytes = AutomaticExampleJson.encode(examples)
         if (!allowed()) return@withContext false
         val stream = atomic.startWrite()
         try {
@@ -67,4 +48,38 @@ internal class AutomaticExampleFile(file: File) : AutomaticExamplePersistence {
         } catch (error: Exception) { atomic.failWrite(stream); throw error }
     }
     private companion object { const val MAX_BYTES = 8 * 1024 * 1024 }
+}
+
+/** Storage version stays readable; absence of adoption provenance is never upgraded to approval. */
+internal object AutomaticExampleJson {
+    fun decode(bytes: ByteArray): List<AutomaticTranslationExample> {
+        require(bytes.size <= 8 * 1024 * 1024)
+        val root = JSONObject(bytes.toString(Charsets.UTF_8))
+        require(root.getInt("version") == 1)
+        val entries = root.getJSONArray("examples")
+        require(entries.length() <= AutomaticTranslationExamples.MAX_EXAMPLES)
+        return (0 until entries.length()).map { i ->
+            val r = entries.getJSONObject(i)
+            AutomaticTranslationExample(ShadowComparison(r.getString("sourceText"), r.optString("context"),
+                r.getString("source"), r.getString("target"), r.getLong("corpusRevision"),
+                r.getString("online"), r.getString("offline"), TranslationStyle.valueOf(r.getString("style"))),
+                r.getString("domainIdentity"), r.getString("instructionsIdentity"),
+                adoptionPolicyVersion = r.optInt("adoptionPolicyVersion", 0))
+        }
+    }
+    fun encode(examples: List<AutomaticTranslationExample>): ByteArray {
+        require(examples.size <= AutomaticTranslationExamples.MAX_EXAMPLES)
+        val rows = JSONArray()
+        examples.forEach { e ->
+            val c = e.comparison
+            rows.put(JSONObject().put("sourceText", c.original).put("context", c.contextBefore.orEmpty())
+                .put("source", c.source).put("target", c.target).put("corpusRevision", c.corpusRevision)
+                .put("online", c.online).put("offline", c.offline).put("style", c.style.name)
+                .put("domainIdentity", e.domainIdentity).put("instructionsIdentity", e.instructionsIdentity)
+                .put("adoptionPolicyVersion", e.adoptionPolicyVersion))
+        }
+        val bytes = JSONObject().put("version", 1).put("examples", rows).toString().toByteArray(Charsets.UTF_8)
+        require(bytes.size <= 8 * 1024 * 1024)
+        return bytes
+    }
 }

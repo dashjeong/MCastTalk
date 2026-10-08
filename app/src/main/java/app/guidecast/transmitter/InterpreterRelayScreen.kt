@@ -123,6 +123,15 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
         }
         lastSavedDomain = api.domainPrompt; lastSavedInstructions = api.interpreterInstructions
     }
+    fun openSetup(item: RelaySetupItem, message: String = item.message) {
+        showSettings = true; setupFocus = item; setupMessage = message
+    }
+    fun startBroadcast() {
+        val missing = relayBroadcastRequiredSetting(app.translationApiSettings.state.value,
+            app.interpreterRelaySettings.state.value)
+        if (missing != null) { openSetup(missing); return }
+        onStart()
+    }
     fun start(consented: Boolean = false, useSavedDraft: Boolean = false) {
         if (!relayMicrophoneRequestMatches(broadcast.recordingId, broadcast) ||
             (pendingMicRecordingId != null && pendingMicRecordingId != broadcast.recordingId)) {
@@ -134,7 +143,7 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
         val currentApi = app.translationApiSettings.state.value
         val missing = relayRequiredSetting(currentApi, app.interpreterRelaySettings.state.value,
             app.audioInputRepository.selectedDevice.value?.kind)
-        if (missing != null) { showSettings = true; setupFocus = missing; setupMessage = missing.message; return }
+        if (missing != null) { openSetup(missing); return }
         showSettings = false
         inputIssue = relayInputIssue(selected?.kind, true,
             runCatching { app.getSystemService(android.media.AudioManager::class.java).isMicrophoneMute }.getOrNull())
@@ -147,7 +156,7 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
     fun completeDraftAction(action: String) {
         when (action) {
             "START" -> start(useSavedDraft = true)
-            "START_BROADCAST" -> onStart()
+            "START_BROADCAST" -> startBroadcast()
             "LIBRARY" -> contextLibrary = true
             "BACK" -> onBack()
             "CLOSE_PROFESSIONAL" -> professionalSettings = false
@@ -393,7 +402,7 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
                                     relay.targetLanguageTags.joinToString(", ") { tag -> NATIVE_RELAY_TRANSLATION_LANGUAGE_OPTIONS.find { it.languageTag == tag }?.label?.substringBefore(" · ") ?: tag }
                                 RelaySetupItem.OUTPUT -> "기기 재생 ${if (relay.localPlayback) "켬" else "끔"} · LAN ${if (relay.networkBroadcast) "켬" else "끔"}"
                                 RelaySetupItem.VOICE -> relayVoiceLabel(api)
-                                RelaySetupItem.SERVICE -> "${api.model} · ${if (api.hasKey) "키 준비됨" else "키 입력 필요"}"
+                                RelaySetupItem.SERVICE -> "${api.provider.label} · ${api.model} · ${if (api.hasKey) "키 준비됨" else "키 입력 필요"}"
                                 RelaySetupItem.PROFESSIONAL -> api.domainPrompt.ifBlank { "선택 사항" }.take(40)
                                 RelaySetupItem.COMPARISON -> comparisonChoice.status
                                 else -> ""
@@ -409,7 +418,7 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
                     if (!microphoneGranted) Button(onClick = onRequestMicrophone, enabled = !microphoneBusy) { Text("마이크 접근 허용") }
                     Text("음성 입력 처리 · 마이크 켜기/끄기는 운영 화면에서 따로 조작합니다.", style = MaterialTheme.typography.bodySmall)
                     if (broadcast.isInterpreterRelay) {
-                        Text("마이크 · ${if (broadcast.inputStopping) "끄는 중" else when (broadcast.inputPhase) {
+                        Text("마이크 · ${if (broadcast.inputDraining) "꺼짐 · 남은 통역 처리 중" else if (broadcast.inputStopping) "끄는 중" else when (broadcast.inputPhase) {
                             InputPhase.ACTIVE -> "입력 중"; InputPhase.STARTING -> "준비 중";
                             InputPhase.FAILED -> "입력 중단"; else -> "꺼짐" }}")
                         LinearProgressIndicator(progress = { broadcast.inputPeak.coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
@@ -433,6 +442,8 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
                         Text("중계에서는 기기 재생음의 재입력을 줄이도록 단말 에코 제거도 요청합니다. 실제 적용 여부는 입력 상태에 표시됩니다.", style = MaterialTheme.typography.bodySmall)
                 }
                 RelaySetupItem.LANGUAGES -> item {
+                    Text("아래에서 실제 통역할 언어를 선택해 적용합니다. 운영 화면의 ‘자막 표시’ 버튼은 보이는 자막만 바꾸며 AI 출력 언어를 바꾸지 않습니다.",
+                        style = MaterialTheme.typography.bodySmall)
             OutlinedButton(onClick = { sourceLanguageQuery = ""; showAllSourceLanguages = false; sourcePicker = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("발화 · ${NATIVE_RELAY_SOURCE_LANGUAGE_OPTIONS.find { it.languageTag == relay.source }?.label ?: relay.source}") }
             OutlinedButton(onClick = {
                 targetDraft = relay.targetLanguageTags.toCollection(arrayListOf())
@@ -495,7 +506,7 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
                 comparisonChoice.checked, learningSupported) {
                 app.interpreterRelaySettings.update(relay.copy(compareOffline = it)) }
             if (automaticExampleControls != null) automaticExampleControls()
-            else AutomaticExampleControls(app.automaticTranslationExamples, !busy && !microphoneBusy && !draftDirty)
+            else AutomaticExampleControls(app.automaticTranslationExamples, !busy && !microphoneBusy && !draftDirty, reviewRepository = app.domainCorpus)
             DeferredNativeLearningControls(app, !busy && !microphoneBusy && !draftDirty)
             if (!learningSupported) Text(NativeLearningPause.ALIGNMENT.label)
             else Text("오프라인 모델이 없거나 바쁘면 비교만 건너뜁니다. 검수 자료 재사용이며 모델 가중치 학습이 아닙니다.")
@@ -540,12 +551,17 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
             onToggleTarget = { tag -> captionDisplayTargets = ArrayList(toggleWorkspaceDisplayLanguage(
                 captionLanguages, captionDisplayTargets, tag)) },
             onOpenSettings = { showSettings = true; setupFocus = RelaySetupItem.LANGUAGES; setupMessage = null },
-            onOpenStatus = { showSettings = true; setupFocus = RelaySetupItem.INPUT; setupMessage = null },
+            onOpenStatus = {
+                val destination = relayRecoverySetting(app.translationApiSettings.state.value,
+                    app.interpreterRelaySettings.state.value, app.audioInputRepository.selectedDevice.value?.kind)
+                openSetup(destination)
+            },
             modifier = Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).semantics { paneTitle = "통역 중계" },
             additionalIssue = if (workspace.otherActive) "다른 서비스에서 방송 또는 입력을 사용 중입니다. 해당 서비스에서 종료하세요."
                 else broadcast.recordingWarning ?: endActionMessage ?: levelGuidance.label.takeIf {
                     broadcast.isInterpreterRelay && broadcast.inputPhase == InputPhase.ACTIVE && levelGuidance.attention },
             emptyMessage = "방송 시작을 누른 뒤 마이크를 켜세요. 인식한 원문과 선택한 통역 자막이 여기에 표시됩니다.",
+            displaySelectionLabel = "자막 표시",
             operatingActions = {
                 if (workspace.broadcastActive && workspace.displayedBroadcast.listenerUrl != null)
                     Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {

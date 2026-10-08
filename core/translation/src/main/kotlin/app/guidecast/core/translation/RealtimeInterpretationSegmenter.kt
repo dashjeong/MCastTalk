@@ -17,6 +17,7 @@ class RealtimeInterpretationSegmenter(
     private data class ObservedToken(
         val text: String,
         val firstObservedAtNanos: Long,
+        val unchangedSinceNanos: Long,
     )
 
     private var sourceSequence: Long? = null
@@ -296,6 +297,27 @@ class RealtimeInterpretationSegmenter(
             stable.take(strongBoundary + 1).hasUsefulText()
         ) {
             return strongBoundary + 1
+        }
+
+        // An advisory acoustic gate can remain active in background noise. Once a complete
+        // boundary has survived LocalAgreement, bound its additional wait without inventing a
+        // provider final or cutting an arbitrary prefix. The retained tail keeps its own age.
+        val stableSentenceLimit = policy.maximumStableSentenceWaitMillis
+        if (stableSentenceLimit != null && elapsedMillis >= stableSentenceLimit) {
+            val timedResidual = residualTokens(observedFullTokens)
+            val boundedBoundary = stable.indices.firstOrNull { index ->
+                isStrongBoundary(stable[index]) &&
+                    isMeaningBoundary(residual, index) &&
+                    (!requirePositiveKoreanCompletion ||
+                        isPositiveKoreanSentenceEnding(stable[index])) &&
+                    timedResidual.getOrNull(index)?.let { token ->
+                        ((nowNanos - token.unchangedSinceNanos) / 1_000_000L)
+                            .coerceAtLeast(0L) >= policy.utteranceEndTextStabilityMillis
+                    } == true
+            } ?: -1
+            if (boundedBoundary >= 0 && stable.take(boundedBoundary + 1).hasUsefulText()) {
+                return boundedBoundary + 1
+            }
         }
 
         // A short postposed modifier belongs to its predicate (“좋네 아주 많이”). Wait for
@@ -601,7 +623,9 @@ class RealtimeInterpretationSegmenter(
     ): List<ObservedToken> {
         if (current.isEmpty()) return emptyList()
         if (previous.isEmpty()) {
-            return current.map { text -> ObservedToken(text, initialObservationNanos) }
+            return current.map { text ->
+                ObservedToken(text, initialObservationNanos, newTokenObservationNanos)
+            }
         }
 
         val operations = Array(previous.size + 1) { ByteArray(current.size + 1) }
@@ -667,6 +691,7 @@ class RealtimeInterpretationSegmenter(
         }
 
         val inheritedTimes = arrayOfNulls<Long>(current.size)
+        val unchangedTimes = arrayOfNulls<Long>(current.size)
         var oldIndex = previous.size
         var newIndex = current.size
         while (oldIndex > 0 || newIndex > 0) {
@@ -674,6 +699,9 @@ class RealtimeInterpretationSegmenter(
                 ALIGN_DIAGONAL -> {
                     inheritedTimes[newIndex - 1] =
                         previous[oldIndex - 1].firstObservedAtNanos
+                    if (previous[oldIndex - 1].text == current[newIndex - 1]) {
+                        unchangedTimes[newIndex - 1] = previous[oldIndex - 1].unchangedSinceNanos
+                    }
                     oldIndex -= 1
                     newIndex -= 1
                 }
@@ -687,6 +715,7 @@ class RealtimeInterpretationSegmenter(
             ObservedToken(
                 text = text,
                 firstObservedAtNanos = inheritedTimes[index] ?: newTokenObservationNanos,
+                unchangedSinceNanos = unchangedTimes[index] ?: newTokenObservationNanos,
             )
         }
     }
@@ -763,6 +792,8 @@ data class RealtimeInterpretationPolicy(
     val preserveIncompleteMeaningAcrossPauses: Boolean = false,
     /** Null keeps strict semantic holding; product mode bounds genuine acoustic idle at 8s. */
     val maximumIdleFlushMillis: Long? = null,
+    /** Bounds holding a stable complete sentence; never chooses an arbitrary word boundary. */
+    val maximumStableSentenceWaitMillis: Long? = null,
 ) {
     init {
         require(stableHypothesisCount in 2..4)
@@ -788,6 +819,7 @@ data class RealtimeInterpretationPolicy(
         require(semanticContinuousSpeechCommitMillis in 2_000..6_000)
         require(semanticRightContextTokens in 2..6)
         require(maximumIdleFlushMillis == null || maximumIdleFlushMillis in 5_000..15_000)
+        require(maximumStableSentenceWaitMillis == null || maximumStableSentenceWaitMillis in 5_000..15_000)
     }
 }
 
@@ -835,6 +867,7 @@ fun sentenceCompletionInterpretationPolicy(): RealtimeInterpretationPolicy =
         requireCompleteKoreanMeaningForUnpunctuatedPause = true,
         preserveIncompleteMeaningAcrossPauses = true,
         maximumIdleFlushMillis = 8_000,
+        maximumStableSentenceWaitMillis = 12_000,
     )
 
 private fun elapsedMillis(startNanos: Long?, nowNanos: Long): Long =

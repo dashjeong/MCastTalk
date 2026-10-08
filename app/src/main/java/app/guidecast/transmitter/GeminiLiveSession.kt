@@ -50,6 +50,7 @@ internal class GeminiLiveSession(
     private val sourceLanguageTag: String? = null,
 ) : LiveAudioSession {
     private val termination = NativeAudioTermination(onEnded)
+    private val inputDrain = NativeInputDrainState()
     private val sourceDelayWarning = GeminiLiveSourceDelayWarningOwner(
         allowed = { !termination.isEnded && allowed() && settings.authorized(options) && options.allowLiveAudio },
         changed = onSourceDelayStatus)
@@ -135,7 +136,7 @@ internal class GeminiLiveSession(
                     monitor.loss(target, LiveAudioLoss.INPUT_ABANDONED, bytes)
                     diagnostics.loss(LiveAudioLoss.INPUT_ABANDONED, bytes)
                 },
-                interpreterInstructions = context.instructions, references = context.references, liveVoice = options.liveVoice, sourceLanguageTag = sourceLanguageTag,
+                interpreterInstructions = context.instructions, references = context.references, liveVoice = options.liveVoice, sourceLanguageTag = sourceLanguageTag, inputDrain = inputDrain,
                 onConnectionAttempt = { index, resumed, observed ->
                     check(!termination.isEnded && allowed() && settings.authorized(options) && options.allowLiveAudio)
                     connectionIndex = index; usageReports = 0; wireDiagnostics = observed
@@ -191,6 +192,7 @@ internal class GeminiLiveSession(
                                 "LANE_SOURCE_OBSERVATION_OUTPUT_UNCONFIRMED_NOT_UTTERANCE_ALIGNMENT"
                                 else "PCM_ENERGY_IS_NOT_SPEECH_OR_PROCESSING_ACK").toString())
                 })
+            if (inputDrain.completed) termination.request(NativeAudioEndReason.INPUT_COMPLETED)
         } catch (cancelled: CancellationException) {
             termination.failed(cancelled, settings.authorized(options), allowed())
             if (cancelled is TimeoutCancellationException) onFailure("Gemini Live 연결 준비 시간 초과 · 다시 시작하세요.")
@@ -240,6 +242,7 @@ internal class GeminiLiveSession(
     init { job.invokeOnCompletion { cause ->
         if (cause != null) termination.failed(cause)
         termination.finish()
+        inputDrain.sessionEnded(termination.reason == NativeAudioEndReason.INPUT_COMPLETED)
     } }
     override fun start() { job.start() }
     suspend fun awaitReady() = readiness.awaitReady()
@@ -251,6 +254,28 @@ internal class GeminiLiveSession(
             onFailure("Gemini Live 전송 대기열 초과 · 음성 일부가 미전송되어 해당 연결을 중지했습니다. 다시 시작하세요.")
             close()
         }
+    }
+    override val supportsInputDrain: Boolean get() = true
+    override fun beginInputDrain(): Boolean {
+        if (termination.isEnded || !inputDrain.request()) return false
+        sourceDelayWarning.endInput()
+        input.endInput()
+        monitor.update { it.copy(state = "$target 마이크 꺼짐 · 남은 통역 처리 중") }
+        return true
+    }
+    override suspend fun awaitInputDrain(timeoutMillis: Long): Boolean {
+        require(timeoutMillis > 0)
+        val result = withTimeoutOrNull(timeoutMillis) { inputDrain.awaitEnded() }
+        if (result == null) {
+            termination.request(NativeAudioEndReason.TIMEOUT)
+            close()
+            return false
+        }
+        return result
+    }
+    override fun abortInputDrain(reason: NativeAudioEndReason) {
+        termination.request(reason)
+        close()
     }
     override fun close() {
         termination.request(NativeAudioEndReason.STOPPED); termination.finish()

@@ -206,6 +206,7 @@ internal class GeminiLiveInput(private val lost: (LiveAudioLoss, Int) -> Unit) {
         close()
         return false
     }
+    @Synchronized fun endInput() { closed = true; ready = false; channel.close() }
     @Synchronized fun close() { closed = true; ready = false; channel.cancel() }
 }
 
@@ -236,11 +237,16 @@ internal class GeminiLiveSegments(private val target: String, private val source
         val visible = source.isNotBlank() || translation.isNotBlank() || event.audio.isNotEmpty() || firstEventNanos != null
         if (!visible) return null
         if (firstEventNanos == null) firstEventNanos = now
-        val row = TranslationTranscriptLine(next, source, requireNotNull(firstEventNanos), event.finished,
+        val needsConfirmation = event.finished && geminiTerminalCaptionNeedsConfirmation(translation, target)
+        val row = TranslationTranscriptLine(next, source, requireNotNull(firstEventNanos), event.finished && !needsConfirmation,
             translations = visibleTranslations(terminal = event.finished),
             sourceLanguageTag = sourceLanguage, liveSegmentLanguage = target, liveSourceFinal = sourceFinal,
             nativeAudioSessionId = sessionId,
-            liveOutputState = if (event.finished) LiveOutputState.GENERATED else LiveOutputState.GENERATING)
+            liveOutputState = when {
+                needsConfirmation -> LiveOutputState.INCOMPLETE
+                event.finished -> LiveOutputState.GENERATED
+                else -> LiveOutputState.GENERATING
+            })
         if (event.finished) advance()
         return row
     }

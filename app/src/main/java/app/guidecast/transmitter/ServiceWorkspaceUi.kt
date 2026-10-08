@@ -57,6 +57,7 @@ internal fun streamingWorkspaceStatus(broadcast: BroadcastSnapshot): WorkspaceSt
         it.translationState == BroadcastChannelWorkerState.DEGRADED || it.synthesisState == BroadcastChannelWorkerState.DEGRADED } ->
         WorkspaceStatus("언어 확인", "일부 언어의 번역·음성에 문제가 있습니다. 언어별 상태에서 확인해 주세요.")
     broadcast.phase == BroadcastPhase.STARTING -> WorkspaceStatus("방송 준비 중")
+    broadcast.inputDraining -> WorkspaceStatus("마이크 꺼짐 · 남은 통역 처리 중")
     broadcast.inputStopping -> WorkspaceStatus("입력 종료 중")
     broadcast.inputPhase == InputPhase.STARTING -> WorkspaceStatus("입력 준비 중")
     broadcast.inputPhase == InputPhase.ACTIVE && broadcast.inputFrameCount == 0L -> WorkspaceStatus("입력 연결 중")
@@ -105,10 +106,14 @@ internal fun ServiceWorkspaceTopBar(title: String, broadcastingLabel: String?, l
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("service-workspace-status").semantics {
                         contentDescription = "$title · $broadcastingLabel · ${listenerCount?.let { "청취 연결 ${it}개" } ?: "청취 연결 미확인"} · ${status.label}. 청취 주소·QR과 상태 열기"
                     }, contentPadding = PaddingValues(horizontal = 4.dp)) {
-                    Text("$broadcastingLabel · $connections · ${status.label}",
-                        style = MaterialTheme.typography.labelLarge, maxLines = if (expandedText && !shortScreen) 2 else 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = if (status.issue != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        if (!statusOnSecondRow) Text(title, style = MaterialTheme.typography.titleMedium,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("$broadcastingLabel · $connections · ${status.label}",
+                            style = MaterialTheme.typography.labelSmall, maxLines = if (expandedText && !shortScreen) 2 else 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = if (status.issue != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
+                    }
                 } else Text(title, style = MaterialTheme.typography.titleMedium,
                     maxLines = if (expandedText) 2 else 1, overflow = TextOverflow.Ellipsis)
             }
@@ -160,7 +165,7 @@ internal fun WorkspaceSettingsFooter(broadcast: BroadcastSnapshot, broadcastActi
                 }
                 if (inputRunning) OutlinedButton(onClick = onStopInput, enabled = !broadcast.inputStopping,
                     modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("settings-stop-input")) {
-                    Text(if (broadcast.inputStopping) "입력 끄는 중" else "마이크·입력 끄기")
+                    Text(if (broadcast.inputDraining) "남은 통역 처리 중" else if (broadcast.inputStopping) "입력 끄는 중" else "마이크·입력 끄기")
                 }
             }
         }
@@ -180,6 +185,7 @@ internal fun StreamingWorkspaceFooter(broadcast: BroadcastSnapshot, broadcastAct
     val starting = policy.inputStarting
     val canTurnOff = policy.canStopInput
     val micLabel = when {
+        broadcast.inputDraining -> "통역 마치는 중"
         broadcast.inputStopping -> "$inputName 끄는 중"
         starting -> "$inputName 켜기 취소"
         canTurnOff -> "$inputName 끄기"
@@ -210,6 +216,7 @@ internal fun StreamingWorkspaceFooter(broadcast: BroadcastSnapshot, broadcastAct
                 else Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     WorkspaceSymbol(WorkspaceSymbolKind.MICROPHONE)
                     Text(when {
+                        broadcast.inputDraining -> "입력 꺼짐"
                         broadcast.inputStopping -> "입력 종료 중"
                         starting -> "입력 준비 중"
                         canTurnOff -> "입력 켜짐"
@@ -239,7 +246,7 @@ internal fun StreamingTranscriptWorkspace(broadcast: BroadcastSnapshot, availabl
     onOpenSettings: () -> Unit, onOpenStatus: () -> Unit,
     sourceActions: @Composable (TranslationTranscriptLine) -> Unit = {}, modifier: Modifier = Modifier,
     operatingActions: @Composable () -> Unit = {}, additionalIssue: String? = null, emptyMessage: String? = null,
-    originalAudioOnly: Boolean = false) {
+    originalAudioOnly: Boolean = false, displaySelectionLabel: String? = null) {
     var follow by rememberSaveable { mutableStateOf(true) }
     val list = rememberLazyListState()
     var followingScroll by remember { mutableStateOf(false) }
@@ -265,6 +272,7 @@ internal fun StreamingTranscriptWorkspace(broadcast: BroadcastSnapshot, availabl
         val content: @Composable ColumnScope.() -> Unit = {
         if (!originalAudioOnly) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+            displaySelectionLabel?.let { Text(it, style = MaterialTheme.typography.labelMedium) }
             FilterChip(selected = showSource, onClick = onToggleSource, label = { Text("원문") },
                 modifier = Modifier.heightIn(min = 48.dp).testTag("streaming-display-source"))
             availableTargets.forEach { tag ->

@@ -119,6 +119,7 @@ data class BroadcastSnapshot(
     val runMode: BroadcastRunMode = BroadcastRunMode.NETWORK,
     val inputPhase: InputPhase = InputPhase.IDLE,
     val inputStopping: Boolean = false,
+    val inputDraining: Boolean = false,
     val phase: BroadcastPhase = BroadcastPhase.IDLE,
     val accessMode: OperatorAccessMode? = null,
     val listenerUrl: String? = null,
@@ -164,6 +165,7 @@ enum class LiveOutputState(val label: String) {
 
 enum class NativeAudioEndReason(val label: String, val outputState: LiveOutputState) {
     STOPPED("통역 중지", LiveOutputState.CANCELLED),
+    INPUT_COMPLETED("입력 종료 · 응답 완료", LiveOutputState.INCOMPLETE),
     CONSENT_REVOKED("온라인 전송 동의 해제", LiveOutputState.CANCELLED),
     SESSION_ENDED("입력 세션 종료", LiveOutputState.CANCELLED),
     TIMEOUT("시간 제한 종료", LiveOutputState.INCOMPLETE),
@@ -218,25 +220,34 @@ internal fun terminalizeNativeAudioTranscripts(lines: List<TranslationTranscript
 }
 
 class BroadcastRuntime {
+    internal val reviewAdmissionLock = Any()
     private val learningEpoch = AtomicLong()
     internal val learningActivityEpoch: Long get() = learningEpoch.get()
     private val mutableState = MutableStateFlow(BroadcastSnapshot())
     val state: StateFlow<BroadcastSnapshot> = mutableState.asStateFlow()
     val inputRequestEpoch: Long get() = requestEpoch.get()
 
-    fun invalidateInputRequest(): Long = requestEpoch.incrementAndGet()
+    fun invalidateInputRequest(): Long = synchronized(reviewAdmissionLock) { requestEpoch.incrementAndGet() }
 
     internal fun update(snapshot: BroadcastSnapshot) {
         update { snapshot }
     }
 
     internal fun update(transform: (BroadcastSnapshot) -> BroadcastSnapshot) {
-        mutableState.update { before ->
+        while (true) {
+            val before = mutableState.value
             val next = transform(before)
-            if ((before.inputPhase in setOf(InputPhase.IDLE, InputPhase.FAILED, InputPhase.PAUSED) && next.inputPhase in setOf(InputPhase.STARTING, InputPhase.ACTIVE)) ||
-                (before.phase in setOf(BroadcastPhase.IDLE, BroadcastPhase.FAILED, BroadcastPhase.PAUSED) && next.phase in setOf(BroadcastPhase.STARTING, BroadcastPhase.LIVE)))
-                learningEpoch.incrementAndGet()
-            next
+            val starting = (before.inputPhase in setOf(InputPhase.IDLE, InputPhase.FAILED, InputPhase.PAUSED) &&
+                next.inputPhase in setOf(InputPhase.STARTING, InputPhase.ACTIVE)) ||
+                (before.phase in setOf(BroadcastPhase.IDLE, BroadcastPhase.FAILED, BroadcastPhase.PAUSED) &&
+                    next.phase in setOf(BroadcastPhase.STARTING, BroadcastPhase.LIVE))
+            if (starting) {
+                val applied = synchronized(reviewAdmissionLock) {
+                    if (!mutableState.compareAndSet(before, next)) false
+                    else { learningEpoch.incrementAndGet(); true }
+                }
+                if (applied) return
+            } else if (mutableState.compareAndSet(before, next)) return
         }
     }
 
