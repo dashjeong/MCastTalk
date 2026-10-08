@@ -55,6 +55,7 @@ internal fun TranslationApiPanel(settings: TranslationApiSettings, service: Tran
     openItem: String? = null,
     onOpenItemHandled: () -> Unit = {},
     contentOptionsEnabled: Boolean = true,
+    automaticExampleControls: (@Composable () -> Unit)? = null,
 ) {
     require(!nativeOnly || !textOnly) { "Select either a native or a text translation route" }
     val contentEnabled = enabled && contentOptionsEnabled
@@ -267,8 +268,14 @@ internal fun TranslationApiPanel(settings: TranslationApiSettings, service: Tran
                 if (options.allowOnline) TextButton(onClick = { checkJob?.cancel(); settings.revokeSelectedService(); message = "전송 동의 철회됨 · 진행 중인 요청을 중지합니다" }) { Text("전송 동의 철회") }
                 if (options.hasKey) TextButton(enabled = enabled && !checking, onClick = { message = if (settings.clearKey()) "키 삭제됨" else "삭제를 확인하지 못했습니다. 전송은 중지했습니다." }) { Text("키 삭제") }
             }
-            if (!nativeOnly && !textOnly) TextButton(onClick = { advanced = !advanced }) { Text(if (advanced) "고급 설정 닫기" else "모델·학습·사용량 상세") }
-            if (advanced && !nativeOnly && !textOnly) AdvancedTranslationApiPanel(settings, service, contentEnabled, corpus, liveMonitor)
+            if (!nativeOnly && (!textOnly || corpus != null || automaticExampleControls != null))
+                TextButton(onClick = { advanced = !advanced }) {
+                    Text(if (advanced) "상세 설정 닫기" else if (textOnly) "비교·자동 예문" else "모델·비교·사용량 상세")
+                }
+            if (advanced && !nativeOnly) {
+                if (textOnly) TranslationComparisonSettings(settings, service, contentEnabled, corpus, automaticExampleControls)
+                else AdvancedTranslationApiPanel(settings, service, contentEnabled, corpus, liveMonitor, automaticExampleControls)
+            }
         }
     }
 }

@@ -28,49 +28,21 @@ import androidx.compose.ui.unit.dp
 import app.guidecast.core.translation.TranslationStyle
 
 @Composable
-internal fun AdvancedTranslationApiPanel(settings: TranslationApiSettings, service: TranslationApiService, enabled: Boolean, corpus: DomainCorpusRepository? = null, liveMonitor: GeminiLiveMonitor? = null) {
+internal fun AdvancedTranslationApiPanel(settings: TranslationApiSettings, service: TranslationApiService, enabled: Boolean,
+    corpus: DomainCorpusRepository? = null, liveMonitor: GeminiLiveMonitor? = null,
+    automaticExampleControls: (@Composable () -> Unit)? = null) {
     val options by settings.state.collectAsState()
     val states by service.states.collectAsState()
     val usage by service.usage.collectAsState()
-    val shadow by service.shadow.collectAsState()
-    val sessionLearning by settings.sessionLearning.collectAsState()
-    var learningConsent by remember { mutableStateOf(false) }
-    var consentReferences by remember { mutableStateOf(false) }
     var domain by remember(options.domainPrompt) { mutableStateOf(options.domainPrompt) }
     var model by remember(options.model) { mutableStateOf(options.model) }
     var base by remember(options.baseUrl) { mutableStateOf(options.baseUrl) }
     var key by remember(options.credentialScope) { mutableStateOf("") }
     var persistKey by remember(options.credentialScope) { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
-    if (learningConsent) {
-        val learningProvider = if (options.provider == TranslationApiProvider.LOCAL) settings.preparedLearningProvider() else options
-        AlertDialog(onDismissRequest = { learningConsent = false }, title = { Text("이번 실행의 학습 비교 동의") },
-            text = { Column {
-                Text("주 방송은 현재 선택을 유지합니다. 비교 대상: ${learningProvider?.provider?.label ?: "미설정"} / ${learningProvider?.model ?: "미설정"}. 원문과 최대 1,000자의 직전 문맥을 이 API로 전송하며 별도 요금이 발생합니다. 원음 파일은 보내지 않습니다.")
-                Row { Checkbox(consentReferences, { consentReferences = it }); Text("동일 자료 비교를 위해 검색된 관련 근거 최대 600자 전송도 허용") }
-            } }, confirmButton = { TextButton(onClick = {
-                message = if (settings.beginSessionLearning(true, consentReferences)) "이번 실행의 학습 비교를 켰습니다."
-                    else "ONLINE 설정에서 비교 제공자와 키를 먼저 저장하세요. OFFLINE으로 돌아온 뒤 학습을 켤 수 있습니다."
-                learningConsent = false
-            }) { Text("전송·비용에 동의하고 학습 켜기") } },
-            dismissButton = { TextButton(onClick = { learningConsent = false }) { Text("취소") } })
-    }
     OutlinedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("통번역 운용 모드 · 문체", style = MaterialTheme.typography.titleLarge)
-            val learningCapability = serviceExperience(options)
-            val learningSupported = learningCapability.supportsLearningComparison
-            ServiceExperienceToggle("학습 비교 (상시 설정 포함)",
-                if (learningSupported) "별도 동의 후 보조 엔진과 비교합니다. 주 방송 경로는 유지됩니다."
-                else if (learningCapability.supportsNativePairComparison) "직접 음성 비교는 통역 중계의 ‘오프라인 결과와 비교’에서 켜세요. 상시 문장 비교 설정은 이 경로에 적용되지 않습니다."
-                else "이 Live 음성 경로에서는 학습 비교를 지원하지 않습니다. 저장된 상시 학습 설정은 적용되지 않습니다.",
-                learningSupported && (sessionLearning || (options.provider != TranslationApiProvider.LOCAL && options.alwaysLearnOnline)),
-                enabled && learningSupported) { on ->
-                if (!on) { settings.endSessionLearning(); if (options.provider != TranslationApiProvider.LOCAL) settings.setAlwaysLearnOnline(false) }
-                else { consentReferences = false; learningConsent = true }
-            }
-            Text("OFFLINE은 로컬 주 방송, ONLINE은 선택 API 주 방송입니다. 이번 학습에 따로 동의한 경우에만 반대쪽 엔진을 보조 비교합니다.", style = MaterialTheme.typography.bodySmall)
-            shadow.lastPause?.let { Text("학습 일시 중지: $it", style = MaterialTheme.typography.bodySmall) }
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TranslationApiProvider.entries.forEach { provider ->
                     FilterChip(selected = options.provider == provider, enabled = enabled, onClick = {
@@ -186,12 +158,6 @@ internal fun AdvancedTranslationApiPanel(settings: TranslationApiSettings, servi
                 ServiceExperienceToggle("관련 도메인 근거 전송 허용 (최대 600자)",
                     if (capability.supportsReferences) "기기에서 찾은 짧은 관련 근거만 전송합니다. 전체 자료 파일은 보내지 않습니다." else "이 음성 경로는 자료 참고를 지원하지 않습니다.",
                     capability.supportsReferences && options.allowDomainReferences, enabled && capability.supportsReferences, settings::setAllowDomainReferences)
-                ServiceExperienceToggle("온라인 사용 시 상시 학습",
-                    if (capability.supportsLearningComparison) "온라인 결과와 기기 내 결과를 비교합니다. 검토 전에는 자동 적용하지 않습니다."
-                    else if (capability.supportsNativePairComparison) "통역 중계의 ‘오프라인 결과와 비교’를 별도로 켜세요. 저장된 상시 문장 비교 설정은 적용하지 않습니다."
-                    else "이 음성 경로에서는 저장된 학습 옵션을 적용하지 않습니다.",
-                    capability.supportsLearningComparison && options.alwaysLearnOnline, capability.supportsLearningComparison && (enabled || options.alwaysLearnOnline), settings::setAlwaysLearnOnline)
-                Text("기본 꺼짐. 설정한 API 전송 동의 범위에서 같은 원문을 준비된 로컬 엔진과 비교합니다. 검토 결과는 자동 적용하지 않습니다. 이 저장 옵션만으로 OFFLINE 전송이 켜지지 않습니다. OFFLINE 보조 비교에는 이번 학습의 별도 동의가 필요합니다.", style = MaterialTheme.typography.bodySmall)
                 Text(if (options.hasKey) "키 저장됨 · ${if (options.allowOnline) "전송 허용됨" else "전송 꺼짐"}" else "API 키 없음")
                 Text("이 앱 실행 중 요청 ${usage.requests}회 · 확인된 사용량의 예상 합계 USD ${usage.estimatedUsd.toPlainString()}" +
                     "\n사용량 미확인 ${usage.unconfirmedUsage}회 · 가격 미확인 ${usage.unpricedUsage}회" +
@@ -201,12 +167,7 @@ internal fun AdvancedTranslationApiPanel(settings: TranslationApiSettings, servi
                     style = MaterialTheme.typography.bodySmall)
                 states.forEach { (language, state) -> Text("$language · ${state.label}", style = MaterialTheme.typography.bodySmall) }
             }
-                Text("학습 비교 시도 ${shadow.attempted} · 완료 ${shadow.completed} · 미완료 ${shadow.incomplete} · 건너뜀 ${shadow.skipped}", style = MaterialTheme.typography.bodySmall)
-                shadow.last?.let { comparison ->
-                    Text("${comparison.source} → ${comparison.target} · 로컬 근거 버전 ${comparison.corpusRevision} · 검증/승인 전 비교 기록" +
-                        "\n원문: ${comparison.original}\n온라인: ${comparison.online}\n오프라인: ${comparison.offline}", style = MaterialTheme.typography.bodySmall)
-                }
-            corpus?.let { LearningComparisonReview(shadow.last, it) }
+            TranslationComparisonSettings(settings, service, enabled, corpus, automaticExampleControls)
             message?.let { Text(it) }
         }
     }

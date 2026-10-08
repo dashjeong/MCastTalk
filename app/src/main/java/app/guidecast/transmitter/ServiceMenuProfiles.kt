@@ -110,7 +110,8 @@ internal class ServiceMenuProfiles(private val app: GuideCastApplication,
     @Synchronized fun service(profile: ServiceMenuProfile): TranslationApiService = servicesByMenu.getOrPut(profile) {
         TranslationApiService(settings(profile), shadowAllowed = { target ->
             app.learningResourcesAvailable() && app.translationProvider.hasActivePreparedWorker(target)
-        }, comparisonResources = app::learningResourcesAvailable)
+        }, comparisonResources = app::learningResourcesAvailable, automaticExamples = app.automaticTranslationExamples,
+            exampleDomain = app.domainCorpus::automaticExampleDomain, comparisonLifetime = app::comparisonWorkLifetime)
     }
 
     /** The caller exposes this explicit reset only after stopping that menu's work. */

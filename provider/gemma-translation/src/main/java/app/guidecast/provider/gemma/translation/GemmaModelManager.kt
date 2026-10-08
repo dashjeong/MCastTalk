@@ -88,6 +88,13 @@ class GemmaModelManager(context: Context, private val stagingVariant: GemmaModel
 
     suspend fun refresh() = withSelectedModel { refreshSelected() }
 
+    /** Cached verification only; call while holding withSelectedModel. No file hashing or download. */
+    fun hasRuntimeVerifiedModelFile(): Boolean = runCatching {
+        !operationActive.get() && mutableStatus.value.readiness != GemmaModelReadiness.ENGINE_TESTING &&
+            selectedVariant.compatibilityIssue(android.os.Build.VERSION.SDK_INT) == null &&
+            isPreviouslyVerified(modelFile) && preferences.getBoolean(KEY_RUNTIME_VERIFIED, false)
+    }.getOrDefault(false)
+
     private suspend fun refreshSelected() = withContext(Dispatchers.IO) {
         if (operationActive.get() || mutableStatus.value.readiness == GemmaModelReadiness.ENGINE_TESTING) {
             return@withContext

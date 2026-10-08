@@ -115,6 +115,19 @@ class TranslationApiSettings(context: Context,
         }
     }
     private val vault = TranslationCredentialVault(context)
+    /** Estimated committed spend is durable and independent from credentials or transmission consent. */
+    internal val onlineRequestBudget: app.guidecast.core.translation.OnlineRequestBudget by lazy {
+        synchronized(onlineBudgetRegistry) {
+            onlineBudgetRegistry.getOrPut(applicationScope + ":" + namespace) {
+                newLearningRequestBudget(
+                    read = { name -> preferences.getString(name, "0") },
+                    write = { snapshot -> preferences.edit().putString("learning_budget_known_usd", snapshot.known.toPlainString())
+                        .putString("learning_budget_held_usd", snapshot.held.toPlainString()).commit()
+                    },
+                )
+            }
+        }
+    }
     private fun storageScope(scope: String): String = translationCredentialStorageScope(namespace, scope)
     private fun sessionSlot(scope: String): String = applicationScope + ":" + storageScope(scope)
     private fun resolvedKey(options: TranslationApiOptions): String? = options.readableCredentialScopes
@@ -133,6 +146,33 @@ class TranslationApiSettings(context: Context,
     private val mutableLearningOnline = MutableStateFlow<TranslationApiOptions?>(null)
     val learningOnline = mutableLearningOnline.asStateFlow()
     private var learningGeneration = 0L
+    private var deferredTeacherGeneration = 0L
+    private val mutableDeferredTeacher = MutableStateFlow<DeferredGoogleTeacherPermit?>(null)
+    internal val deferredTeacher = mutableDeferredTeacher.asStateFlow()
+    /** Explicitly chosen sentence model and fresh session cost consent, without changing the live profile. */
+    @Synchronized internal fun beginDeferredTeacher(selectedText: TranslationApiOptions,
+        targets: List<String>, agreeToTextAndCost: Boolean): DeferredGoogleTeacherPermit? {
+        if (mutableDeferredTeacher.value != null) return null // A repeated begin cannot reset this session's quota.
+        val live = state.value
+        if (!agreeToTextAndCost || !authorized(live) || !live.allowLiveAudio ||
+            !validDeferredGoogleTeacherChoice(live, selectedText, targets) || deferredTeacherGeneration == Long.MAX_VALUE)
+            return null
+        val text = selectedText.copy(hasKey = resolvedKey(selectedText) != null, allowOnline = true,
+            allowLiveAudio = false, localFallback = false, allowDomainReferences = false,
+            budgetLimitUsd = live.budgetLimitUsd, revision = live.revision)
+        if (!text.hasKey) return null
+        return DeferredGoogleTeacherPermit(++deferredTeacherGeneration, live, text,
+            java.util.Collections.unmodifiableList(targets.toList()), android.os.SystemClock.elapsedRealtimeNanos())
+            .also { mutableDeferredTeacher.value = it }
+    }
+    @Synchronized internal fun endDeferredTeacher() { mutableDeferredTeacher.value = null }
+    @Synchronized internal fun deferredTeacherAuthorized(permit: DeferredGoogleTeacherPermit): Boolean =
+        mutableDeferredTeacher.value === permit && state.value == permit.liveOptions &&
+            authorized(permit.liveOptions) && permit.liveOptions.allowLiveAudio &&
+            permit.textOptions.hasKey && validDeferredGoogleTeacherChoice(permit.liveOptions, permit.textOptions, permit.targets)
+    /** Credentials stay in the app and may be read only under this independent purpose grant. */
+    @Synchronized internal fun deferredTeacherKey(permit: DeferredGoogleTeacherPermit): String? =
+        if (deferredTeacherAuthorized(permit)) resolvedKey(permit.textOptions) else null
     init { synchronized(credentialObservers) { credentialObservers[this] = Unit } }
     internal fun preparedLearningProvider(): TranslationApiOptions? = runCatching {
         TranslationApiOptions.fromPortable(JSONObject(preferences.getString("last_online_options", null) ?: return null))
@@ -289,6 +329,7 @@ class TranslationApiSettings(context: Context,
     internal fun authorized(options: TranslationApiOptions) = options.provider != TranslationApiProvider.LOCAL &&
         options.allowOnline && options.hasKey && state.value == options
     private fun store(value: TranslationApiOptions) {
+        endDeferredTeacher()
         endSessionLearning()
         if (value.provider != TranslationApiProvider.LOCAL) preferences.edit().putString("last_online_options", value.portable().toString()).apply()
         if (isOnlineTextApiProfile(value)) preferences.edit().putString("last_text_options", value.portable().toString()).apply()
@@ -346,4 +387,19 @@ internal class TranslationCredentialVault(context: Context) {
     fun removeAll(scopes: List<String>) = preferences.edit().apply { scopes.forEach { remove(slot(it)) } }.commit()
     private fun keyStore() = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
     private companion object { const val ALIAS = "mcasttalk.translation.credentials.v1" }
+}
+
+private val onlineBudgetRegistry = mutableMapOf<String, app.guidecast.core.translation.OnlineRequestBudget>()
+
+/** An unreadable or failed estimate store disables auxiliary requests without rewriting that store. */
+internal fun newLearningRequestBudget(read: (String) -> String?,
+    write: (app.guidecast.core.translation.OnlineRequestBudget.Snapshot) -> Boolean): app.guidecast.core.translation.OnlineRequestBudget {
+    fun amount(name: String) = runCatching { read(name)?.toBigDecimalOrNull()?.takeIf { it.signum() >= 0 } }.getOrNull()
+    val known = amount("learning_budget_known_usd")
+    val held = amount("learning_budget_held_usd")
+    val readable = known != null && held != null
+    return app.guidecast.core.translation.OnlineRequestBudget(known ?: java.math.BigDecimal.ZERO,
+        held ?: java.math.BigDecimal.ZERO) { snapshot ->
+        readable && runCatching { write(snapshot) }.getOrDefault(false)
+    }
 }

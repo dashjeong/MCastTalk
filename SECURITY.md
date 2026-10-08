@@ -31,10 +31,18 @@ these are excerpts, not full document uploads. Text references are applied only
 when the selected model supports them and the user enables transmission. Review
 the provider's data policy and paid usage before starting.
 
-Optional online comparison/review sends selected text and translation pairs after
-separate consent. Suggestions require review before activation. This stores local
-correction memory; it does not retrain model weights. Comparison options are
-available only on supported model routes.
+Optional comparison sends text after consent. Manually reviewed corrections and
+opt-in automatically checked examples are stored separately on the device.
+Automatic checks do not establish human approval or retrain model weights. You
+can turn automatic reuse off or delete these examples. Reuse requires matching
+source text, context, languages, style and reference settings.
+
+Optional post-broadcast comparison needs separate consent for extra text requests
+and cost. It transcribes an eligible recorded Korean input locally, then sends up
+to three finalized texts to a separately selected Gemini text model, with up to
+five target languages per request. It does not upload the recording again for
+this comparison. Existing verified local models may be prepared while idle;
+missing models are not downloaded by this feature.
 
 Keys can be used for the current session or explicitly stored encrypted with Android
 Keystore. Portable exports exclude credentials. Do not put keys, personal information

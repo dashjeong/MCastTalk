@@ -797,6 +797,15 @@ class BroadcastService : Service() {
         lateinit var job: Job
         job = serviceScope.launch(start = CoroutineStart.LAZY) {
             try {
+                if (app.broadcastRuntime.state.value.isInterpreterRelay && app.translationApiSettings.deferredTeacher.value != null) {
+                    try {
+                        kotlinx.coroutines.withTimeoutOrNull(50L) {
+                            app.deferredNativeTeacher.beforeCapture(app.recordings.activeId, app.recordings.activePart,
+                                app.broadcastRuntime.inputRequestEpoch, app.interpreterRelaySettings.state.value.source)
+                        } // Optional O(1) bookmark; cooperative 50ms policy, never a download/model preparation.
+                    } catch (cancelled: CancellationException) { throw cancelled }
+                    catch (_: Exception) { app.deferredNativeTeacher.inputStopped(successful = false) }
+                }
                 inputFrames(input).collect { frame ->
                     processInputFrame(input, frame, generation, signalTracker)
                 }
@@ -968,6 +977,8 @@ class BroadcastService : Service() {
     }
 
     private fun stopInput(invalidateRequest: Boolean = true) {
+        if (app.translationApiSettings.deferredTeacher.value != null)
+            app.deferredNativeTeacher.inputStopped(successful = true)
         if (invalidateRequest) app.broadcastRuntime.invalidateInputRequest()
         // Invalidate capture before closing translation queues so an inflight producer cannot
         // send another frame into a replacement provider or the source broadcast.
@@ -1011,6 +1022,8 @@ class BroadcastService : Service() {
     }
 
     private fun failInput(message: String) {
+        if (app.translationApiSettings.deferredTeacher.value != null)
+            app.deferredNativeTeacher.inputStopped(successful = false)
         app.broadcastRuntime.invalidateInputRequest()
         invalidateInputCapture()
         suspendInputTranslation()
@@ -2557,6 +2570,7 @@ class BroadcastService : Service() {
     }
 
     private fun stopBroadcast() {
+        val deferredRecordingId = app.recordings.activeId
         app.broadcastRuntime.invalidateInputRequest()
         if (app.broadcastRuntime.state.value.isInterpreterRelay) stopInput()
         releaseBroadcastResources()
@@ -2588,6 +2602,8 @@ class BroadcastService : Service() {
                 else null,
             )
         }
+        if (app.translationApiSettings.deferredTeacher.value != null)
+            app.deferredNativeTeacher.broadcastEnded(deferredRecordingId, successful = !socketCleanupPending)
         updateNotification()
         stopServiceIfUnused()
     }

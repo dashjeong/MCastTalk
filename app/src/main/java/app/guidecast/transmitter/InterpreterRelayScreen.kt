@@ -32,7 +32,8 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
     microphoneGranted: Boolean, onRequestMicrophone: () -> Unit, onStart: () -> Unit,
     onPause: () -> Unit, onResume: () -> Unit, onStop: () -> Unit, onBack: () -> Unit,
     onOpenHud: () -> Unit = {}, onStartMicrophone: () -> Unit = {}, onStopMicrophone: () -> Unit = {}, settingsRequest: Int = 0,
-    onSettingsRequestHandled: () -> Unit = {}, onOpenFilteredHud: ((List<String>, Boolean) -> Unit)? = null) {
+    onSettingsRequestHandled: () -> Unit = {}, onOpenFilteredHud: ((List<String>, Boolean) -> Unit)? = null,
+    automaticExampleControls: (@Composable () -> Unit)? = null) {
     val api by app.translationApiSettings.state.collectAsState()
     LaunchedEffect(api.revision) { app.interpreterRelaySettings.rememberRelayApi(app.translationApiSettings.state.value) }
     var contextLibrary by rememberSaveable { mutableStateOf(false) }
@@ -454,7 +455,7 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
                     }
                 }
                 RelaySetupItem.COMPARISON -> item {
-            Text("오프라인 비교 · ${learning.completed}건 완료 · ${learning.incomplete}건 미완료 · ${learning.skipped}건 건너뜀")
+            Text("중계 결과 자동 비교 · ${learning.completed}건 비교 완료 (승인·적용 횟수 아님) · ${learning.incomplete}건 미완료 · ${learning.skipped}건 건너뜀")
             learning.lastPause?.let { Text(it) }
             LearningComparisonReview(if (app.translationApiSettings.authorized(api)) learning.last else null, app.domainCorpus,
                 commitAdmission = app::nativeComparisonCommitAdmission, isComparisonCurrent = app::isNativeComparisonCurrent,
@@ -462,10 +463,13 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
             ReviewedRelayComparisonUi(app, broadcast, onOpenExampleMaterials = { guardedAction("LIBRARY") })
             ServiceExperienceToggle("오프라인 결과와 비교 (선택)",
                 "기기에서 들을 언어를 오프라인 번역과 비교합니다. 지원하지 않는 모델은 비교를 보류합니다. " + if (learningSupported)
-                    "확정된 원문·통역 쌍과 준비된 Gemma 모델을 사용하며 추가 API 요청은 없습니다. 검수·저장한 예문만 다음 오프라인 번역에 적용됩니다."
+                    "확정된 원문·통역 쌍과 준비된 Gemma 모델을 사용하며 추가 API 요청은 없습니다. 비교 결과는 직접 검수 대기로 남으며, 저장한 예문은 조건이 맞는 준비된 로컬 자료에서 재사용합니다."
                 else comparisonChoice.detail,
                 comparisonChoice.checked, learningSupported) {
                 app.interpreterRelaySettings.update(relay.copy(compareOffline = it)) }
+            if (automaticExampleControls != null) automaticExampleControls()
+            else AutomaticExampleControls(app.automaticTranslationExamples, !busy && !microphoneBusy && !draftDirty)
+            DeferredNativeLearningControls(app, !busy && !microphoneBusy && !draftDirty)
             if (!learningSupported) Text(NativeLearningPause.ALIGNMENT.label)
             else Text("오프라인 모델이 없거나 바쁘면 비교만 건너뜁니다. 검수 자료 재사용이며 모델 가중치 학습이 아닙니다.")
             if (learningSupported) Text("비교 선택을 바꾸면 다음 중계 시작부터 적용됩니다. 진행 중인 입력은 소급 비교하지 않습니다.")

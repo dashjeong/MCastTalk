@@ -218,6 +218,8 @@ internal fun terminalizeNativeAudioTranscripts(lines: List<TranslationTranscript
 }
 
 class BroadcastRuntime {
+    private val learningEpoch = AtomicLong()
+    internal val learningActivityEpoch: Long get() = learningEpoch.get()
     private val mutableState = MutableStateFlow(BroadcastSnapshot())
     val state: StateFlow<BroadcastSnapshot> = mutableState.asStateFlow()
     val inputRequestEpoch: Long get() = requestEpoch.get()
@@ -225,11 +227,17 @@ class BroadcastRuntime {
     fun invalidateInputRequest(): Long = requestEpoch.incrementAndGet()
 
     internal fun update(snapshot: BroadcastSnapshot) {
-        mutableState.value = snapshot
+        update { snapshot }
     }
 
     internal fun update(transform: (BroadcastSnapshot) -> BroadcastSnapshot) {
-        mutableState.update(transform)
+        mutableState.update { before ->
+            val next = transform(before)
+            if ((before.inputPhase in setOf(InputPhase.IDLE, InputPhase.FAILED, InputPhase.PAUSED) && next.inputPhase in setOf(InputPhase.STARTING, InputPhase.ACTIVE)) ||
+                (before.phase in setOf(BroadcastPhase.IDLE, BroadcastPhase.FAILED, BroadcastPhase.PAUSED) && next.phase in setOf(BroadcastPhase.STARTING, BroadcastPhase.LIVE)))
+                learningEpoch.incrementAndGet()
+            next
+        }
     }
 
     private companion object {

@@ -6,18 +6,20 @@ import kotlinx.coroutines.Job
 
 /** A destroyed screen may still be saving a note. Its completion cannot release a newer owner. */
 internal class LocalWorkOwners {
+    private val starts = java.util.concurrent.atomic.AtomicLong()
+    val generation: Long get() = starts.get()
     private val owners = mutableSetOf<Any>()
     private val mutableActive = MutableStateFlow(false)
     val active = mutableActive.asStateFlow()
 
     @Synchronized fun tryAcquire(owner: Any): Boolean {
         if (owners.any { it !== owner }) return false
-        owners += owner
+        if (owners.add(owner)) starts.incrementAndGet()
         mutableActive.value = true
         return true
     }
     @Synchronized fun setActive(owner: Any, active: Boolean) {
-        if (active) owners += owner else owners -= owner
+        if (active) { if (owners.add(owner)) starts.incrementAndGet() } else owners -= owner
         mutableActive.value = owners.isNotEmpty()
     }
     @Synchronized fun hasOther(owner: Any): Boolean = owners.any { it !== owner }

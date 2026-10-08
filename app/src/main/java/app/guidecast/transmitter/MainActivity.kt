@@ -1239,6 +1239,8 @@ private fun GuideCastScreen(
                     key(sectionTopRequest) {
                     TranslationApiPanel(app.translationApiSettings, app.translationApiService, corpus = app.domainCorpus, liveMonitor = app.geminiLiveMonitor,
                         enabled = !inputActive && !broadcastActive && !broadcast.translationTestActive, textOnly = true, openItem = streamApiItem,
+                        automaticExampleControls = { AutomaticExampleControls(app.automaticTranslationExamples,
+                            !inputActive && !broadcastActive && !broadcast.translationTestActive) },
                         onOpenItemHandled = { streamApiItem = null })
                     }
                   }

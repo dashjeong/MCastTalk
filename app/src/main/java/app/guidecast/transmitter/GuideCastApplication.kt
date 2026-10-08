@@ -25,6 +25,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.asStateFlow
 import java.io.File
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -153,9 +154,28 @@ class GuideCastApplication : Application() {
     internal val serviceMenuProfiles by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         ServiceMenuProfiles(this, commonServiceApiSettings)
     }
+    internal val automaticTranslationExamples: AutomaticTranslationExamples by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        val preferences = getSharedPreferences("automatic_translation_examples", MODE_PRIVATE)
+        AutomaticTranslationExamples(CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1)),
+            AutomaticExampleFile(java.io.File(filesDir, "automatic_translation_examples.json")),
+            idle = {
+                val runtime = broadcastRuntime.state.value
+                !webBroadcastOwnership.isOwned && runtime.phase == BroadcastPhase.IDLE &&
+                    runtime.inputPhase == InputPhase.IDLE && !runtime.inputStopping &&
+                    !localFileWorkActive.value && !localVoiceNoteWorkActive.value && !localModelWorkActive.value
+            }, currentDomain = domainCorpus::automaticExampleDomain,
+            initialEnabled = preferences.getBoolean("enabled", false),
+            persistEnabled = { preferences.edit().putBoolean("enabled", it).commit() },
+            onDisabled = {
+                if (translationApiSettings.deferredTeacher.value != null) deferredNativeTeacher.stop()
+            })
+    }
     val translationApiService by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { TranslationApiService(translationApiSettings, shadowAllowed = { target ->
         learningResourcesAvailable() && translationProvider.hasActivePreparedWorker(target)
-    }, comparisonResources = ::learningResourcesAvailable) }
+    }, comparisonResources = ::learningResourcesAvailable, automaticExamples = automaticTranslationExamples,
+        exampleDomain = domainCorpus::automaticExampleDomain, comparisonLifetime = ::comparisonWorkLifetime) }
+    internal fun comparisonWorkLifetime(): String = listOf(broadcastRuntime.learningActivityEpoch,
+        fileWorkOwners.generation, voiceNoteWorkOwners.generation, preparationOwners.currentGeneration).joinToString(":")
     val sentenceTranslationMemory by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { SentenceTranslationMemory(this) }
     val domainCorpus by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { DomainCorpusRepository(this) }
     val cloudTranslationReviewer by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
@@ -224,6 +244,113 @@ class GuideCastApplication : Application() {
                 ReviewedRelayBackendUseLease(::releaseTranslationBackendUseAndAwait)
             }
         } finally { nativeEngineLifecycleMutex.unlock() }
+    }
+
+    private val mutableDeferredTeacherUsage = kotlinx.coroutines.flow.MutableStateFlow(DeferredTeacherRequestUsage())
+    internal val deferredTeacherRequestUsage = mutableDeferredTeacherUsage.asStateFlow()
+    @Synchronized private fun updateDeferredTeacherUsage(attempted: Boolean, raw: GeminiBatchUsage,
+        knownUsd: String, heldUsd: String) {
+        val before = mutableDeferredTeacherUsage.value
+        mutableDeferredTeacherUsage.value = before.copy(dispatchedRequests = before.dispatchedRequests + if (attempted) 1 else 0,
+            lastPrompt = raw.prompt, lastCandidates = raw.candidates, lastThoughts = raw.thoughts,
+            lastTotal = raw.total, lastTotalsMatch = raw.totalsMatch, budgetKnownUsd = knownUsd, budgetHeldUsd = heldUsd)
+    }
+    private val mutableDeferredTeacherComparison = kotlinx.coroutines.flow.MutableStateFlow(DeferredTeacherStatus())
+    internal val deferredTeacherComparisonStatus = mutableDeferredTeacherComparison.asStateFlow()
+    private fun deferredTeacherEnvironment(): DeferredTeacherFence {
+        val permit = translationApiSettings.deferredTeacher.value
+        val runtime = broadcastRuntime.state.value
+        val prepared = automaticTranslationExamples.state.value.enabled && automaticTranslationExamples.state.value.ready &&
+            gemmaTranslationProviderDelegate.isInitialized() && gemmaTranslationProvider.hasActivePreparedWorker() &&
+            permit?.targets?.all { GemmaTranslationProvider.supportsTranslation("ko", it) } == true
+        return DeferredTeacherFence(translationApiSettings.state.value.revision, domainCorpus.revision.value,
+            preparationOwners.currentGeneration, broadcastRuntime.inputRequestEpoch, permit?.generation ?: -1,
+            !webBroadcastOwnership.isOwned && runtime.phase == BroadcastPhase.IDLE && runtime.inputPhase == InputPhase.IDLE &&
+                !runtime.inputStopping && !localFileWorkActive.value && !localVoiceNoteWorkActive.value && !localModelWorkActive.value,
+            prepared, learningResourcesAvailable(), comparisonWorkLifetime())
+    }
+    private val deferredTeacherComparison: DeferredNativeTeacherComparison by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        DeferredNativeTeacherComparison(nativeLearningScopeDelegate.value, ::deferredTeacherEnvironment,
+            grantCurrent = { grant -> automaticTranslationExamples.state.value.enabled &&
+                automaticTranslationExamples.state.value.ready && translationApiSettings.deferredTeacher.value?.let { permit ->
+                permit.generation == grant.generation && permit.targets == grant.targets &&
+                    translationApiSettings.deferredTeacherAuthorized(permit) } == true },
+            sourceTextValid = ::reviewedRelayExampleTextValid,
+            targetValid = { GemmaTranslationProvider.supportsTranslation("ko", it) },
+            teacher = { source, grant, allowed ->
+                val permit = requireNotNull(translationApiSettings.deferredTeacher.value)
+                requestDeferredGoogleTeacher(translationApiSettings, permit, source, grant, allowed,
+                    usageObserved = ::updateDeferredTeacherUsage)
+            }, offline = { source, target, allowed ->
+                check(allowed())
+                // The workflow owns one idle backend lease across ASR, teacher request and this inference.
+                val permit = requireNotNull(translationApiSettings.deferredTeacher.value)
+                val captured = DomainCorpusTranslationEngine(gemmaTranslationProvider.preparedEngineFor(target), domainCorpus)
+                    .capture(source.original, source.source, target, permit.textOptions.tone)
+                check(allowed())
+                withContext(app.guidecast.core.translation.TranslationStyleContext(permit.textOptions.tone)) {
+                    captured.translateWithContext(source.original, null, source.source, target)
+                }.also { check(allowed()) }
+            }, protectedPairAccepted = { original, offline, reference, target ->
+                conservativeReviewAccepted(original, offline, reference, target)
+            }, offerForReview = { source, teacher, local, allowed ->
+                val permit = requireNotNull(translationApiSettings.deferredTeacher.value)
+                val domain = domainCorpus.automaticExampleDomain()
+                check(allowed())
+                teacher.targets.forEach { target ->
+                    check(allowed())
+                    automaticTranslationExamples.offer(ShadowComparison(source.original, null, source.source, target,
+                        domain.first, teacher.translations.getValue(target), local.getValue(target), permit.textOptions.tone,
+                        nativeIdentity = null, offlineModel = "기기 내 준비된 오프라인 모델"),
+                        domain.second, automaticExampleInstructions(permit.textOptions), allowed)
+                }
+            }, statusChanged = { mutableDeferredTeacherComparison.value = it }, externallyHeldLocalLease = true)
+    }
+    /** Opt-in idle work may rebind only an already installed, runtime-verified selected model. */
+    private suspend fun prepareDeferredExistingGemma(targets: List<String>, allowed: () -> Boolean): Boolean {
+        if (!allowed() || !gemmaTranslationProviderDelegate.isInitialized() || targets.isEmpty()) return false
+        val provider = gemmaTranslationProvider
+        return try {
+            kotlinx.coroutines.withTimeoutOrNull(120_000L) {
+                provider.modelManager.withSelectedModel {
+                    val manager = provider.modelManager
+                    if (!allowed() || !manager.hasRuntimeVerifiedModelFile() ||
+                        targets.any { !GemmaTranslationProvider.supportsTranslation("ko", it) }) return@withSelectedModel false
+                    if (!provider.hasActivePreparedWorker()) {
+                        withProcessNativeColdLoadLease(ProcessNativeColdLoadKeys.GEMMA_MODEL,
+                            serializeWithAllColdLoads = true) {
+                            check(allowed() && manager.hasRuntimeVerifiedModelFile())
+                            provider.warmup(targetLanguageTag = targets.first(), sourceLanguageTag = "ko",
+                                timeoutMillis = 120_000L)
+                            check(allowed())
+                        }
+                    }
+                    allowed() && manager.hasRuntimeVerifiedModelFile() && provider.hasActivePreparedWorker()
+                }
+            } == true
+        } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (_: Exception) { false }
+    }
+
+    internal val deferredNativeTeacher: DeferredNativeTeacherWorkflow by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        DeferredNativeTeacherWorkflow(this, nativeLearningScopeDelegate.value, translationApiSettings,
+            ::deferredTeacherEnvironment, recordings.audio::snapshot, recordings::flush,
+            localLease = { allowed -> tryAcquireReviewedRelayBackendUse(allowed)?.let { lease ->
+                object : DeferredTeacherLocalLease { override suspend fun close() { lease.close() } }
+            } }, comparisons = deferredTeacherComparison,
+            prepareExistingModel = ::prepareDeferredExistingGemma)
+    }
+    /** Separate session opt-in. This does not replace the live provider or start input/broadcast/model preparation. */
+    internal fun beginDeferredNativeTeacher(selectedText: TranslationApiOptions, targets: List<String>,
+        agreeToTextAndCost: Boolean): Boolean {
+        if (!automaticTranslationExamples.state.value.enabled || !automaticTranslationExamples.state.value.ready) return false
+        val permit = translationApiSettings.beginDeferredTeacher(selectedText, targets, agreeToTextAndCost) ?: return false
+        if (deferredNativeTeacher.begin(permit)) {
+            mutableDeferredTeacherUsage.value = DeferredTeacherRequestUsage()
+            return true
+        }
+        translationApiSettings.endDeferredTeacher()
+        return false
     }
 
     internal fun createNativeLearningSession(sessionId: Long, options: TranslationApiOptions,

@@ -37,14 +37,31 @@ class TranslationApiService internal constructor(
     private val auxiliaryOptions: () -> TranslationApiOptions? = { null },
     private val auxiliaryAuthorized: (TranslationApiOptions) -> Boolean = { false },
     private val comparisonResources: () -> Boolean = { true },
+    private val dispatchBudget: TranslationDispatchBudget = TranslationDispatchBudget(),
+    private val comparisonCompleted: (ShadowComparison, TranslationApiOptions, () -> Boolean) -> Unit = { _, _, _ -> },
+    private val automaticExampleLookup: ((String, String?, String, String, TranslationStyle, Long, TranslationApiOptions) -> String?)? = null,
+    private val comparisonLifetime: () -> String = { "standalone" },
 ) {
-    constructor(settings: TranslationApiSettings, shadowAllowed: (String) -> Boolean = { false },
-        comparisonResources: () -> Boolean = { true }) : this(
+    internal constructor(settings: TranslationApiSettings, shadowAllowed: (String) -> Boolean = { false },
+        comparisonResources: () -> Boolean = { true }, automaticExamples: AutomaticTranslationExamples? = null,
+        exampleDomain: () -> Pair<Long, String>? = { null }, comparisonLifetime: () -> String = { "standalone" }) : this(
         { settings.state.value }, settings::authorized, settings::key, { options ->
             BoundedCloudHttps(endpointAllowed = { url, _ -> url.toExternalForm() == options.endpoint && validTranslationApiOptions(options) }, networkExecutor = apiWorkers)
         }, shadowAllowed = shadowAllowed,
         sessionLearning = { settings.sessionLearning.value }, auxiliaryOptions = { settings.learningOnline.value },
         auxiliaryAuthorized = settings::learningAuthorized, comparisonResources = comparisonResources,
+        dispatchBudget = TranslationDispatchBudget(settings.onlineRequestBudget),
+        comparisonCompleted = { comparison, options, allowed ->
+            exampleDomain()?.takeIf { it.first == comparison.corpusRevision }?.let { domain ->
+                automaticExamples?.offer(comparison, domain.second, automaticExampleInstructions(options), allowed)
+            }
+        },
+        automaticExampleLookup = automaticExamples?.let { examples ->
+            { text, context, source, target, style, revision, options ->
+                examples.lookup(text, context, source, target, style, revision, automaticExampleInstructions(options))
+            }
+        },
+        comparisonLifetime = comparisonLifetime,
     )
     private val shadowRunner = BoundedShadowRunner(shadowScope, 4_000L)
     private val ledger = RealtimeRequestLedger()
@@ -199,7 +216,7 @@ class TranslationApiService internal constructor(
 
     private suspend fun online(options: TranslationApiOptions, text: String, context: String?, source: String,
         target: String, style: TranslationStyle, hints: String, corpusRevision: Long,
-        identity: TranslationRequestIdentity, allowed: () -> Boolean): String {
+        identity: TranslationRequestIdentity, budgetRequired: Boolean = false, allowed: () -> Boolean): String {
         check(!options.usesNativeLiveAudio) { "직접 음성 통역은 문장 API로 대체하지 않습니다." }
         check(allowed() && validTranslationApiOptions(options)) { "온라인 전송 동의가 필요합니다." }
         require(text.length in 1..4_000 && text.isNotBlank() && !containsCredentialLikeText(text) &&
@@ -211,10 +228,18 @@ class TranslationApiService internal constructor(
         try {
             val key = keyFor(options) ?: error("API 키 또는 전송 동의를 확인하세요.")
             check(allowed())
+            val reservation = if (budgetRequired) dispatchBudget.reserve(options, request, 2_048) ?: run {
+                status(target, TranslationApiState.BUDGET_BLOCKED)
+                throw TranslationBudgetBlocked()
+            } else null
+            var dispatchAttempted = false
             var response: String? = null
             val started = System.nanoTime()
             val translated = try {
                 withTimeout(6_000L) {
+                    currentCoroutineContext().ensureActive()
+                    check(allowed()) { "Online consent changed" }
+                    dispatchAttempted = true
                     if (options.provider == TranslationApiProvider.OPENAI_REALTIME) {
                         val json = JSONObject(request)
                         realtime.translateModel(options.model, key, json.getString("instructions"),
@@ -228,7 +253,8 @@ class TranslationApiService internal constructor(
                     }
                 }
             } finally {
-                recordUsage(options, response, (System.nanoTime() - started) / 1_000_000)
+                reservation?.let { dispatchBudget.settle(it, response, dispatchAttempted) }
+                if (dispatchAttempted) recordUsage(options, response, (System.nanoTime() - started) / 1_000_000)
             }
             check(allowed() && ledger.accepts(ticket) && !translated.isNullOrBlank() && translated.length <= 8_000 &&
                 targetScriptMatches(translated, target)) { "선택한 API 번역을 완료하지 못했습니다." }
@@ -237,6 +263,7 @@ class TranslationApiService internal constructor(
             return translated
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (error: Exception) {
+            if (error is TranslationBudgetBlocked) throw error
             if (mutableStates.value[target] !in setOf(TranslationApiState.DUPLICATE_BLOCKED))
                 status(target, TranslationApiState.UNAVAILABLE)
             throw IllegalStateException("선택한 API를 완료하지 못했습니다. 키·모델 접근 권한·네트워크를 확인하세요.", error)
@@ -249,6 +276,7 @@ class TranslationApiService internal constructor(
                 if (currentOptions().provider == TranslationApiProvider.LOCAL) 0 else 6_500
         override suspend fun translateWithContext(text: String, contextBefore: String?, sourceLanguageTag: String, targetLanguageTag: String): String {
             val primary = currentOptions()
+            val lifetime = comparisonLifetime()
             if (expectedOptions != null && primary != expectedOptions)
                 throw CancellationException("Translation settings changed before processing")
             val offlinePrimary = primary.provider == TranslationApiProvider.LOCAL
@@ -260,9 +288,10 @@ class TranslationApiService internal constructor(
                 TranslationRequestIdentity("direct", anonymousSequence.incrementAndGet())
             val primaryJob = currentCoroutineContext()[Job]
             val valid = java.util.concurrent.atomic.AtomicBoolean(true)
-            fun current(): Boolean = valid.get() && primaryJob?.isCancelled != true && currentOptions() == primary &&
+            fun completedPairCurrent(): Boolean = valid.get() && comparisonLifetime() == lifetime && currentOptions() == primary &&
                 if (offlinePrimary) auxiliary != null && auxiliaryAuthorized(auxiliary) && sessionLearning()
                 else authorized(primary) && (primary.alwaysLearnOnline || sessionLearning())
+            fun current(): Boolean = primaryJob?.isCancelled != true && completedPairCurrent()
             val batch = currentCoroutineContext()[SharedTranslationBatchContext]
             val sharedCapture = batch != null && onlineOptions?.provider in setOf(TranslationApiProvider.GEMINI, TranslationApiProvider.OPENAI) &&
                 (compare || onlineOptions?.allowDomainReferences == true) && local is DomainCorpusTranslationEngine
@@ -288,20 +317,42 @@ class TranslationApiService internal constructor(
             var onlineResult: String? = null
             var offlineResult: String? = null
             val pairLock = Any()
-            fun complete(onlineSide: Boolean, result: String) = synchronized(pairLock) {
-                if (onlineSide) onlineResult = result else offlineResult = result
-                if (onlineResult != null && offlineResult != null && current()) {
-                    updateShadow { it.copy(completed = it.completed + 1, lastPause = null,
-                        last = ShadowComparison(text, contextBefore, sourceLanguageTag, targetLanguageTag, version,
-                            onlineResult!!, offlineResult!!, style)) }
+            fun complete(onlineSide: Boolean, result: String) {
+                val comparison = synchronized(pairLock) {
+                    if (onlineSide) onlineResult = result else offlineResult = result
+                    if (onlineResult != null && offlineResult != null && current())
+                        ShadowComparison(text, contextBefore, sourceLanguageTag, targetLanguageTag, version,
+                            onlineResult!!, offlineResult!!, style)
+                    else null
+                }
+                if (comparison != null) {
+                    updateShadow { it.copy(completed = it.completed + 1, lastPause = null, last = comparison) }
+                    // Queue only. Persistence and quality checks cannot delay the primary translation.
+                    if (onlineOptions != null && automaticExampleInstructions(primary) == automaticExampleInstructions(onlineOptions)) {
+                        try { comparisonCompleted(comparison, primary, ::completedPairCurrent) }
+                        catch (cancelled: CancellationException) { throw cancelled }
+                        catch (_: Exception) { pause("예문 저장 준비 실패 · 주 방송 유지") }
+                    }
                 }
             }
-            suspend fun runLocal(engine: TextTranslationEngine): String = if (engine is ContextualTextTranslationEngine)
-                engine.translateWithContext(text, contextBefore, sourceLanguageTag, targetLanguageTag)
-                else engine.translate(text, sourceLanguageTag, targetLanguageTag)
+            suspend fun runLocal(engine: TextTranslationEngine): String {
+                val selected = if (offlinePrimary && engine is DomainCorpusTranslationEngine && automaticExampleLookup != null)
+                    engine.withAutomaticExamples { original, context, source, target, register, revision ->
+                        if (currentOptions() == primary) automaticExampleLookup.invoke(original, context, source, target, register, revision, primary)
+                        else null
+                    } else engine
+                return if (selected is ContextualTextTranslationEngine)
+                    selected.translateWithContext(text, contextBefore, sourceLanguageTag, targetLanguageTag)
+                else selected.translate(text, sourceLanguageTag, targetLanguageTag)
+            }
             val exactEvidenceComparable = frozen?.let {
                 it.matches[targetLanguageTag]?.exactTranslation == null || targetLanguageTag in it.exactReferencesIncluded
             } ?: true
+            val saved = if (offlinePrimary && capture != null && !capture.capturedExactMatch)
+                automaticExampleLookup?.invoke(text, contextBefore, sourceLanguageTag, targetLanguageTag, style, version, primary)
+                else null
+            // An exact saved example needs neither another teacher request nor another model inference.
+            if (saved != null && currentOptions() == primary) return saved
             val comparisonReady = compare && capture != null && exactEvidenceComparable && comparisonResources() &&
                 (offlinePrimary || shadowAllowed(targetLanguageTag)) && (hints.isEmpty() || onlineOptions?.allowDomainReferences == true)
             if (comparisonReady) {
@@ -310,7 +361,7 @@ class TranslationApiService internal constructor(
                     try {
                         val result = withContext(TranslationStyleContext(style)) {
                             if (offlinePrimary) online(auxiliary!!, text, contextBefore, sourceLanguageTag, targetLanguageTag,
-                                style, hints, version, identity) { current() && comparisonResources() }
+                                style, hints, version, identity, budgetRequired = true) { current() && comparisonResources() }
                             else runLocal(capture!!)
                         }
                         complete(offlinePrimary, result)

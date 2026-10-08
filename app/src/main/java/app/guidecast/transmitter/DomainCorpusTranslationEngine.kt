@@ -31,8 +31,12 @@ class DomainCorpusTranslationEngine(
     private val delegate: TextTranslationEngine,
     private val repository: DomainCorpusRepository,
     private val matchSnapshot: DomainCorpusMatch? = null,
+    private val automaticExampleLookup: ((String, String?, String, String, TranslationStyle, Long) -> String?)? = null,
     private val referenceHintBudget: () -> Int = { DomainCorpusFormat.MAX_HINTS_LENGTH },
 ) : BoundedQueuedTranslationEngine {
+
+    internal fun withAutomaticExamples(lookup: (String, String?, String, String, TranslationStyle, Long) -> String?) =
+        DomainCorpusTranslationEngine(delegate, repository, matchSnapshot, lookup, referenceHintBudget)
 
     internal val capturedRevision: Long? get() = matchSnapshot?.revision
     internal val capturedExactMatch: Boolean get() = matchSnapshot?.exactTranslation != null
@@ -111,6 +115,15 @@ class DomainCorpusTranslationEngine(
             val fallback = delegateTranslate(text, contextBefore, sourceLanguageTag, targetLanguageTag)
             app.guidecast.core.translation.requireProtectedTranslationMeaning(text, fallback, sourceLanguageTag, targetLanguageTag)
             return fallback
+        }
+
+        // Manually reviewed exact examples above always win. This path has no IO or model call.
+        automaticExampleLookup?.invoke(text, contextBefore, sourceLanguageTag, targetLanguageTag,
+            requestStyle, match.revision)?.let { saved ->
+            val valid = runCatching {
+                app.guidecast.core.translation.requireProtectedTranslationMeaning(text, saved, sourceLanguageTag, targetLanguageTag)
+            }.isSuccess
+            if (valid) return saved
         }
 
         // Ephemeral domain hints passed only when present

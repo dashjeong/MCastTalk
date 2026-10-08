@@ -215,8 +215,20 @@ open class DomainCorpusRepository internal constructor(
     )
 
     private var activeProfilesCache: Map<Pair<String, String>, CachedActiveProfile>? = null
-    private data class PublishedIndex(val profiles: Map<Pair<String, String>, CachedActiveProfile>, val revision: Long)
+    private data class PublishedIndex(val profiles: Map<Pair<String, String>, CachedActiveProfile>, val revision: Long) {
+        // Built with the index, never by the real-time lookup. Stable after an unchanged restart.
+        val identity = automaticExampleHash(buildString {
+            profiles.entries.sortedBy { it.key.first + ":" + it.key.second }.forEach { (_, cached) ->
+                append(cached.profile.toString()); append('\u0000')
+                cached.pairs.forEach { pair ->
+                    append(pair.sourceNfcTrimmed); append('\u0000'); append(pair.targetText); append('\u0000')
+                    append(pair.reviewedStyle?.name.orEmpty()); append('\u0000')
+                }
+            }
+        })
+    }
     @Volatile private var publishedIndex = PublishedIndex(emptyMap(), 0)
+    internal fun automaticExampleDomain(): Pair<Long, String> = publishedIndex.let { it.revision to it.identity }
     init {
         if (dbHelper != null) indexScope.launch {
             runCatching { prepareActiveIndex() }.onFailure {

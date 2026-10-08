@@ -14,6 +14,14 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 @Composable
 internal fun CommonServiceSettingsScreen(app: GuideCastApplication, onBack: () -> Unit) {
     val defaults by app.serviceDefaults.state.collectAsStateWithLifecycle()
+    val runtime by app.broadcastRuntime.state.collectAsStateWithLifecycle()
+    val menuBroadcast by app.menuBroadcast.state.collectAsStateWithLifecycle()
+    val fileWork by app.localFileWorkActive.collectAsStateWithLifecycle()
+    val noteWork by app.localVoiceNoteWorkActive.collectAsStateWithLifecycle()
+    val modelWork by app.localModelWorkActive.collectAsStateWithLifecycle()
+    val exampleChangesEnabled = !app.webBroadcastOwnership.isOwned && !menuBroadcast.isActive &&
+        runtime.phase == BroadcastPhase.IDLE && runtime.inputPhase == InputPhase.IDLE && !runtime.inputStopping &&
+        !fileWork && !noteWork && !modelWork
     BackHandler(onBack = onBack)
     LazyColumn(Modifier.fillMaxSize().imePadding().semantics { paneTitle = "공통 설정" },
         contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -55,6 +63,7 @@ internal fun CommonServiceSettingsScreen(app: GuideCastApplication, onBack: () -
             Text("Google·OpenAI 키는 같은 제공자의 메뉴에서 사용합니다. 키를 변경하거나 삭제하면 같은 제공자의 전송 동의가 즉시 해제되어 진행 중인 온라인 통역이 중단될 수 있습니다. 다시 이용하려면 해당 메뉴에서 전송 동의를 확인하세요. 키 등록만으로 방송을 시작하거나 음성·문장 전송에 동의하지는 않습니다.")
             TranslationApiPanel(app.commonServiceApiSettings, app.commonServiceApiService, enabled = true, textOnly = true)
         }
+        item { AutomaticExampleControls(app.automaticTranslationExamples, exampleChangesEnabled) }
     }
 }
 

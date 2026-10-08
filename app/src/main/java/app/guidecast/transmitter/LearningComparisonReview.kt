@@ -47,12 +47,19 @@ internal fun LearningComparisonReview(comparison: ShadowComparison?, repository:
             candidate = null; reviewed = false
         }
     }
+    if (showEntry && comparison != null) Text(
+        if (comparison.corpusRevision == revision && isComparisonCurrent(comparison))
+            "최근 비교 결과 · 직접 검수 대기. 비교 완료만으로 정확도가 승인되거나 전문 자료에 예문이 저장되지는 않습니다."
+        else "현재 자료·설정과 다른 비교 결과입니다. 저장하려면 현재 조건으로 다시 비교하세요.")
     if (showEntry) TextButton(enabled = comparison != null && !busy && comparison.corpusRevision == revision && isComparisonCurrent(comparison), onClick = {
         candidate = comparison
         corrected = if (initialReferenceCorrection) comparison?.online.orEmpty() else ""
         reviewed = false
     }) { Text(entryLabel) }
-    if (showRollback && rollback != null) TextButton(enabled = !busy, onClick = { confirmRollback = true }) { Text("직전 검수 자료로 되돌리기") }
+    if (showRollback && rollback != null) {
+        Text("직접 검수한 예문 자료가 활성화되어 있습니다. 언어·문체 조건이 맞는 준비된 로컬 자료에서 재사용하며, 모델 가중치를 학습하지 않습니다.")
+        TextButton(enabled = !busy, onClick = { confirmRollback = true }) { Text("직전 검수 자료로 되돌리기") }
+    }
     message?.let { Text(it) }
     candidate?.let { captured ->
         ReviewedComparisonDialog(onDismissRequest = { if (!busy) { candidate = null; reviewed = false } },
@@ -70,7 +77,7 @@ internal fun LearningComparisonReview(comparison: ShadowComparison?, repository:
                             "중계·비교 설정이나 자료가 바뀌었습니다. 새 예문을 확인하세요."
                         }
                         val applied = repository.applyReviewedComparison(captured, approvedCorrection, approvedReview, commitAdmission?.invoke(captured))
-                        message = "검수 자료 버전 ${applied.revision} 적용됨 · 효용 검증은 별도입니다."
+                        message = "직접 검수한 예문을 자료 버전 ${applied.revision}에 저장하고 활성 자료로 선택했습니다. 실제 품질 향상은 별도 검증합니다."
                         candidate = null; reviewed = false
                     } catch (cancelled: CancellationException) { throw cancelled }
                     catch (error: Exception) { message = error.message ?: "자료 개정 실패" }
@@ -82,7 +89,7 @@ internal fun LearningComparisonReview(comparison: ShadowComparison?, repository:
         }) {
             Text("원문: ${captured.original}\n$referenceLabel: ${captured.online}\n오프라인: ${captured.offline}")
             captured.offlineModel?.let { Text("비교 기준: $it") }
-            Text("번역은 틀릴 수 있습니다. 활성 자료를 복사해 새 버전을 만들며 다음 발화부터 적용합니다. 처리 중 발화와 이전 자료는 유지됩니다.")
+            Text("원문과 두 번역을 읽고 사용할 번역을 직접 확인하세요. 저장하면 기존 활성 자료를 복사한 새 예문 자료가 선택됩니다. 준비된 로컬 자료에서 조건이 맞을 때 재사용하며, 처리 중인 발화와 이전 자료는 유지됩니다.")
             OutlinedTextField(corrected, {
                 if (!busy && it != corrected) { corrected = it; reviewed = false }
             }, label = { Text("직접 확인한 번역 (500자 이하)") }, enabled = !busy,
@@ -102,7 +109,7 @@ internal fun LearningComparisonReview(comparison: ShadowComparison?, repository:
             val change = rollback ?: return@TextButton
             busy = true
             scope.launch {
-                try { repository.rollbackLearning(change); message = "이전 자료로 되돌렸습니다."; confirmRollback = false }
+                try { repository.rollbackLearning(change); message = "이전 검수 자료를 다시 활성 자료로 선택했습니다."; confirmRollback = false }
                 catch (cancelled: CancellationException) { throw cancelled }
                 catch (error: Exception) { message = error.message ?: "되돌리기 실패" }
                 finally { busy = false }
