@@ -152,6 +152,10 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
             "BACK" -> onBack()
             "CLOSE_PROFESSIONAL" -> professionalSettings = false
             "CLOSE_SETTINGS" -> showSettings = false
+            "RETURN_WORKSPACE" -> {
+                contextLibrary = false; professionalSettings = false; showSettings = false
+                setupFocus = null; setupMessage = null
+            }
             "OPEN_SETTINGS" -> {
                 professionalSettings = false; showSettings = true; setupFocus = null; setupMessage = null
             }
@@ -161,6 +165,17 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
     fun guardedAction(action: String) {
         if (draftDirty) { draftError = null; pendingDraftAction = action }
         else completeDraftAction(action)
+    }
+    fun requestEnd() {
+        endActionMessage = null
+        endingRecordingId = broadcast.recordingId; endingCleanupRetry = workspace.cleanupRetry
+        endingWasStarting = broadcast.phase == BroadcastPhase.STARTING
+        endingInputEpoch = app.broadcastRuntime.inputRequestEpoch; confirmEnd = true
+    }
+    val settingsFooter: @Composable () -> Unit = {
+        WorkspaceSettingsFooter(workspace.displayedBroadcast, workspace.broadcastActive,
+            onBack = { guardedAction("RETURN_WORKSPACE") }, onStopBroadcast = ::requestEnd,
+            onStopInput = onStopMicrophone, stopBroadcastLabel = "방송 종료")
     }
     LaunchedEffect(settingsRequest) {
         if (settingsRequest > 0) {
@@ -205,13 +220,23 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
             TextButton(onClick = { pendingDraftAction = null; draftError = null }) { Text("편집 계속") }
         } })
     if (contextLibrary) {
+        Scaffold(contentWindowInsets = WindowInsets(0, 0, 0, 0), bottomBar = {
+            // The library owns navigation and unsaved-document confirmation.
+            WorkspaceSettingsFooter(workspace.displayedBroadcast, workspace.broadcastActive,
+                onBack = null, onStopBroadcast = ::requestEnd, onStopInput = onStopMicrophone,
+                stopBroadcastLabel = "방송 종료")
+        }) { padding ->
+        Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
         RelayContextLibraryScreen(app, onBack = { contextLibrary = false },
             settingsRequest = librarySettingsRequest, onSettingsRequestHandled = { librarySettingsRequest = 0 },
             onOpenSettings = { contextLibrary = false; guardedAction("OPEN_SETTINGS") })
+        }
+        }
         return
     }
     if (professionalSettings) {
-        Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).semantics { paneTitle = "전문 분야·내 통역 지침" },
+        Scaffold(contentWindowInsets = WindowInsets(0, 0, 0, 0), bottomBar = settingsFooter) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding().verticalScroll(rememberScrollState()).semantics { paneTitle = "전문 분야·내 통역 지침" },
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
             TextButton(onClick = { guardedAction("CLOSE_PROFESSIONAL") }, modifier = Modifier.padding(horizontal = 16.dp)) {
                 Text("중계 설정으로")
@@ -221,6 +246,7 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
                     { domainDraft = it; draftError = null }, { instructionDraft = it; draftError = null },
                     ::saveDraft, { guardedAction("DISCARD") }, { guardedAction("LIBRARY") })
             }
+        }
         }
         return
     }
@@ -343,7 +369,8 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
             }
         } }, confirmButton = { TextButton(onClick = { closePickers() }) { Text("닫기") } })
     if (showSettings) {
-        LazyColumn(Modifier.fillMaxSize().imePadding().semantics { paneTitle = "중계 설정" },
+        Scaffold(contentWindowInsets = WindowInsets(0, 0, 0, 0), bottomBar = settingsFooter) { padding ->
+        LazyColumn(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding().semantics { paneTitle = "중계 설정" },
             contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             item {
                 TextButton(onClick = {
@@ -482,6 +509,7 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
                 Button(onClick = { guardedAction("CLOSE_SETTINGS") }, modifier = Modifier.fillMaxWidth()) { Text("운영 화면으로") }
             }
         }
+        }
         return
     }
     val validTitle = relay.broadcastTitle.isBlank() || normalizedRecordingTitle(relay.broadcastTitle) != null
@@ -500,12 +528,7 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
         StreamingWorkspaceFooter(workspace.displayedBroadcast, workspace.broadcastActive, standalone = false,
             otherBroadcastActive = workspace.otherActive, inputKind = selected?.kind, inputRequestPending = false,
             onStartBroadcast = { guardedAction("START_BROADCAST") },
-            onStopBroadcast = {
-                endActionMessage = null
-                endingRecordingId = broadcast.recordingId; endingCleanupRetry = workspace.cleanupRetry
-                endingWasStarting = broadcast.phase == BroadcastPhase.STARTING
-                endingInputEpoch = app.broadcastRuntime.inputRequestEpoch; confirmEnd = true
-            },
+            onStopBroadcast = ::requestEnd,
             onStartInput = { start() }, onPauseInput = onStopMicrophone,
             onOpenHud = { onOpenFilteredHud?.invoke(visibleCaptionTargets, captionDisplaySource) ?: onOpenHud() },
             startBroadcastEnabled = validTitle, startInputEnabled = workspace.startInputEnabled,
@@ -524,6 +547,10 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
                     broadcast.isInterpreterRelay && broadcast.inputPhase == InputPhase.ACTIVE && levelGuidance.attention },
             emptyMessage = "방송 시작을 누른 뒤 마이크를 켜세요. 인식한 원문과 선택한 통역 자막이 여기에 표시됩니다.",
             operatingActions = {
+                if (workspace.broadcastActive && workspace.displayedBroadcast.listenerUrl != null)
+                    Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+                        RelayListenerAccessCard(workspace.displayedBroadcast.listenerUrl, true, compact = true)
+                    }
                 Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = { titleDialog = true }, enabled = !workspace.otherActive && !workspace.cleanupRetry,

@@ -946,7 +946,8 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
         runMode: BroadcastRunMode = BroadcastRunMode.NETWORK,
     ) {
         if (voiceNoteBusy()) return
-        if (guideCastApplication.translationApiSettings.state.value.usesNativeLiveAudio) {
+        if (streamingBroadcastRequiredSetting(guideCastApplication.translationApiSettings.state.value,
+                translationBroadcastEnabled.value) != null) {
             modelMessage.value = "직접 음성 API는 통역 중계 메뉴에서 시작하세요. 다국어 스트리밍은 문장 번역 서비스를 선택하세요."
             return
         }

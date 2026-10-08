@@ -1000,15 +1000,16 @@ class BroadcastService : Service() {
                 recognitionErrorMessage = null,
                 translationChannels = current.translationChannels.map { it.copy(
                     translationState = BroadcastChannelWorkerState.IDLE, synthesisState = BroadcastChannelWorkerState.IDLE) },
-                translationWarning = if (current.phase in setOf(BroadcastPhase.LIVE, BroadcastPhase.PAUSED))
-                    "입력 꺼짐 · 새 음성을 수집·전송하지 않습니다. 이미 받은 통역 출력이 잠시 이어질 수 있습니다." else current.translationWarning,
                 inputLabel = null,
                 inputRms = 0f,
                 inputPeak = 0f,
                 inputFrameCount = 0,
                 inputAudibleFrameCount = 0,
                 inputSignalActive = false,
-                inputProcessingSummary = null,
+                inputProcessingSummary = if (current.phase in setOf(BroadcastPhase.LIVE, BroadcastPhase.PAUSED))
+                    "입력 꺼짐 · 새 음성을 수집·전송하지 않습니다." +
+                        (if (current.translationChannels.isNotEmpty()) " 이미 받은 통역 출력이 잠시 이어질 수 있습니다." else "")
+                    else null,
                 inputErrorMessage = null,
             )
         }

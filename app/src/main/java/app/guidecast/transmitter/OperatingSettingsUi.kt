@@ -30,10 +30,13 @@ internal fun relayRequiredSetting(api: TranslationApiOptions, relay: Interpreter
     else -> null
 }
 
+internal fun streamingBroadcastRequiredSetting(api: TranslationApiOptions, translate: Boolean): String? =
+    if (translate && api.usesNativeLiveAudio) "service" else null
+
 internal fun streamingRequiredSetting(api: TranslationApiOptions, translate: Boolean,
     targets: Set<String>, authorized: Boolean): String? = when {
-    api.usesNativeLiveAudio -> "service"
     !translate -> null
+    streamingBroadcastRequiredSetting(api, translate) != null -> "service"
     targets.isEmpty() -> "languages"
     api.provider != TranslationApiProvider.LOCAL && !api.hasKey -> "key"
     api.provider != TranslationApiProvider.LOCAL && !authorized -> "consent"

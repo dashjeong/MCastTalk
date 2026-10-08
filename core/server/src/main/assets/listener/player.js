@@ -489,10 +489,11 @@ function renderTranscripts(responseText) {
       notice.textContent = uiText("가까운 인식 구간을 함께 표시 · 발화 정렬 미확인");
       row.append(notice);
     }
-    if (!nativeMissingCaptionLabel(line, selectedLanguage)) {
+    const nativeState = nativeCaptionStateLabel(line, selectedLanguage);
+    if (nativeState || !nativeMissingCaptionLabel(line, selectedLanguage)) {
       const state = document.createElement("p");
       state.className = "transcript-state";
-      state.textContent = uiText(isFinal ? "확정" : "받는 중");
+      state.textContent = nativeState || uiText(isFinal ? "확정" : "받는 중");
       row.append(state);
     }
 
@@ -1508,6 +1509,27 @@ function captionContainsLanguage(row, language) {
   if (row.displaySegments) return row.displaySegments.some(segment => captionContainsLanguage(segment, language));
   return !row.liveSegmentLanguage || captionLanguageEquals(row.liveSegmentLanguage, language) ||
     captionLanguageValue(row.translations, language) !== undefined;
+}
+
+/** Native output completion is separate from original-text finality and listener playback. */
+function nativeCaptionStateLabel(row, language = "all") {
+  if (!row || typeof row !== "object") return "";
+  if (row.displaySegments) return row.displaySegments.map(segment => {
+    const label = nativeCaptionStateLabel(segment, language);
+    return label && (language === "all" || language === "source") ? `${channelLabel(segment.liveSegmentLanguage)}: ${label}` : label;
+  }).filter(Boolean).join("\n");
+  const lane = typeof row.liveSegmentLanguage === "string" ? row.liveSegmentLanguage.trim() : "";
+  if (!lane && row.alignment !== "NATIVE_PAIR_UNCONFIRMED") return "";
+  if (typeof pinnedChannelId !== "undefined" && pinnedChannelId && (!lane || !captionLanguageEquals(lane, pinnedChannelId))) return "";
+  if (lane && language !== "all" && language !== "source" && !captionLanguageEquals(lane, language)) return "";
+  const output = row.liveOutputState || row.outputState;
+  const labels = { QUEUED: "통역 중", GENERATING: "통역 중", GENERATED: "통역 완료",
+    CANCELLED: "통역 중단", INCOMPLETE: "통역 미완료" };
+  const label = uiText(labels[output] || "통역 상태 미확인");
+  const terminal = output === "GENERATED" || output === "CANCELLED" || output === "INCOMPLETE";
+  const sourceCheck = row.liveSourceFailed === true || row.liveSourceExpired === true ||
+    (terminal && row.liveSourceFinal === false);
+  return sourceCheck ? `${label} · ${uiText("원문 확인 필요")}` : label;
 }
 
 function nativeMissingCaptionLabel(row, language = "all") {

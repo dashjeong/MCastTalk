@@ -1,6 +1,7 @@
 package app.guidecast.transmitter
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -20,8 +21,10 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import app.guidecast.core.audio.AudioInputKind
 import kotlinx.coroutines.flow.collect
@@ -34,6 +37,12 @@ internal fun toggleWorkspaceDisplayLanguage(available: List<String>, selected: L
     if (tag !in available) return current
     return if (tag in current) current - tag else available.distinct().filter { it in current || it == tag }
 }
+
+internal fun workspaceUsesCompactControls(fontScale: Float, screenHeightDp: Int): Boolean =
+    fontScale > 1.3f || screenHeightDp < 480
+
+internal fun workspaceUsesSideAccess(widthDp: Float, heightDp: Float): Boolean =
+    widthDp >= 540f && heightDp < 320f
 
 internal data class WorkspaceStatus(val label: String, val issue: String? = null)
 
@@ -89,14 +98,15 @@ internal fun ServiceWorkspaceTopBar(title: String, broadcastingLabel: String?, l
     Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
         BoxWithConstraints(Modifier.fillMaxWidth().statusBarsPadding()) {
             val expandedText = maxWidth < 360.dp || LocalDensity.current.fontScale > 1.3f
-            val statusOnSecondRow = expandedText && WindowInsets.ime.getBottom(LocalDensity.current) == 0 && maxHeight >= 104.dp
+            val shortScreen = LocalConfiguration.current.screenHeightDp < 480
+            val statusOnSecondRow = expandedText && !shortScreen && WindowInsets.ime.getBottom(LocalDensity.current) == 0 && maxHeight >= 104.dp
             val statusContent: @Composable () -> Unit = {
                 if (broadcastingLabel != null && status != null) TextButton(onClick = onOpenStatus,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("service-workspace-status").semantics {
                         contentDescription = "$title · $broadcastingLabel · ${listenerCount?.let { "청취 연결 ${it}개" } ?: "청취 연결 미확인"} · ${status.label}. 청취 주소·QR과 상태 열기"
                     }, contentPadding = PaddingValues(horizontal = 4.dp)) {
                     Text("$broadcastingLabel · $connections · ${status.label}",
-                        style = MaterialTheme.typography.labelLarge, maxLines = if (expandedText) 2 else 1,
+                        style = MaterialTheme.typography.labelLarge, maxLines = if (expandedText && !shortScreen) 2 else 1,
                         overflow = TextOverflow.Ellipsis,
                         color = if (status.issue != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface)
                 } else Text(title, style = MaterialTheme.typography.titleMedium,
@@ -133,6 +143,31 @@ internal fun workspaceFooterPolicy(broadcast: BroadcastSnapshot, broadcastActive
 }
 
 @Composable
+internal fun WorkspaceSettingsFooter(broadcast: BroadcastSnapshot, broadcastActive: Boolean,
+    onBack: (() -> Unit)?, onStopBroadcast: () -> Unit, onStopInput: () -> Unit,
+    stopBroadcastLabel: String = "방송 중지") {
+    val inputRunning = broadcast.inputPhase in setOf(InputPhase.STARTING, InputPhase.ACTIVE) || broadcast.inputStopping
+    if (onBack == null && !broadcastActive && !inputRunning) return
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer, tonalElevation = 3.dp) {
+        Column(Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (onBack != null) Button(onClick = onBack, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                .testTag("settings-return-to-workspace")) { Text("방송 화면으로") }
+            if (broadcastActive || inputRunning) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (broadcastActive) OutlinedButton(onClick = onStopBroadcast,
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("settings-stop-broadcast")) {
+                    Text(if (broadcast.phase == BroadcastPhase.FAILED) "종료 재시도" else stopBroadcastLabel)
+                }
+                if (inputRunning) OutlinedButton(onClick = onStopInput, enabled = !broadcast.inputStopping,
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("settings-stop-input")) {
+                    Text(if (broadcast.inputStopping) "입력 끄는 중" else "마이크·입력 끄기")
+                }
+            }
+        }
+    }
+}
+
+@Composable
 internal fun StreamingWorkspaceFooter(broadcast: BroadcastSnapshot, broadcastActive: Boolean, standalone: Boolean,
     otherBroadcastActive: Boolean, inputKind: AudioInputKind?, inputRequestPending: Boolean,
     onStartBroadcast: () -> Unit, onStopBroadcast: () -> Unit, onStartInput: () -> Unit, onPauseInput: () -> Unit,
@@ -141,6 +176,7 @@ internal fun StreamingWorkspaceFooter(broadcast: BroadcastSnapshot, broadcastAct
     val policy = workspaceFooterPolicy(broadcast, broadcastActive, otherBroadcastActive, inputRequestPending,
         startBroadcastEnabled, startInputEnabled)
     val inputName = if (inputKind in setOf(AudioInputKind.DEVICE_PLAYBACK, AudioInputKind.WEB_SPEAKER)) "입력" else "마이크"
+    val compactControls = workspaceUsesCompactControls(LocalDensity.current.fontScale, LocalConfiguration.current.screenHeightDp)
     val starting = policy.inputStarting
     val canTurnOff = policy.canStopInput
     val micLabel = when {
@@ -160,15 +196,18 @@ internal fun StreamingWorkspaceFooter(broadcast: BroadcastSnapshot, broadcastAct
             horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             Button(onClick = if (broadcastActive) onStopBroadcast else onStartBroadcast,
                 enabled = policy.broadcastEnabled,
-                modifier = Modifier.weight(1f).heightIn(min = 64.dp).testTag("streaming-broadcast-toggle"),
-                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)) {
-                Text(broadcastLabel, style = MaterialTheme.typography.labelLarge)
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("streaming-broadcast-toggle"),
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = if (compactControls) 4.dp else 8.dp)) {
+                Text(broadcastLabel, style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center)
             }
             FilledTonalButton(onClick = if (canTurnOff) onPauseInput else onStartInput,
                 enabled = policy.inputEnabled,
-                modifier = Modifier.weight(1f).heightIn(min = 64.dp).testTag("streaming-input-toggle"),
-                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("streaming-input-toggle"),
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = if (compactControls) 4.dp else 8.dp)) {
+                if (compactControls) Text(micLabel, style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center)
+                else Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     WorkspaceSymbol(WorkspaceSymbolKind.MICROPHONE)
                     Text(when {
                         broadcast.inputStopping -> "입력 종료 중"
@@ -181,9 +220,11 @@ internal fun StreamingWorkspaceFooter(broadcast: BroadcastSnapshot, broadcastAct
                 }
             }
             OutlinedButton(onClick = onOpenHud,
-                modifier = Modifier.weight(1f).heightIn(min = 64.dp).testTag("streaming-hud-open"),
-                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 8.dp)) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("streaming-hud-open"),
+                shape = RoundedCornerShape(12.dp),
+                contentPadding = PaddingValues(horizontal = 6.dp, vertical = if (compactControls) 4.dp else 8.dp)) {
+                if (compactControls) Text("HUD", style = MaterialTheme.typography.labelLarge)
+                else Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     WorkspaceSymbol(WorkspaceSymbolKind.FULLSCREEN)
                     Text("HUD", style = MaterialTheme.typography.labelLarge)
                 }
@@ -197,14 +238,17 @@ internal fun StreamingTranscriptWorkspace(broadcast: BroadcastSnapshot, availabl
     showSource: Boolean, onToggleSource: () -> Unit, onToggleTarget: (String) -> Unit,
     onOpenSettings: () -> Unit, onOpenStatus: () -> Unit,
     sourceActions: @Composable (TranslationTranscriptLine) -> Unit = {}, modifier: Modifier = Modifier,
-    operatingActions: @Composable () -> Unit = {}, additionalIssue: String? = null, emptyMessage: String? = null) {
+    operatingActions: @Composable () -> Unit = {}, additionalIssue: String? = null, emptyMessage: String? = null,
+    originalAudioOnly: Boolean = false) {
     var follow by rememberSaveable { mutableStateOf(true) }
     val list = rememberLazyListState()
     var followingScroll by remember { mutableStateOf(false) }
     LaunchedEffect(list) {
         snapshotFlow { list.isScrollInProgress && !followingScroll }.collect { if (it) follow = false }
     }
-    val groups = remember(broadcast.transcripts) { relayCaptionPresentation(broadcast.transcripts) }
+    val groups = remember(broadcast.transcripts, originalAudioOnly) {
+        if (originalAudioOnly) emptyList() else relayCaptionPresentation(broadcast.transcripts)
+    }
     val rows = remember(groups, selectedTargets, showSource) {
         groups.filter { group -> showSource || selectedTargets.any { group.translations.containsKey(it) || group.segmentFor(it) != null } }
     }
@@ -214,8 +258,12 @@ internal fun StreamingTranscriptWorkspace(broadcast: BroadcastSnapshot, availabl
             try { list.scrollToItem(0) } finally { followingScroll = false }
         }
     }
-    Column(modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
+    BoxWithConstraints(modifier.fillMaxSize()) {
+        val shortBody = maxHeight < 320.dp
+        val sideAccess = broadcast.listenerUrl != null && workspaceUsesSideAccess(maxWidth.value, maxHeight.value)
+        val accessWidth = (maxWidth * .32f).coerceIn(160.dp, 220.dp)
+        val content: @Composable ColumnScope.() -> Unit = {
+        if (!originalAudioOnly) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             FilterChip(selected = showSource, onClick = onToggleSource, label = { Text("원문") },
                 modifier = Modifier.heightIn(min = 48.dp).testTag("streaming-display-source"))
@@ -225,28 +273,41 @@ internal fun StreamingTranscriptWorkspace(broadcast: BroadcastSnapshot, availabl
                     modifier = Modifier.heightIn(min = 48.dp).testTag("streaming-display-$tag"))
             }
             if (availableTargets.isEmpty()) TextButton(onClick = onOpenSettings) { Text("통역 언어 설정") }
+            if (shortBody) TextButton(onClick = { follow = !follow }, modifier = Modifier.testTag("streaming-follow-toggle")) {
+                Text(if (follow) "따라가기 중지" else "실시간으로")
+            }
         }
-        operatingActions()
+        if (!sideAccess) operatingActions()
         val issue = streamingWorkspaceStatus(broadcast).issue ?: additionalIssue
         if (issue != null) Surface(color = MaterialTheme.colorScheme.errorContainer) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text(issue, modifier = Modifier.weight(1f).semantics { liveRegion = LiveRegionMode.Polite },
-                    style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    style = MaterialTheme.typography.bodySmall, maxLines = if (shortBody) 1 else 2, overflow = TextOverflow.Ellipsis)
                 TextButton(onClick = onOpenStatus) { Text("확인·복구") }
             }
         }
+        if (!shortBody) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("실시간 스크립트", modifier = Modifier.weight(1f).semantics { heading() }, style = MaterialTheme.typography.titleSmall)
-            TextButton(onClick = { follow = !follow }, modifier = Modifier.testTag("streaming-follow-toggle")) {
+            Text(if (originalAudioOnly) "원음 방송" else "실시간 스크립트", modifier = Modifier.weight(1f).semantics { heading() }, style = MaterialTheme.typography.titleSmall)
+            if (originalAudioOnly) TextButton(onClick = onOpenSettings) { Text("통번역 설정") }
+            else TextButton(onClick = { follow = !follow }, modifier = Modifier.testTag("streaming-follow-toggle")) {
                 Text(if (follow) "따라가기 중지" else "실시간으로")
             }
         }
-        if (rows.isEmpty()) Box(Modifier.fillMaxWidth().weight(1f).padding(24.dp), contentAlignment = Alignment.Center) {
+        }
+        if (rows.isEmpty()) Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (shortBody) {
+                Text(if (originalAudioOnly) "원음 방송" else "실시간 스크립트", style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.semantics { heading() })
+            }
             Text(when {
+                originalAudioOnly -> "현재는 마이크 소리만 청취자에게 전달합니다. 자막과 통역 음성이 필요하면 통번역 설정에서 번역 방송을 켜세요."
                 !showSource && selectedTargets.isEmpty() -> "위에서 표시할 원문이나 통역 언어를 선택하세요. 방송 언어는 바뀌지 않습니다."
                 broadcast.inputPhase == InputPhase.ACTIVE -> "발화를 기다리고 있습니다. 인식한 문장과 통역문이 여기에 표시됩니다."
                 else -> emptyMessage ?: "마이크를 켜면 원문과 통역문을 볼 수 있습니다. 방송 시작으로 청취자를 초대하세요."
             }, style = MaterialTheme.typography.bodyLarge)
+            if (shortBody && originalAudioOnly) TextButton(onClick = onOpenSettings) { Text("통번역 설정") }
         } else LazyColumn(state = list, reverseLayout = true, modifier = Modifier.fillMaxWidth().weight(1f)
             .testTag("streaming-transcript-list"), contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(20.dp)) {
@@ -275,6 +336,12 @@ internal fun StreamingTranscriptWorkspace(broadcast: BroadcastSnapshot, availabl
                 }
             }
         }
+        }
+        if (sideAccess) Row(Modifier.fillMaxSize()) {
+            Column(Modifier.width(accessWidth).fillMaxHeight()
+                .verticalScroll(rememberScrollState())) { operatingActions() }
+            Column(Modifier.weight(1f).fillMaxHeight(), content = content)
+        } else Column(Modifier.fillMaxSize(), content = content)
     }
 }
 

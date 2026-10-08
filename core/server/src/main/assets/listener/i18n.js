@@ -3,6 +3,12 @@
 globalThis.GuideCastI18n = (() => {
   const locales = ["en", "ja", "zh", "zh-tw", "vi", "nl", "es", "ar"];
   const rows = {
+    "통역 중": ["Interpreting", "通訳中", "正在口译", "正在口譯", "Đang phiên dịch", "Bezig met tolken", "Interpretando", "جارٍ الترجمة الشفهية"],
+    "통역 완료": ["Interpretation complete", "通訳完了", "口译完成", "口譯完成", "Phiên dịch hoàn tất", "Vertolking voltooid", "Interpretación completada", "اكتملت الترجمة الشفهية"],
+    "통역 중단": ["Interpretation stopped", "通訳中断", "口译已中止", "口譯已中止", "Phiên dịch đã dừng", "Vertolking gestopt", "Interpretación detenida", "توقفت الترجمة الشفهية"],
+    "통역 미완료": ["Interpretation incomplete", "通訳未完了", "口译未完成", "口譯未完成", "Phiên dịch chưa hoàn tất", "Vertolking onvolledig", "Interpretación incompleta", "الترجمة الشفهية غير مكتملة"],
+    "통역 상태 미확인": ["Interpretation status unconfirmed", "通訳の状態は未確認", "口译状态未确认", "口譯狀態未確認", "Chưa xác nhận trạng thái phiên dịch", "Status van vertolking niet bevestigd", "Estado de interpretación sin confirmar", "حالة الترجمة الشفهية غير مؤكدة"],
+    "원문 확인 필요": ["Check the original text", "原文を確認してください", "请核对原文", "請核對原文", "Cần kiểm tra văn bản gốc", "Controleer de oorspronkelijke tekst", "Revisa el texto original", "تحقق من النص الأصلي"],
     "원음 수신 중 · 현재는 조용한 구간입니다": ["Original audio received · currently a quiet segment", "原音を受信中・現在は静かな区間です", "正在接收原音·当前为安静片段", "正在接收原音·目前為安靜片段", "Đang nhận âm thanh gốc · hiện là đoạn yên lặng", "Originele audio ontvangen · momenteel een stille passage", "Audio original recibido · ahora hay un tramo silencioso", "يتم استقبال الصوت الأصلي · المقطع الحالي هادئ"],
     "통역 음성 수신 중 · 현재는 조용한 구간입니다": ["Translated audio received · currently a quiet segment", "通訳音声を受信中・現在は静かな区間です", "正在接收口译音频·当前为安静片段", "正在接收口譯音訊·目前為安靜片段", "Đang nhận âm thanh phiên dịch · hiện là đoạn yên lặng", "Vertaalde audio ontvangen · momenteel een stille passage", "Audio traducido recibido · ahora hay un tramo silencioso", "يتم استقبال صوت الترجمة · المقطع الحالي هادئ"],
     "가까운 인식 구간을 함께 표시 · 발화 정렬 미확인": ["Nearby recognition segments shown together · utterance alignment unconfirmed", "近い認識区間をまとめて表示・発話の対応は未確認", "相近识别片段合并显示·话语对应关系未确认", "相近辨識片段合併顯示·語句對應關係未確認", "Hiển thị các đoạn nhận dạng gần nhau · chưa xác nhận căn chỉnh lời nói", "Nabije herkenningssegmenten samen getoond · uitlijning niet bevestigd", "Segmentos cercanos agrupados · correspondencia de enunciados sin confirmar", "عرض مقاطع التعرف المتقاربة معاً · تطابق العبارات غير مؤكد"],

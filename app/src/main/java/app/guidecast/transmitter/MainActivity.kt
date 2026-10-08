@@ -556,6 +556,12 @@ private fun GuideCastScreen(
         onStartBroadcast(mode, pin, speakerPin, requestedMode)
     }
     fun startStreamingBroadcast() {
+        val missing = streamingBroadcastRequiredSetting(app.translationApiSettings.state.value,
+            translationModels.broadcastTranslationEnabled)
+        if (missing != null) {
+            openStreamingSettings(missing, "통번역 스트리밍에는 문장 번역 서비스를 선택해 주세요. Live 음성 서비스는 통역 중계에서 사용할 수 있습니다.")
+            return
+        }
         if (runMode == BroadcastRunMode.NETWORK && accessMode == OperatorAccessMode.PIN &&
             !(broadcastPin.length in 4..8 && broadcastPin.all(Char::isDigit)))
             openStreamingSettings("output", "사용할 PIN을 입력해 주세요.")
@@ -650,6 +656,11 @@ private fun GuideCastScreen(
         if (!broadcastActive) runMode = operatorOptions.runMode
     }
     val streamingWorkspace = section == GuideCastSection.BROADCAST &&
+        service in setOf(MCastService.VOICE, MCastService.MULTILINGUAL) &&
+        !showCommonSettings && menuSettingsProfile == null && !showAssistant && !showDataTransfer &&
+        !showSentenceMemory && !showDeveloperLab && !showFileTranslation && !showLicenses &&
+        !showGlossary && !showSpeechCorrections && !showDomainCorpus
+    val streamingSettingsSurface = section == GuideCastSection.MODELS &&
         service in setOf(MCastService.VOICE, MCastService.MULTILINGUAL) &&
         !showCommonSettings && menuSettingsProfile == null && !showAssistant && !showDataTransfer &&
         !showSentenceMemory && !showDeveloperLab && !showFileTranslation && !showLicenses &&
@@ -751,7 +762,7 @@ private fun GuideCastScreen(
                 val menuOwn = menuOrigin != null && menuWebBroadcast.origin == menuOrigin
                 val nativeWorkspace = service == MCastService.RELAY && section == GuideCastSection.BROADCAST &&
                     !showCommonSettings && menuSettingsProfile == null && !showLicenses && !showDomainCorpus
-                val workspaceBroadcast = streamingWorkspace || nativeWorkspace
+                val workspaceBroadcast = streamingWorkspace || streamingSettingsSurface || nativeWorkspace
                 val workspaceOwn = workspaceBroadcast && ((nativeWorkspace == broadcast.isInterpreterRelay) || broadcastCleanupPending)
                 val shownBroadcast = if (workspaceOwn) broadcast else BroadcastSnapshot()
                 val status = if (workspaceBroadcast) streamingWorkspaceStatus(shownBroadcast) else if (menuOwn)
@@ -761,7 +772,12 @@ private fun GuideCastScreen(
                         else if (menuWebBroadcast.phase == MenuBroadcastPhase.PAUSED) "일시정지"
                         else if (menuWebBroadcast.isActive) "송출 중" else "시작 대기", menuWebBroadcast.errorMessage) else null
                 ServiceWorkspaceTopBar(
-                    title = if (showCommonSettings) "앱 공통 설정" else service?.title ?: "MCastTalk",
+                    title = when {
+                        showCommonSettings -> "앱 공통 설정"
+                        streamingSettingsSurface -> "통번역 스트리밍 설정"
+                        section == GuideCastSection.TEST -> "방송 전 시험"
+                        else -> service?.title ?: "MCastTalk"
+                    },
                     broadcastingLabel = when {
                         workspaceOwn && broadcastActive -> when (broadcast.phase) {
                             BroadcastPhase.STARTING -> if (broadcast.runMode == BroadcastRunMode.STANDALONE) "기기 사용 준비 중" else "방송 준비 중"
@@ -777,7 +793,7 @@ private fun GuideCastScreen(
                         menuOwn && menuWebBroadcast.isActive -> "방송 중"
                         else -> null
                     }, listenerCount = if (workspaceOwn) broadcast.listenerCount else if (menuOwn) menuWebBroadcast.listenerCount else null, status = status,
-                    showSettingsButton = !showCommonSettings,
+                    showSettingsButton = !showCommonSettings && !streamingSettingsSurface,
                     onOpenServices = { drawerScope.launch { serviceDrawer.open() } },
                     onOpenStatus = { showCommonSettings = false; menuSettingsProfile = null; showHistorySettings = false; showServiceStatus = true },
                     onOpenSettings = {
@@ -808,12 +824,17 @@ private fun GuideCastScreen(
             }
         },
         bottomBar = {
-            if (streamingWorkspace) StreamingWorkspaceFooter(
+            if (streamingSettingsSurface) WorkspaceSettingsFooter(streamingBroadcast, streamingBroadcastActive,
+                onBack = { streamApiItem = null; streamSettingsDetail = null; streamSetupMessage = null
+                    section = GuideCastSection.BROADCAST },
+                onStopBroadcast = onStopBroadcast, onStopInput = onStopInput,
+                stopBroadcastLabel = if (broadcast.runMode == BroadcastRunMode.STANDALONE) "사용 종료" else "방송 중지")
+            else if (streamingWorkspace) StreamingWorkspaceFooter(
                 streamingBroadcast, streamingBroadcastActive, (if (streamingBroadcastActive) broadcast.runMode else runMode) == BroadcastRunMode.STANDALONE,
                 otherBroadcastActive = otherStreamingBroadcastActive, inputKind = state.selectedDevice?.kind,
                 inputRequestPending = inputRequestPending && !broadcast.isInterpreterRelay, onStartBroadcast = { startStreamingBroadcast() },
                 onStopBroadcast = onStopBroadcast, onStartInput = { enableStreamingInput() },
-                onPauseInput = onPauseInput, onOpenHud = { showLiveHud = true })
+                onPauseInput = onStopInput, onOpenHud = { showLiveHud = true })
         },
         containerColor = MaterialTheme.colorScheme.background,
     ) { scaffoldPadding ->
@@ -913,6 +934,13 @@ private fun GuideCastScreen(
                     availableStreamDisplayTargets, streamDisplayTargets, tag)) },
                 onOpenSettings = { openStreamingSettings("languages") }, onOpenStatus = { showServiceStatus = true },
                 sourceActions = { row -> SpeechCorrectionAction(row, translationModels.selectedSourceLanguageTag) },
+                originalAudioOnly = !translationModels.broadcastTranslationEnabled,
+                operatingActions = {
+                    if (streamingBroadcastActive && streamingBroadcast.listenerUrl != null)
+                        Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+                            RelayListenerAccessCard(streamingBroadcast.listenerUrl, true, compact = true)
+                        }
+                },
                 modifier = Modifier.fillMaxSize().padding(scaffoldPadding).consumeWindowInsets(scaffoldPadding))
             }
             return@Scaffold
@@ -1109,7 +1137,7 @@ private fun GuideCastScreen(
                     if (inputCapturing) {
                         Text("입력을 끈 뒤 마이크와 소음 처리를 변경할 수 있습니다.",
                             style = MaterialTheme.typography.bodySmall)
-                        OutlinedButton(onClick = onPauseInput, enabled = !broadcast.inputStopping,
+                        OutlinedButton(onClick = onStopInput, enabled = !broadcast.inputStopping,
                             modifier = Modifier.fillMaxWidth().sizeIn(minHeight = 48.dp)) {
                             Text(if (broadcast.inputStopping) "입력 끄는 중" else "마이크·입력 끄기")
                         }

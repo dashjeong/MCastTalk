@@ -2,6 +2,9 @@ package app.guidecast.transmitter
 
 import android.content.Intent
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -12,7 +15,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 
@@ -29,7 +36,21 @@ internal fun RelayListenerAccessCard(listenerUrl: String?, broadcasting: Boolean
         }, "청취 주소 공유"))
     }
     if (compact && listenerUrl != null) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        val compactControls = workspaceUsesCompactControls(LocalDensity.current.fontScale, LocalConfiguration.current.screenHeightDp)
+        if (compactControls) {
+            OutlinedCard(onClick = { enlarged = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp)
+                .testTag("service-broadcast-access-details").semantics { contentDescription = "청취 주소·QR 상세 열기. 복사와 공유" }) {
+                Row(Modifier.fillMaxWidth().padding(4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    QrCode(listenerUrl, "공통 청취 웹페이지 QR 코드 · 누르면 확대", displaySize = 72.dp)
+                    SelectionContainer(modifier = Modifier.weight(1f)) {
+                        Text(listenerDisplayAddress(listenerUrl), modifier = Modifier.horizontalScroll(rememberScrollState())
+                            .testTag("service-broadcast-listener-url"), style = MaterialTheme.typography.bodySmall,
+                            softWrap = false)
+                    }
+                }
+            }
+        } else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column {
                 QrCode(listenerUrl, "공통 청취 웹페이지 QR 코드", displaySize = 88.dp)
                 TextButton(onClick = { enlarged = true }) { Text("QR 확대") }
@@ -44,7 +65,16 @@ internal fun RelayListenerAccessCard(listenerUrl: String?, broadcasting: Boolean
         }
         if (enlarged) AlertDialog(onDismissRequest = { enlarged = false },
             title = { Text("청취 웹페이지 QR") },
-            text = { QrCode(listenerUrl, "확대한 청취 웹페이지 QR 코드") },
+            text = { BoxWithConstraints(Modifier.fillMaxWidth()) {
+                val qrSize = minOf(224.dp, maxHeight)
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                QrCode(listenerUrl, "확대한 청취 웹페이지 QR 코드", displaySize = qrSize)
+                SelectionContainer { Text(listenerDisplayAddress(listenerUrl), style = MaterialTheme.typography.bodyMedium) }
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { clipboard.setText(AnnotatedString(listenerUrl)) }) { Text("주소 복사") }
+                    Button(onClick = share) { Text("공유") }
+                }
+            } } },
             confirmButton = { TextButton(onClick = { enlarged = false }) { Text("닫기") } })
         return
     }
