@@ -522,7 +522,7 @@ private fun GuideCastScreen(
     }
     fun streamingStartReady(ignorePreparation: Boolean = false): Boolean {
         if (app.menuBroadcast.state.value.isActive) {
-            openStreamingSettings("input", "다른 메뉴의 웹 방송을 종료한 뒤 마이크를 켜세요.")
+            openStreamingSettings("input", "다른 메뉴의 웹오디오방송을 종료한 뒤 마이크를 켜세요.")
             return false
         }
         val current = app.translationApiSettings.state.value
@@ -861,7 +861,7 @@ private fun GuideCastScreen(
             return@Scaffold
         }
         if (showHistorySettings) AlertDialog(onDismissRequest = { showHistorySettings = false },
-            title = { Text("이 메뉴 설정 · 방송 이력") }, text = { Text("저장한 방송을 선택하면 원음과 통역 음성, 전체 스크립트를 확인할 수 있습니다. 웹 방송은 해당 방송 상세 화면에서 시작·일시정지·종료합니다. 다시 듣기에는 API 요청을 보내지 않습니다.") },
+            title = { Text("이 메뉴 설정 · 방송 이력") }, text = { Text("저장한 방송을 선택하면 원음과 통역 음성, 전체 스크립트를 확인할 수 있습니다. 웹오디오방송은 해당 방송 상세 화면에서 시작·일시정지·종료합니다. 다시 듣기에는 API 요청을 보내지 않습니다.") },
             confirmButton = { TextButton(onClick = { showHistorySettings = false }) { Text("확인") } })
         if (showServiceStatus) {
             val menuOrigin = when (service) {
@@ -1638,7 +1638,7 @@ private fun OperatorHeader(
                         Text(serverLabel, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.SemiBold)
                         Text(
                             when {
-                                broadcast.isInterpreterRelay -> if (broadcast.runMode == BroadcastRunMode.STANDALONE) "· Live API · 기기 재생" else "· Live API · LAN 방송"
+                                broadcast.isInterpreterRelay -> if (broadcast.runMode == BroadcastRunMode.STANDALONE) "· Live API · 기기 재생" else "· Live API · 웹오디오방송"
                                 active && broadcast.runMode == BroadcastRunMode.STANDALONE -> "· 기기 내 처리"
                                 broadcast.translationTestActive && !active -> "· 단말 점검"
                                 else -> "· 청취자 ${broadcast.listenerCount}명"
@@ -1919,7 +1919,7 @@ internal fun operatorStageStatuses(
     if (broadcast.isInterpreterRelay) return listOf(
         OperatorStageStatus("마이크", if (broadcast.inputPhase == InputPhase.ACTIVE) "입력 중" else "입력 대기", OperatorStatusTone.NEUTRAL),
         OperatorStageStatus("Live API", broadcast.relayPhase.shortLabel, OperatorStatusTone.NEUTRAL),
-        OperatorStageStatus("출력", if (broadcast.runMode == BroadcastRunMode.STANDALONE) "기기 재생" else "LAN 방송", OperatorStatusTone.NEUTRAL),
+        OperatorStageStatus("출력", if (broadcast.runMode == BroadcastRunMode.STANDALONE) "기기 재생" else "웹오디오방송", OperatorStatusTone.NEUTRAL),
     )
 
     val input = when (broadcast.inputPhase) {
@@ -1948,11 +1948,11 @@ internal fun operatorStageStatuses(
         else -> OperatorStageStatus("통역", "준비 확인", OperatorStatusTone.WARNING)
     }
     val server = when (broadcast.phase) {
-        BroadcastPhase.LIVE -> OperatorStageStatus("웹 방송", "송출 중", OperatorStatusTone.READY)
-        BroadcastPhase.PAUSED -> OperatorStageStatus("웹 방송", "일시정지", OperatorStatusTone.WARNING)
-        BroadcastPhase.STARTING -> OperatorStageStatus("웹 방송", "여는 중", OperatorStatusTone.WORKING)
-        BroadcastPhase.FAILED -> OperatorStageStatus("웹 방송", "오류", OperatorStatusTone.ERROR)
-        BroadcastPhase.IDLE -> OperatorStageStatus("웹 방송", "대기", OperatorStatusTone.NEUTRAL)
+        BroadcastPhase.LIVE -> OperatorStageStatus("웹오디오방송", "송출 중", OperatorStatusTone.READY)
+        BroadcastPhase.PAUSED -> OperatorStageStatus("웹오디오방송", "일시정지", OperatorStatusTone.WARNING)
+        BroadcastPhase.STARTING -> OperatorStageStatus("웹오디오방송", "여는 중", OperatorStatusTone.WORKING)
+        BroadcastPhase.FAILED -> OperatorStageStatus("웹오디오방송", "오류", OperatorStatusTone.ERROR)
+        BroadcastPhase.IDLE -> OperatorStageStatus("웹오디오방송", "대기", OperatorStatusTone.NEUTRAL)
     }
     return listOf(input, interpretation, if (broadcast.runMode == BroadcastRunMode.STANDALONE) {
         server.copy(label = "단독 사용", state = when (broadcast.phase) {

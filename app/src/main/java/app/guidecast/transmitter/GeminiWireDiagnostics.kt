@@ -16,6 +16,7 @@ internal class GeminiWireDiagnostics(private val nowNanos: () -> Long = System::
     private var tailReason: GeminiInputEnd? = null
     private var failure: OnlineConnectionResult? = null
     private val shapeCounts = LongArray(GeminiMessageShapeField.entries.size)
+    private val providerObservations = GeminiProviderObservations(nowNanos)
     private var setupBuilds = 0L
     private var setupModel: String? = null
     private var setupInputTranscription: Boolean? = null
@@ -29,6 +30,7 @@ internal class GeminiWireDiagnostics(private val nowNanos: () -> Long = System::
 
     /** Only fixed paths, types and counts survive this call; payloads and field names do not. */
     @Synchronized fun observeMessageShape(root: JSONObject) {
+        providerObservations.observe(root)
         fun add(field: GeminiMessageShapeField, amount: Int = 1) { shapeCounts[field.ordinal] += amount.toLong() }
         add(GeminiMessageShapeField.MESSAGES)
         add(GeminiMessageShapeField.UNKNOWN_ROOT, root.length() - ROOT_FIELDS.count(root::has))
@@ -88,6 +90,7 @@ internal class GeminiWireDiagnostics(private val nowNanos: () -> Long = System::
         failure = onlineConnectionFailureResult(error); mark(GeminiWireMark.ERROR)
     }
     @Synchronized fun endInput(bytes: Int, reason: GeminiInputEnd) { tailBytes = bytes; tailReason = reason }
+    @Synchronized fun providerObservationSnapshot(): JSONObject = providerObservations.snapshot()
     @Synchronized fun snapshot(): JSONObject {
         val signal = sentSignal.snapshot()
         return JSONObject().put("clock", "PROCESS_MONOTONIC_NANOS")
@@ -126,10 +129,11 @@ private val CONTENT_FIELDS = setOf("inputTranscription", "input_transcription", 
     "generationComplete", "generation_complete", "interrupted", "waitingForInput", "waiting_for_input", "interactionStatus", "interaction_status",
     "groundingMetadata", "grounding_metadata", "urlContextMetadata", "url_context_metadata", "speechState", "speech_state")
 
-/** Emits complete 100ms PCM16 mono16k packets only. All termination paths discard the tail. */
+/** Emits complete 100ms PCM16 mono16k packets; the caller explicitly flushes or discards the tail. */
 internal class GeminiPcmPacketizer {
     private val pending = java.io.ByteArrayOutputStream(3_200)
     private var ended = false
+    val pendingBytes: Int get() = pending.size()
     fun accept(frame: ByteArray): List<ByteArray> {
         check(!ended); require(frame.size % 2 == 0 && frame.size <= 32_000)
         val packets = ArrayList<ByteArray>()

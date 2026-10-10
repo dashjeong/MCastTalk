@@ -33,7 +33,7 @@ internal fun RelayListenerAccessCard(listenerUrl: String?, broadcasting: Boolean
         if (listenerUrl != null) context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_TEXT, listenerUrl)
-        }, "청취 주소 공유"))
+        }, "청취 링크 공유"))
     }
     if (compact && listenerUrl != null) {
         val compactControls = workspaceUsesCompactControls(LocalDensity.current.fontScale, LocalConfiguration.current.screenHeightDp)
@@ -43,10 +43,14 @@ internal fun RelayListenerAccessCard(listenerUrl: String?, broadcasting: Boolean
                 Row(Modifier.fillMaxWidth().padding(4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     QrCode(listenerUrl, "공통 청취 웹페이지 QR 코드 · 누르면 확대", displaySize = 72.dp)
-                    SelectionContainer(modifier = Modifier.weight(1f)) {
-                        Text(listenerDisplayAddress(listenerUrl), modifier = Modifier.horizontalScroll(rememberScrollState())
-                            .testTag("service-broadcast-listener-url"), style = MaterialTheme.typography.bodySmall,
-                            softWrap = false)
+                    Column(Modifier.weight(1f)) {
+                        Text("방송 기기 주소", style = MaterialTheme.typography.labelSmall)
+                        SelectionContainer {
+                            Text(listenerDisplayAddress(listenerUrl), modifier = Modifier.horizontalScroll(rememberScrollState())
+                                .testTag("service-broadcast-listener-url"), style = MaterialTheme.typography.bodySmall,
+                                softWrap = false)
+                        }
+                        Text("청취는 QR 또는 청취 링크 복사", style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
@@ -56,9 +60,11 @@ internal fun RelayListenerAccessCard(listenerUrl: String?, broadcasting: Boolean
                 TextButton(onClick = { enlarged = true }) { Text("QR 확대") }
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("방송 기기 주소", style = MaterialTheme.typography.labelSmall)
+                Text("청취는 QR 또는 청취 링크 복사", style = MaterialTheme.typography.bodySmall)
                 SelectionContainer { Text(listenerDisplayAddress(listenerUrl), modifier = Modifier.testTag("service-broadcast-listener-url"), style = MaterialTheme.typography.bodySmall) }
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { clipboard.setText(AnnotatedString(listenerUrl)) }) { Text("주소 복사") }
+                    OutlinedButton(onClick = { clipboard.setText(AnnotatedString(listenerUrl)) }) { Text("청취 링크 복사") }
                     Button(onClick = share) { Text("공유") }
                 }
             }
@@ -69,9 +75,11 @@ internal fun RelayListenerAccessCard(listenerUrl: String?, broadcasting: Boolean
                 val qrSize = minOf(224.dp, maxHeight)
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 QrCode(listenerUrl, "확대한 청취 웹페이지 QR 코드", displaySize = qrSize)
+                Text("방송 기기 주소", style = MaterialTheme.typography.labelSmall)
                 SelectionContainer { Text(listenerDisplayAddress(listenerUrl), style = MaterialTheme.typography.bodyMedium) }
+                Text("청취는 QR 또는 청취 링크 복사", style = MaterialTheme.typography.bodySmall)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { clipboard.setText(AnnotatedString(listenerUrl)) }) { Text("주소 복사") }
+                    OutlinedButton(onClick = { clipboard.setText(AnnotatedString(listenerUrl)) }) { Text("청취 링크 복사") }
                     Button(onClick = share) { Text("공유") }
                 }
             } } },
@@ -81,16 +89,18 @@ internal fun RelayListenerAccessCard(listenerUrl: String?, broadcasting: Boolean
     OutlinedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("청취 웹페이지", style = MaterialTheme.typography.titleLarge)
-            Text("같은 Wi-Fi·핫스팟의 청취자에게 아래 주소를 공유하세요.")
+            Text("같은 Wi-Fi·핫스팟의 청취자에게 QR 또는 청취 링크를 공유하세요.")
             if (listenerUrl == null) {
                 Text(if (broadcasting) "청취 웹페이지를 준비하고 있습니다." else "중계 시작 후 청취 주소가 만들어집니다.")
             } else {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                     QrCode(listenerUrl, description = "공통 청취 웹페이지 QR 코드")
                 }
+                Text("방송 기기 주소", style = MaterialTheme.typography.labelSmall)
                 SelectionContainer { Text(listenerDisplayAddress(listenerUrl), style = MaterialTheme.typography.titleMedium) }
+                Text("청취는 QR 또는 청취 링크 복사", style = MaterialTheme.typography.bodySmall)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { clipboard.setText(AnnotatedString(listenerUrl)) }, modifier = Modifier.weight(1f)) { Text("주소 복사") }
+                    OutlinedButton(onClick = { clipboard.setText(AnnotatedString(listenerUrl)) }, modifier = Modifier.weight(1f)) { Text("청취 링크 복사") }
                     Button(onClick = share, modifier = Modifier.weight(1f)) { Text("공유") }
                 }
                 Text("청취자는 접속한 뒤 듣기와 스크립트의 언어를 각각 고를 수 있습니다. 현재 방송에서 제공하는 언어만 표시합니다.")

@@ -35,7 +35,7 @@ internal fun AutomaticExampleControls(repository: AutomaticTranslationExamples, 
                 message = if (repository.setEnabled(enabled)) null else "자동 예문 사용 설정을 저장하지 못했습니다. 다시 확인하세요."
             }
             Text("켜기만 해서는 API 요청이 발생하지 않습니다. 통번역 스트리밍의 상시 비교 또는 이번 실행의 비교를 따로 켜야 새 예문을 수집합니다. OFFLINE의 온라인 보조 비교는 추가 전송·비용에 대한 별도 동의가 필요합니다.", style = MaterialTheme.typography.bodySmall)
-            Text("방송이 끝나면 예문을 검사·보관합니다. 어휘 순서를 보존한 표현 정리와 확인 가능한 축약형만 자동 사용하며, 부정·숫자·단위·역할·절이 달라지거나 판단할 수 없으면 직접 검수 대기로 남깁니다. 같은 원문·직전 문맥·언어·말투·전문 자료 조건에서만 재사용하며 추가 API 요청은 없습니다.", style = MaterialTheme.typography.bodySmall)
+            Text("방송과 기기 내 작업이 끝나면 유효한 대기 예문을 검사·보관합니다. 대기열이 가득 차거나 방송·작업이 오래 계속되면 일부 예문은 저장하지 않고 건너뜁니다. 어휘 순서를 보존한 표현 정리와 확인 가능한 축약형만 자동 사용하며, 부정·숫자·단위·역할·절이 달라지거나 판단할 수 없으면 직접 검수 대기로 남깁니다. 같은 원문·직전 문맥·언어·말투·전문 자료 조건에서만 재사용하며 추가 API 요청은 없습니다.", style = MaterialTheme.typography.bodySmall)
             Text("이 검사는 일반 의미 검증이나 사람의 정확도 승인이 아닙니다. 오프라인 오류를 교사가 고친 경우에도 직접 검수가 필요할 수 있습니다. 다른 문장의 품질 향상이나 모델 가중치 학습이 아니며, 직접 검수한 전문 자료를 우선 사용합니다.", style = MaterialTheme.typography.bodySmall)
             Text("개인정보·비밀은 예문에 넣지 마세요. 자동 검사가 모든 민감정보를 찾아내지는 못합니다.", style = MaterialTheme.typography.bodySmall)
             Text(if (!status.ready) "저장 예문 불러오는 중" else "현재 조회 가능한 예문 ${status.stored}/${AutomaticTranslationExamples.MAX_EXAMPLES}개 · 최근 예문을 보관합니다.")

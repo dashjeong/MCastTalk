@@ -588,6 +588,8 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
     companion object {
         private const val MAX_SOURCE_CHARACTERS = 600
         private const val REALTIME_TRANSLATION_TIMEOUT_MILLIS = 10_000L
+        /** Prepared idle comparisons share the provider deadline without extending realtime inference. */
+        const val PREPARED_TRANSLATION_TIMEOUT_MILLIS = REALTIME_TRANSLATION_TIMEOUT_MILLIS
         private const val PREPARATION_WARMUP_TIMEOUT_MILLIS = 30_000L
         private const val SELF_TEST_TIMEOUT_MILLIS = 10 * 60 * 1_000L
         private val WARMUP_SOURCE_TEXT = mapOf(

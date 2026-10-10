@@ -33,6 +33,8 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 
 @Composable
 internal fun VoiceNoteLifecycle(model: VoiceNoteViewModel) {
@@ -63,13 +65,13 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
     val profile = profiles.getValue(ServiceMenuProfile.NOTES)
     val commonDefaults by app.serviceDefaults.state.collectAsStateWithLifecycle()
     val commonApi by app.commonServiceApiSettings.state.collectAsStateWithLifecycle()
-    val defaultSourceTag = supportedMenuLanguageTag(profile.sourceTag, VOICE_NOTE_LANGUAGES.keys) ?: "ko-KR"
+    val defaultSourceTag = if (profile.automaticSource) null
+        else supportedMenuLanguageTag(profile.sourceTag, VOICE_NOTE_LANGUAGES.keys) ?: "ko-KR"
     var title by rememberSaveable { mutableStateOf("") }
     var source by rememberSaveable { mutableStateOf<String?>(defaultSourceTag) }
-    var target by rememberSaveable { mutableStateOf(profile.targetTags.firstNotNullOfOrNull {
-        supportedMenuLanguageTag(it, VOICE_NOTE_LANGUAGES.keys) } ?: "en-US") }
+    var target by rememberSaveable { mutableStateOf(effectiveMenuTargetTags(ServiceMenuProfile.NOTES, profile.targetTags).first()) }
     var transcribePermission by rememberSaveable { mutableStateOf(false) }
-    var liveTranscription by rememberSaveable { mutableStateOf(true) }
+    var liveTranscription by rememberSaveable { mutableStateOf(!profile.automaticSource) }
     var showDetailedView by rememberSaveable { mutableStateOf(false) }
     var showTools by rememberSaveable { mutableStateOf(false) }
     var showTranslation by rememberSaveable { mutableStateOf(false) }
@@ -97,14 +99,26 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
     var renameAttempted by model.editorDraft.renameAttempted
     var speakerAttempted by model.editorDraft.speakerAttempted
     val note = state.selected
-    LaunchedEffect(commonDefaults, commonApi.revision, state.busy, state.recording) {
+    val localWorkActive by app.localVoiceNoteWorkActive.collectAsStateWithLifecycle()
+    val ownBroadcastActiveFlow = remember(app) {
+        app.menuBroadcast.state.map { it.isActive && it.origin == MenuBroadcastOrigin.NOTES }
+            .distinctUntilChanged()
+    }
+    val ownBroadcastActive by ownBroadcastActiveFlow.collectAsStateWithLifecycle(
+        initialValue = app.menuBroadcast.owns(MenuBroadcastOrigin.NOTES))
+    LaunchedEffect(commonDefaults, commonApi.revision, state.busy, state.recording,
+        localWorkActive, ownBroadcastActive) {
         if (!state.busy && !state.recording) app.serviceMenuProfiles.refreshInheritedDefaults(ServiceMenuProfile.NOTES)
     }
     LaunchedEffect(profile, note?.id, state.recording, state.busy) {
         if (note == null && !state.recording && !state.busy) {
-            source = supportedMenuLanguageTag(profile.sourceTag, VOICE_NOTE_LANGUAGES.keys) ?: "ko-KR"
-            target = profile.targetTags.firstNotNullOfOrNull { supportedMenuLanguageTag(it, VOICE_NOTE_LANGUAGES.keys) } ?: "en-US"
+            source = if (profile.automaticSource) null
+                else supportedMenuLanguageTag(profile.sourceTag, VOICE_NOTE_LANGUAGES.keys) ?: "ko-KR"
+            target = effectiveMenuTargetTags(ServiceMenuProfile.NOTES, profile.targetTags).first()
         }
+    }
+    LaunchedEffect(profile.automaticSource, note?.id) {
+        if (note == null && !state.recording && !state.busy && profile.automaticSource) liveTranscription = false
     }
     val transcriptionUnavailable = if (note != null) model.transcriptionUnavailableReason(source) else null
     val listState = rememberLazyListState()

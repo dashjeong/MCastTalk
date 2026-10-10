@@ -58,7 +58,7 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
                 .distinctUntilChanged().collect { options ->
                     val source = if (options.automaticSource) null else
                         supportedMenuLanguageTag(options.sourceTag, FILE_LANGUAGE_OPTIONS.keys)
-                    val targets = options.targetTags.mapNotNull { supportedMenuLanguageTag(it, FILE_LANGUAGE_OPTIONS.keys) }.take(4).toSet()
+                    val targets = effectiveMenuTargetTags(ServiceMenuProfile.FILES, options.targetTags)
                     val engine = if (apiSettings.state.value.provider == TranslationApiProvider.LOCAL)
                         options.localEngine else FileTranslationEngine.API
                     mutableUi.update { current ->
@@ -119,7 +119,7 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
         val profile = app.serviceMenuProfiles.state.value.getValue(ServiceMenuProfile.FILES)
         return FileTranslationUiState(
             sourceLanguageTag = if (profile.automaticSource) null else supportedMenuLanguageTag(profile.sourceTag, FILE_LANGUAGE_OPTIONS.keys),
-            targetLanguageTags = profile.targetTags.mapNotNull { supportedMenuLanguageTag(it, FILE_LANGUAGE_OPTIONS.keys) }.take(4).toSet(),
+            targetLanguageTags = effectiveMenuTargetTags(ServiceMenuProfile.FILES, profile.targetTags),
             translationEngine = if (apiSettings.state.value.provider == TranslationApiProvider.LOCAL) profile.localEngine else FileTranslationEngine.API,
         )
     }
@@ -129,14 +129,14 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
         val entry = mutablePlayback.value?.entry ?: return
         if (isBusy() || webStart?.isActive == true || !claimWork()) return
         if (entry.requiresRelink) {
-            mutablePlayback.update { it?.copy(errorMessage = "파일 찾기로 원본 음원을 연결한 뒤 웹 방송을 시작하세요.") }
+            mutablePlayback.update { it?.copy(errorMessage = "파일 찾기로 원본 음원을 연결한 뒤 웹오디오방송을 시작하세요.") }
             updateOwnership()
             return
         }
         val generation = ++request
         audio.pause()
         mutableUi.update { it.copy(isLoading = true, errorMessage = null) }
-        mutablePlayback.update { it?.copy(errorMessage = null, statusMessage = "웹 방송을 위해 원본 파일을 확인하고 있습니다.") }
+        mutablePlayback.update { it?.copy(errorMessage = null, statusMessage = "웹오디오방송을 위해 원본 파일을 확인하고 있습니다.") }
         webStart = viewModelScope.launch {
             try {
                 val uri = Uri.parse(entry.uri)
@@ -149,7 +149,7 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
                 if (app.menuBroadcast.startMedia(MenuBroadcastOrigin.FILES, uri, entry.displayName,
                         entry.sourceLanguageTag ?: "und", fileBroadcastCaptions(entry))) {
                     webGeneration = app.menuBroadcast.state.value.generation
-                    mutablePlayback.update { it?.copy(statusMessage = "원음과 저장된 번역으로 웹 방송을 준비합니다. 새 번역 요청은 하지 않습니다.") }
+                    mutablePlayback.update { it?.copy(statusMessage = "원음과 저장된 번역으로 웹오디오방송을 준비합니다. 새 번역 요청은 하지 않습니다.") }
                 } else mutablePlayback.update { it?.copy(errorMessage = app.menuBroadcast.state.value.errorMessage ?: "다른 입력·방송을 종료한 뒤 다시 시작하세요.", statusMessage = null) }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) {
@@ -474,8 +474,7 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
         if (isBusy()) return
         val current = mutablePlayback.value ?: return
         mutablePlayback.update { it?.copy(translationLanguageTag = target) }
-        if (target == null || !shouldTranslateFileTarget(current.entry, target,
-                mutableUi.value.translationEngine, retryOnly = true) || work?.isActive == true) return
+        if (target == null || !shouldTranslateFilePlaybackTarget(current.entry, target) || work?.isActive == true) return
         if (mutableUi.value.unavailableReason != null) {
             mutablePlayback.update { it?.copy(errorMessage = mutableUi.value.unavailableReason) }; return
         }

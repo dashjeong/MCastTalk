@@ -174,9 +174,22 @@ class ProviderTranscriptSemanticAssembler(
         return output
     }
 
+    /** Claims the endpoint only when the caller will end the matching provider attempt. */
     fun shouldRequestRecognizerEndpoint(nowNanos: Long): Boolean {
+        if (isNoResultEndpointDue(nowNanos)) {
+            noResultEndpointRequested = true
+            return true
+        }
+        return segmenter.shouldRequestRecognizerEndpoint(nowNanos)
+    }
+
+    /** A queued or undelivered request must not consume the one-shot endpoint deadline. */
+    fun isRecognizerEndpointDue(nowNanos: Long): Boolean =
+        isNoResultEndpointDue(nowNanos) || segmenter.isRecognizerEndpointDue(nowNanos)
+
+    private fun isNoResultEndpointDue(nowNanos: Long): Boolean {
         val lastSpeech = lastSpeechAtNanos
-        if (
+        return (
             !speechActive &&
             speechEpochObserved &&
             !providerResultObservedInSpeechEpoch &&
@@ -186,11 +199,7 @@ class ProviderTranscriptSemanticAssembler(
                 nowNanos = nowNanos,
                 requiredMillis = policy.utteranceEndSilenceMillis,
             )
-        ) {
-            noResultEndpointRequested = true
-            return true
-        }
-        return segmenter.shouldRequestRecognizerEndpoint(nowNanos)
+        )
     }
 
     /**

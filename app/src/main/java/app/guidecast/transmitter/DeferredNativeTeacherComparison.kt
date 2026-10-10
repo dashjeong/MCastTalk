@@ -80,7 +80,9 @@ internal class DeferredNativeTeacherComparison(
     private val offerForReview: (DeferredTeacherSource, DeferredTeacherBatch, Map<String, String>, () -> Boolean) -> Unit,
     private val statusChanged: (DeferredTeacherStatus) -> Unit = {},
     private val externallyHeldLocalLease: Boolean = false,
+    private val offlineTimeoutMillis: Long = 4_000L,
 ) : Closeable {
+    init { require(offlineTimeoutMillis in 1L..10_000L) }
     private data class Pending(val source: DeferredTeacherSource, val captured: DeferredTeacherFence,
         val grant: DeferredTeacherGrant)
     private val lock = Any()
@@ -229,7 +231,7 @@ internal class DeferredNativeTeacherComparison(
                 statusChanged(synchronized(lock) { snapshot(DeferredTeacherPhase.COMPARING) })
                 currentCoroutineContext().ensureActive()
                 if (!allowed()) return
-                val output = withTimeout(4_000) { offline(work.source, target, ::allowed) }
+                val output = withTimeout(offlineTimeoutMillis) { offline(work.source, target, ::allowed) }
                 currentCoroutineContext().ensureActive()
                 val reference = batch.translations.getValue(target)
                 if (!allowed() || !protectedPairAccepted(work.source.original, output, reference, target)) return

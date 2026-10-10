@@ -315,11 +315,10 @@ private fun Flow<PcmAudioFrame>.requireFirstAudibleFrameWithin(
                 } ?: false
                 check(started) { "$label execution queue wait timed out" }
             }
-            // A native worker can emit silence/noise indefinitely after opening its stream. Keep
-            // the attempt deadline absolute across those frames and use the exact same audible
-            // boundary as the browser and pipeline. Leading frames are preserved for diagnostics,
-            // but they cannot suppress the same-text fallback voice.
-            val deadlineNanos = System.nanoTime() + timeoutMillis * NANOS_PER_MILLISECOND
+            // Silence/noise does not reset the provider response deadline. Downstream delivery
+            // can pause while the listener is paused, so exclude only that backpressure from the
+            // provider budget. Leading frames remain available for diagnostics and playback.
+            var deadlineNanos = System.nanoTime() + timeoutMillis * NANOS_PER_MILLISECOND
             var receivedAnyFrame = false
             while (true) {
                 val remainingNanos = deadlineNanos - System.nanoTime()
@@ -342,7 +341,9 @@ private fun Flow<PcmAudioFrame>.requireFirstAudibleFrameWithin(
                 val frame = result.getOrThrow()
                 frame.requireValidPcm16(label)
                 receivedAnyFrame = true
+                val deliveryStartedNanos = System.nanoTime()
                 emit(frame)
+                deadlineNanos += (System.nanoTime() - deliveryStartedNanos).coerceAtLeast(0L)
                 if (frame.hasAudiblePcm16()) break
             }
             for (frame in frames) emit(frame)

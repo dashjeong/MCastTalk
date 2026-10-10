@@ -5,7 +5,7 @@ import app.guidecast.core.audio.AudioInputKind
 internal enum class RelaySetupItem(val label: String, val message: String) {
     INPUT("마이크", "중계에 사용할 마이크를 선택해 주세요."),
     LANGUAGES("발화·통역 언어", "발화 언어와 다른 통역 언어를 1~5개 선택해 주세요."),
-    OUTPUT("기기 재생·LAN 방송", "기기 재생 또는 LAN 방송을 켜 주세요."),
+    OUTPUT("기기 재생·웹오디오방송", "기기 재생 또는 웹오디오방송을 켜 주세요."),
     SERVICE("AI 서비스", "통역 중계에 사용할 Live 음성 서비스를 선택해 주세요."),
     MODEL("AI 모델", "통역 중계를 지원하는 모델을 선택해 주세요."),
     KEY("API 키", "선택한 AI 서비스의 API 키를 입력해 주세요."),

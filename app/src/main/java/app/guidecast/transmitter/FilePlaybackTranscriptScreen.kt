@@ -82,6 +82,9 @@ internal fun FilePlaybackTranscriptScreen(
     modifier: Modifier = Modifier,
 ) {
     val entry = state.entry
+    val languageChoices = remember(entry, state.languageOptions) {
+        filePlaybackLanguageChoices(entry, state.languageOptions)
+    }
     val developerInfo = LocalDeveloperInfo.current
     var fullScreen by rememberSaveable(entry.id) { mutableStateOf(false) }
     var largeText by rememberSaveable { mutableStateOf(true) }
@@ -126,11 +129,11 @@ internal fun FilePlaybackTranscriptScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilterChip(selected = state.translationLanguageTag == null,
                         onClick = { onTranslationLanguageChange(null) }, label = { Text("원문만") })
-                    (state.languageOptions.keys.map(::fileBaseLanguage) + entry.translations.keys).distinct().forEach { tag ->
-                        FilterChip(selected = state.translationLanguageTag == tag,
+                    languageChoices.forEach { choice ->
+                        FilterChip(selected = state.translationLanguageTag == choice.languageTag,
                             enabled = !state.isTranslating,
-                            onClick = { onTranslationLanguageChange(tag) },
-                            label = { Text("원문 + ${fileLanguageLabel(tag, state.languageOptions)}") })
+                            onClick = { onTranslationLanguageChange(choice.languageTag) },
+                            label = { Text("원문 + ${choice.label} · ${choice.actionLabel}") })
                     }
                 }
             }
@@ -278,9 +281,10 @@ internal fun FilePlaybackTranscriptScreen(
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         FilterChip(selected = state.translationLanguageTag == null,
                             onClick = { onTranslationLanguageChange(null) }, label = { Text("원문만") })
-                        state.languageOptions.keys.map(::fileBaseLanguage).distinct().forEach { tag ->
-                            FilterChip(selected = state.translationLanguageTag == tag, enabled = !state.isTranslating,
-                                onClick = { onTranslationLanguageChange(tag) }, label = { Text(fileLanguageLabel(tag, state.languageOptions)) })
+                        languageChoices.forEach { choice ->
+                            FilterChip(selected = state.translationLanguageTag == choice.languageTag, enabled = !state.isTranslating,
+                                onClick = { onTranslationLanguageChange(choice.languageTag) },
+                                label = { Text("${choice.label} · ${choice.actionLabel}") })
                         }
                     }
                     Text("재생 속도", fontWeight = FontWeight.SemiBold)

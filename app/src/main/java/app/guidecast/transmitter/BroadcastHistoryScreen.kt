@@ -270,7 +270,7 @@ import java.util.Date
                         nativeMissingCaptionLabel(caption.alignment == "NATIVE_PAIR_UNCONFIRMED", caption.outputState,
                             caption.translations.values.any { it.isNotBlank() })?.let { Text(it) }
                         caption.translations.forEach { (language, text) ->
-                            Text("${java.util.Locale.forLanguageTag(language).getDisplayLanguage(java.util.Locale.KOREAN)} · $text")
+                            Text("${recordedChannelDisplayName(language, language)} · $text")
                             TextButton(onClick = { scope.launch {
                                 choice = choices.firstOrNull { it.channel == language }
                                 val slice = withContext(Dispatchers.IO) { app.recordings.audio.sequenceSlice(snapshot.id, caption.part, language.lowercase(), caption.sequence) }

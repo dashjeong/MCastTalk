@@ -7,3 +7,10 @@ internal fun shouldTranslateFileTarget(entry: FileLibraryEntry, target: String,
     (target !in entry.translations || entry.translationModes[target] != engine ||
     entry.translations[target]?.any(String::isBlank) == true ||
     entry.qualityNotes.any { it.startsWith("$target 번역을 완료하지 못했습니다.") }))
+
+/** Viewing a complete saved translation never refreshes it or invokes a newly selected model. */
+internal fun shouldTranslateFilePlaybackTarget(entry: FileLibraryEntry, target: String): Boolean {
+    if (sourceOnlyFileTranslation(entry, target) != null) return false
+    val saved = entry.translations[target]
+    return saved == null || saved.size != entry.segments.size || saved.any(String::isBlank)
+}

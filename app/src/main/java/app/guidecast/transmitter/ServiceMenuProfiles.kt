@@ -146,6 +146,12 @@ internal class ServiceMenuProfiles(private val app: GuideCastApplication,
         save(profile, next)
         return true
     }
+    @Synchronized fun setTargetLanguages(profile: ServiceMenuProfile, targetTags: Set<String>): Boolean {
+        val next = runCatching { menuProfileWithTargetLanguages(state.value.getValue(profile), targetTags) }
+            .getOrNull() ?: return false
+        save(profile, next)
+        return true
+    }
     @Synchronized fun setLocalEngine(profile: ServiceMenuProfile, engine: FileTranslationEngine): Boolean {
         val next = state.value.getValue(profile).copy(usesCommonDefaults = false, localEngine = engine)
         if (runCatching { validateServiceMenuProfile(next) }.isFailure) return false
@@ -189,7 +195,19 @@ internal fun validateServiceMenuProfile(value: ServiceMenuProfileOptions) {
     require(value.localEngine != FileTranslationEngine.API)
 }
 
+/** Editing output languages preserves the independently selected source mode and local engine. */
+internal fun menuProfileWithTargetLanguages(current: ServiceMenuProfileOptions, targetTags: Set<String>): ServiceMenuProfileOptions =
+    current.copy(usesCommonDefaults = false, targetTags = targetTags.toSet()).also(::validateServiceMenuProfile)
+
 /** A base-language default may select its offered locale; a specified unsupported region is not relabeled. */
 internal fun supportedMenuLanguageTag(tag: String, supported: Set<String>): String? =
     supported.firstOrNull { it.equals(tag, true) } ?: if ('-' in tag) null
     else supported.firstOrNull { it.substringBefore('-').equals(tag, true) }
+
+/** Resolve the same supported, ordered choices for the settings screen and the next operation. */
+internal fun effectiveMenuTargetTags(profile: ServiceMenuProfile, targets: Set<String>): Set<String> {
+    val supported = if (profile == ServiceMenuProfile.NOTES) VOICE_NOTE_LANGUAGES.keys else FILE_LANGUAGE_OPTIONS.keys
+    val maximum = if (profile == ServiceMenuProfile.NOTES) 1 else 4
+    val resolved = targets.mapNotNull { supportedMenuLanguageTag(it, supported) }.distinct().take(maximum).toSet()
+    return if (profile == ServiceMenuProfile.NOTES && resolved.isEmpty()) setOf("en-US") else resolved
+}

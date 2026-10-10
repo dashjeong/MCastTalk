@@ -1018,8 +1018,8 @@ class BroadcastService : Service() {
                 releaseTranslationTestResources(owner.sessionId)
                 app.broadcastRuntime.update { current -> current.copy(
                     inputDraining = false, inputStopping = inputCaptureTeardownPending,
-                    translationWarning = if (completed || !pendingOutput) current.translationWarning else
-                        current.translationWarning ?: "남은 통역을 시간 안에 완료하지 못했습니다. 방송 주소는 유지됩니다.",
+                    translationWarning = nativeDrainWarning(current.translationWarning, current.transcripts,
+                        owner.sessionId, completed, pendingOutput),
                     inputProcessingSummary = if (current.phase in setOf(BroadcastPhase.LIVE, BroadcastPhase.PAUSED))
                         "마이크 꺼짐 · 새 음성을 수집·전송하지 않습니다." else null,
                     translationChannels = current.translationChannels.map { it.copy(
@@ -1284,7 +1284,7 @@ class BroadcastService : Service() {
                 if (webBroadcastLease == null) {
                     clearBroadcastSecrets(intent)
                     app.broadcastRuntime.update { it.copy(phase = BroadcastPhase.FAILED,
-                        errorMessage = "다른 메뉴의 웹 방송을 종료한 뒤 시작하세요.") }
+                        errorMessage = "다른 메뉴의 웹오디오방송을 종료한 뒤 시작하세요.") }
                     stopServiceIfUnused()
                     return
                 }
@@ -1370,7 +1370,7 @@ class BroadcastService : Service() {
                 }
                 if (relay) {
                     check(app.interpreterRelaySettings.state.value.let { it.localPlayback || it.networkBroadcast }) {
-                        "기기 재생 또는 LAN 방송을 켜 주세요."
+                        "기기 재생 또는 웹오디오방송을 켜 주세요."
                     }
                     check(translationLanguages.size in 1..MAX_RELAY_LANGUAGES && app.translationApiSettings.state.value.usesNativeLiveAudio) {
                         "통역 중계는 Live 음성 서비스와 출력 언어 1~5개를 선택하세요."
@@ -2599,7 +2599,7 @@ class BroadcastService : Service() {
                                 }.onFailure { app.broadcastRuntime.update { state -> state.copy(
                                     translationWarning = "기기 재생을 시작하지 못했습니다. 출력 장치를 확인하세요.") } }
                                 else app.broadcastRuntime.update { state -> state.copy(translationWarning =
-                                    "$monitorTarget 기기 청취 연결이 준비되지 않았습니다. 준비된 다른 언어의 LAN 중계는 계속됩니다.") }
+                                    "$monitorTarget 기기 청취 연결이 준비되지 않았습니다. 준비된 다른 언어의 웹오디오방송은 계속됩니다.") }
                             }
                             startInputCapture(Intent())
                         }

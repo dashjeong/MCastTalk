@@ -389,7 +389,7 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
                 Text(setupFocus?.label ?: "중계 설정", style = MaterialTheme.typography.headlineSmall)
                 setupMessage?.let { Text(it, color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
-                if (busy) Text(if (setupFocus == RelaySetupItem.INPUT) "마이크를 끄면 입력 설정을 바꿀 수 있습니다. 방송 주소는 유지됩니다." else if (setupFocus in setOf(RelaySetupItem.SERVICE, RelaySetupItem.VOICE, RelaySetupItem.PROFESSIONAL, RelaySetupItem.COMPARISON)) "마이크를 끄면 통역 설정을 바꿀 수 있습니다." else "방송을 종료한 뒤 방송 언어·송출 구성을 바꿀 수 있습니다.")
+                relaySettingsLockHint(setupFocus, busy, microphoneBusy, broadcast.inputStopping)?.let { Text(it) }
             }
             if (setupFocus == null) {
                 RelaySetupItem.entries.filter { it !in setOf(RelaySetupItem.KEY, RelaySetupItem.MODEL) }.forEach { entry -> item(key = entry.name) {
@@ -400,7 +400,7 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
                                 RelaySetupItem.INPUT -> selected?.label ?: "선택 필요"
                                 RelaySetupItem.LANGUAGES -> "${NATIVE_RELAY_SOURCE_LANGUAGE_OPTIONS.find { it.languageTag == relay.source }?.label?.substringBefore(" · ") ?: relay.source} → " +
                                     relay.targetLanguageTags.joinToString(", ") { tag -> NATIVE_RELAY_TRANSLATION_LANGUAGE_OPTIONS.find { it.languageTag == tag }?.label?.substringBefore(" · ") ?: tag }
-                                RelaySetupItem.OUTPUT -> "기기 재생 ${if (relay.localPlayback) "켬" else "끔"} · LAN ${if (relay.networkBroadcast) "켬" else "끔"}"
+                                RelaySetupItem.OUTPUT -> "기기 재생 ${if (relay.localPlayback) "켬" else "끔"} · 웹오디오방송 ${if (relay.networkBroadcast) "켬" else "끔"}"
                                 RelaySetupItem.VOICE -> relayVoiceLabel(api)
                                 RelaySetupItem.SERVICE -> "${api.provider.label} · ${api.model} · ${if (api.hasKey) "키 준비됨" else "키 입력 필요"}"
                                 RelaySetupItem.PROFESSIONAL -> api.domainPrompt.ifBlank { "선택 사항" }.take(40)
@@ -460,17 +460,17 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
                 OutlinedButton(onClick = { monitorPicker = true }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
                     Text("기기에서 들을 언어 · ${NATIVE_RELAY_TRANSLATION_LANGUAGE_OPTIONS.find { it.languageTag == relay.target }?.label ?: relay.target}")
                 }
-                Text("기기에서는 한 언어를 듣고, 스크립트에서는 선택한 모든 언어를 읽습니다. LAN 방송을 켜면 모든 통역 언어를 공유합니다.",
+                Text("기기에서는 한 언어를 듣고, 스크립트에서는 선택한 모든 언어를 읽습니다. 웹오디오방송을 켜면 모든 통역 언어를 공유합니다.",
                     style = MaterialTheme.typography.bodySmall)
             }
-            ServiceExperienceToggle("LAN 청취자에게 방송", "같은 Wi-Fi·핫스팟의 청취자에게 같은 음성을 공유합니다. 청취자마다 API를 다시 호출하지 않습니다.", relay.networkBroadcast, !busy) {
+            ServiceExperienceToggle("웹오디오방송", "같은 Wi-Fi·핫스팟의 청취자에게 같은 음성을 공유합니다. 청취자마다 API를 다시 호출하지 않습니다.", relay.networkBroadcast, !busy) {
                 app.interpreterRelaySettings.update(relay.copy(networkBroadcast = it)) }
                 }
                 RelaySetupItem.VOICE -> item {
             if (relayVoiceSupported(api)) {
                 OutlinedButton(onClick = { voiceSelectionError = null; voicePicker = true }, enabled = !microphoneBusy,
                     modifier = Modifier.fillMaxWidth()) { Text("통역 음성 · ${relayVoiceLabel(api)}") }
-                Text("${RelayVoiceGender.AUTO.label}·여성 계열·남성 계열을 선택합니다. 중계 중에는 음성을 바꿀 수 없습니다.",
+                Text("${RelayVoiceGender.AUTO.label}·여성 계열·남성 계열을 선택합니다. 마이크를 끈 뒤 음성을 바꿀 수 있습니다. 다음 마이크 입력부터 적용됩니다.",
                     style = MaterialTheme.typography.bodySmall)
             } else if (api.provider == TranslationApiProvider.GEMINI_LIVE && api.model == GEMINI_LIVE_TRANSLATE) {
                 Text("원문 목소리의 처리는 Live Translate 모델이 결정합니다. 음성 계열 선택은 지원하지 않습니다.",

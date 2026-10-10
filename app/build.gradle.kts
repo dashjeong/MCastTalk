@@ -130,14 +130,16 @@ android {
     compileSdk = 36
     // Device integration tests must exercise the same R8/minified variant that users install.
     // A debug-only green test cannot certify the alpha APK's native translation path.
-    testBuildType = "alpha"
+    // Isolated UI fixtures may opt into debug; production acceptance uses alpha.
+    val isolatedUiApi0 = providers.gradleProperty("mcast.isolatedUiApi0").orNull == "true"
+    testBuildType = if (isolatedUiApi0) "debug" else "alpha"
 
     defaultConfig {
         applicationId = "app.guidecast.transmitter"
         minSdk = 30
         targetSdk = 36
-        versionCode = 66
-        versionName = "0.2.52-preview.2"
+        versionCode = 79
+        versionName = "0.2.52"
 
         // Supported production devices use ARM64. Keeping only the required ABI
         // avoids shipping an unused second LiteRT-LM native runtime in the sideload APK.
@@ -145,7 +147,7 @@ android {
         require(testAbi == null || testAbi == "x86_64")
         ndk.abiFilters += testAbi ?: "arm64-v8a"
 
-        testInstrumentationRunner = "app.guidecast.transmitter.GuideCastTestRunner"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
     }
 

@@ -309,7 +309,8 @@ class GuideCastApplication : Application() {
                         nativeIdentity = null, offlineModel = "기기 내 준비된 오프라인 모델"),
                         domain.second, automaticExampleInstructions(permit.textOptions), allowed)
                 }
-            }, statusChanged = { mutableDeferredTeacherComparison.value = it }, externallyHeldLocalLease = true)
+            }, statusChanged = { mutableDeferredTeacherComparison.value = it }, externallyHeldLocalLease = true,
+            offlineTimeoutMillis = GemmaTranslationProvider.PREPARED_TRANSLATION_TIMEOUT_MILLIS)
     }
     /** Opt-in idle work may rebind only an already installed, runtime-verified selected model. */
     private suspend fun prepareDeferredExistingGemma(targets: List<String>, allowed: () -> Boolean): Boolean {

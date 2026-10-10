@@ -50,7 +50,10 @@ internal class GeminiLiveSession(
     private val sourceLanguageTag: String? = null,
 ) : LiveAudioSession {
     private val termination = NativeAudioTermination(onEnded)
-    private val inputDrain = NativeInputDrainState()
+    private val drainTraceOrdinal = NativeDrainTraceOrdinals.next()
+    private val inputDrain = NativeInputDrainState(onTrace = { event ->
+        RuntimeDiagnosticLog.record("native_input_drain", event.detail(drainTraceOrdinal))
+    })
     private val sourceDelayWarning = GeminiLiveSourceDelayWarningOwner(
         allowed = { !termination.isEnded && allowed() && settings.authorized(options) && options.allowLiveAudio },
         changed = onSourceDelayStatus)
@@ -63,6 +66,12 @@ internal class GeminiLiveSession(
     private fun recordWire() = RuntimeDiagnosticLog.record("gemini_wire", wireDiagnostics.snapshot()
         .put("session_id", usageSessionId).put("settings_revision", options.revision)
         .put("target", diagnosticTarget).put("connection_index", connectionIndex).toString())
+    private fun recordProviderObservations(observed: GeminiWireDiagnostics, index: Int) {
+        geminiProviderObservationRecords(observed.providerObservationSnapshot(), usageSessionId, index,
+            diagnosticTarget, options.revision, drainTraceOrdinal).forEach { record ->
+            RuntimeDiagnosticLog.durableRecord("gemini_provider_observation", record.toString())
+        }
+    }
     private val diagnosticTarget = geminiLiveTarget(target)
     private fun recordState(state: String) {
         runCatching { onDiagnostic(when (state) {
@@ -136,7 +145,8 @@ internal class GeminiLiveSession(
                     monitor.loss(target, LiveAudioLoss.INPUT_ABANDONED, bytes)
                     diagnostics.loss(LiveAudioLoss.INPUT_ABANDONED, bytes)
                 },
-                interpreterInstructions = context.instructions, references = context.references, liveVoice = options.liveVoice, sourceLanguageTag = sourceLanguageTag, inputDrain = inputDrain,
+                interpreterInstructions = context.instructions, references = context.references, liveVoice = options.liveVoice, sourceLanguageTag = sourceLanguageTag, inputDrain = inputDrain, drainTraceOrdinal = drainTraceOrdinal,
+                explicitActivity = false,
                 onConnectionAttempt = { index, resumed, observed ->
                     check(!termination.isEnded && allowed() && settings.authorized(options) && options.allowLiveAudio)
                     connectionIndex = index; usageReports = 0; wireDiagnostics = observed
@@ -153,6 +163,7 @@ internal class GeminiLiveSession(
                         inputAudioTokens = null, outputAudioTokens = null, inputTextTokens = null, outputTextTokens = null) }
                 },
                 onConnectionClosed = { index, observed ->
+                    recordProviderObservations(observed, index)
                     RuntimeDiagnosticLog.durableRecord("gemini_wire", observed.snapshot()
                         .put("session_id", usageSessionId).put("settings_revision", options.revision)
                         .put("target", diagnosticTarget).put("connection_index", index).toString())
@@ -217,6 +228,11 @@ internal class GeminiLiveSession(
                     "Gemini Live $diagnosticTarget 음성 송신 3초 지연 · 해당 언어를 중지했습니다. 전송 여부 미확인 · 자동 재전송 없음."
                 error is NativeAudioResponseTimeout && error.stage == NativeAudioResponseTimeoutStage.EVENT_CALLBACK ->
                     "Gemini Live $diagnosticTarget 출력 처리 지연 · 해당 언어를 중지했습니다. 자동 재전송 없음."
+                error is GeminiManualActivityFailure -> when (error.reason) {
+                    GeminiManualActivityFailure.Reason.OVERFLOW -> "Gemini Live $diagnosticTarget 응답 대기 중 음성이 20초를 넘었습니다. 통역을 중지했습니다. 미전송 음성은 자동으로 재전송하지 않습니다."
+                    GeminiManualActivityFailure.Reason.INTERRUPTED -> "Gemini Live $diagnosticTarget 통역 응답이 제공자에서 중단되었습니다. 미완료 자막을 확인한 뒤 마이크를 다시 켜세요. 자동 재전송 없음."
+                    GeminiManualActivityFailure.Reason.NO_OUTPUT -> "Gemini Live $diagnosticTarget 통역 음성·자막 없이 응답이 끝났습니다. 입력 내용을 확인한 뒤 마이크를 다시 켜세요. 자동 재전송 없음."
+                }
                 error is GeminiLiveRenewalFailure -> "Gemini Live $diagnosticTarget 안전한 연결 갱신을 완료하지 못했습니다 · 방송 주소는 유지됩니다. 마이크를 다시 켜세요. 미전송·확인 불가 음성 자동 재전송 없음."
                 else -> "Gemini Live $diagnosticTarget 중지 · ${onlineConnectionFailureResult(error).message} 미전송 음성은 재전송하지 않습니다."
             })

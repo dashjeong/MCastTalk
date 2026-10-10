@@ -551,7 +551,7 @@ class GalaxySpeechRecognitionEngine(
             interpretationSegmenter.tick(nowNanos).forEach { interpretedUnit ->
                 send(interpretedUnit)
             }
-            interpretationSegmenter.shouldRequestRecognizerEndpoint(nowNanos)
+            interpretationSegmenter.isRecognizerEndpointDue(nowNanos)
         }
 
         val pcm = Channel<PcmAudioFrame>(
@@ -763,7 +763,19 @@ class GalaxySpeechRecognitionEngine(
                         }
                     } while (
                         (selected is RecognitionAttemptOutcome.EndpointRestart &&
-                            (selected.attemptId != attemptId || !inputCompletion.permitsAutomaticRestart())) ||
+                            (selected.attemptId != attemptId || !segmenterMutex.withLock {
+                                // Claim only after this attempt accepts the request. A queued stale
+                                // request or the gap between attempts must leave the deadline due.
+                                // Cancellation shares the provider callback lock so a final cannot
+                                // invalidate the pending text between acceptance and cancellation.
+                                if (inputCompletion.permitsAutomaticRestart() &&
+                                    interpretationSegmenter.shouldRequestRecognizerEndpoint(
+                                        SystemClock.elapsedRealtimeNanos(),
+                                    )) {
+                                    collector.cancel()
+                                    true
+                                } else false
+                            })) ||
                             (selected is RecognitionAttemptOutcome.Unresponsive &&
                                 (selected.attemptId != attemptId || !inputCompletion.permitsAutomaticRestart()))
                     )

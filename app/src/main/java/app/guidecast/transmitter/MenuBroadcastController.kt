@@ -16,6 +16,7 @@ import app.guidecast.core.server.GuideCastTranscriptSnapshot
 import app.guidecast.core.server.LocalNetworkAddressResolver
 import app.guidecast.core.server.RunningGuideCastServer
 import app.guidecast.core.server.ReplayCaptionSnapshot
+import app.guidecast.core.stream.MAX_SIMULTANEOUS_TRANSLATED_CHANNELS
 import app.guidecast.core.stream.AudioChannelDescriptor
 import app.guidecast.core.stream.PcmAudioFrame
 import app.guidecast.core.stream.RecordedBroadcast
@@ -90,6 +91,7 @@ internal data class MenuBroadcastState(
     val isStopping: Boolean = false,
     val subtitleOnlyChannelIds: Set<String> = emptySet(),
     val unavailableAudioChannelIds: Set<String> = emptySet(),
+    val voiceSetupLanguageTags: Set<String> = emptySet(),
     val contentCompleted: Boolean = false,
     val serverCloseRetryAvailable: Boolean = false,
 ) {
@@ -205,7 +207,7 @@ internal class MenuBroadcastController(private val app: GuideCastApplication) {
             synchronized(gate) {
                 if (!state.value.isActive) mutableState.value = MenuBroadcastState(phase = MenuBroadcastPhase.FAILED,
                     origin = MenuBroadcastOrigin.NOTES,
-                    errorMessage = "이 메뉴 설정에서 문장 번역 서비스·API 키·온라인 문장 전송 동의를 확인한 뒤 웹 방송을 시작하세요.")
+                    errorMessage = "이 메뉴 설정에서 문장 번역 서비스·API 키·온라인 문장 전송 동의를 확인한 뒤 웹오디오방송을 시작하세요.")
             }
             return false
         }
@@ -400,6 +402,52 @@ internal class MenuBroadcastController(private val app: GuideCastApplication) {
             val stored = if (plan is Plan.History) requireNotNull(app.recordings.audio.snapshot(plan.id)) {
                 "저장된 방송을 찾을 수 없습니다." } else null
             val channels = descriptors(plan, stored)
+            val translatedChannels = channels.filter { it.id != "source" }
+            val speechKind = when (plan) {
+                is Plan.Media -> MenuSpeechContentKind.SAVED_MEDIA
+                is Plan.Note -> MenuSpeechContentKind.LIVE_NOTE
+                is Plan.History -> MenuSpeechContentKind.HISTORY
+            }
+            val voiceTargets = menuSpeechLanguageTags(channels, needsSynthesis = plan !is Plan.History)
+            var voiceOwner: TranslationPreparationOwnerToken? = null
+            var failedVoiceTags = voiceTargets
+            withMenuSpeechContentLease(
+                acquire = {
+                    if (voiceTargets.isEmpty()) AutoCloseable { }
+                    else app.acquireTranslationBackendUseIf({ current(generation) }, supersedeSettingsStandby = true)
+                },
+                isCurrent = { current(generation) },
+                releasePreparation = {
+                    voiceOwner?.let { owner ->
+                        try { app.releaseSpeechSynthesisBroadcastOwnerIfInitialized(owner) }
+                        finally { app.endPreparation(owner) }
+                    }
+                },
+            ) {
+            if (voiceTargets.isNotEmpty()) {
+                voiceOwner = app.beginBroadcastPreparation(channels.first { it.id == "source" }.languageTag, voiceTargets)
+                val owner = requireNotNull(voiceOwner)
+                val ensureCurrent = {
+                    if (!current(generation) || !app.isPreparationCurrent(owner))
+                        throw CancellationException("방송 음성 준비가 종료됐습니다.")
+                }
+                try {
+                    ensureCurrent()
+                    val report = prepareMenuSpeechVoices(speechKind) {
+                        app.speechSynthesisProvider.reconcileLanguages(voiceTargets, owner.generation)
+                        app.speechSynthesisProvider.prepareInstalled(voiceTargets,
+                            warmMoonshineWithNativeAdmission = { tag, warm ->
+                                warmMenuVoice(tag, voiceTargets.size > 1, ensureCurrent, warm)
+                            }, ensurePreparationCurrent = ensureCurrent)
+                    }
+                    failedVoiceTags = report?.unavailableLanguageReasons?.keys.orEmpty()
+                    failedVoiceTags.forEach { recordSpeechFailure(it, MenuSpeechFailurePhase.PREPARATION) }
+                } catch (cancelled: CancellationException) { throw cancelled }
+                catch (error: Exception) {
+                    translatedChannels.forEach { recordSpeechFailure(it.languageTag, MenuSpeechFailurePhase.PREPARATION, error) }
+                    // Missing voices remain explicit subtitle-only channels.
+                }
+            }
             val address = LocalNetworkAddressResolver.resolve()
                 ?: error("Wi-Fi 또는 핫스팟에 연결한 뒤 방송을 시작하세요.")
             currentCoroutineContext().ensureActive()
@@ -442,9 +490,11 @@ internal class MenuBroadcastController(private val app: GuideCastApplication) {
             }
             update(generation) { it.copy(phase = MenuBroadcastPhase.LIVE, listenerUrl = runningServer.listenerUrl,
                 channels = channels, errorMessage = null,
-                warningMessage = if (plan is Plan.History) null else unavailableVoices(channels.drop(1)),
-                subtitleOnlyChannelIds = channels.drop(1).filter { descriptor -> plan !is Plan.History &&
-                    (!readyVoice(descriptor.languageTag) || (plan is Plan.Note && !noteTranslationReady(plan, descriptor.languageTag)))
+                warningMessage = if (plan is Plan.History) null else unavailableVoices(translatedChannels, failedVoiceTags),
+                voiceSetupLanguageTags = if (plan is Plan.History) emptySet() else
+                    translatedChannels.filter { it.languageTag in failedVoiceTags || !readyVoice(it.languageTag) }.map { it.languageTag }.toSet(),
+                subtitleOnlyChannelIds = translatedChannels.filter { descriptor -> plan !is Plan.History &&
+                    (descriptor.languageTag in failedVoiceTags || !readyVoice(descriptor.languageTag) || (plan is Plan.Note && !noteTranslationReady(plan, descriptor.languageTag)))
                 }.map { it.id }.toSet()) }
             observer = scope.launch {
                 while (current(generation)) {
@@ -463,6 +513,7 @@ internal class MenuBroadcastController(private val app: GuideCastApplication) {
             synchronized(gate) {
                 if (current(generation)) update(generation) { it.withCompletedContent() }
             }
+            } // Release synthesis resources before the web-only replay wait.
             // Stored audio remains available without decoder, capture, synthesis or provider work.
             while (current(generation)) delay(200)
         } catch (cancelled: CancellationException) { throw cancelled }
@@ -513,14 +564,53 @@ internal class MenuBroadcastController(private val app: GuideCastApplication) {
         require(targets.size <= 7)
         return listOf(AudioChannelDescriptor("source", "원음", source, 16_000)) + targets.map { tag ->
             AudioChannelDescriptor(tag.lowercase(Locale.ROOT),
-                Locale.forLanguageTag(tag).getDisplayLanguage(Locale.KOREAN).ifBlank { tag }.take(40), tag,
+                recordedChannelDisplayName(tag.lowercase(Locale.ROOT), tag), tag,
                 MoonshineSpeechSynthesisProvider.OUTPUT_SAMPLE_RATE_HZ)
         }
     }
 
-    private fun unavailableVoices(channels: List<AudioChannelDescriptor>): String? {
-        val missing = channels.filterNot { readyVoice(it.languageTag) }
-        return if (missing.isEmpty()) null else "${missing.joinToString { it.displayName }} 음성이 준비되지 않았습니다. 원음·자막을 방송하며, 음성 설정에서 먼저 준비하세요."
+    private suspend fun warmMenuVoice(tag: String, serialize: Boolean,
+        ensureCurrent: () -> Unit, warm: suspend () -> Unit) {
+        ensureCurrent()
+        if (!app.speechSynthesisProvider.hasActiveMoonshineWorker(tag)) {
+            app.withProcessNativeColdLoadLease(ProcessNativeColdLoadKeys.speech(tag), serializeWithAllColdLoads = serialize) {
+                ensureCurrent()
+                if (!app.speechSynthesisProvider.hasActiveMoonshineWorker(tag)) warm()
+            }
+        }
+        ensureCurrent()
+    }
+
+    /** Explicit retry shares normal voice setup but never installs or downloads a model. */
+    suspend fun recheckInstalledVoices(languageTags: Set<String>): String {
+        if (state.value.isActive || app.dataTransferUnavailable())
+            return "방송·재생·변환을 중지한 뒤 음성을 준비하세요."
+        val selected = languageTags.take(MAX_SIMULTANEOUS_TRANSLATED_CHANNELS).toSet()
+        if (selected.isEmpty()) return "준비할 통역 언어가 없습니다."
+        val owner = app.beginSettingsPreparation("und", selected)
+        try {
+            return app.withTranslationBackendUse(retainSettingsStandbyFor = owner) {
+                val ensureCurrent = {
+                    if (state.value.isActive || !app.isPreparationCurrent(owner))
+                        throw CancellationException("새 방송이 시작되어 음성 준비를 중지했습니다.")
+                }
+                ensureCurrent()
+                app.speechSynthesisProvider.refreshInstalledVoices(selected)
+                val report = app.speechSynthesisProvider.prepareForSettings(selected,
+                    warmMoonshineWithNativeAdmission = { tag, warm ->
+                        warmMenuVoice(tag, selected.size > 1, ensureCurrent, warm)
+                    }, isAppPreparationCurrent = { !state.value.isActive && app.isPreparationCurrent(owner) },
+                    allowAssetDownloads = false)
+                ensureCurrent()
+                if (report.unavailableLanguageReasons.isEmpty()) "설치된 음성을 준비했습니다. 이 콘텐츠의 웹오디오방송을 다시 시작하세요."
+                else "일부 언어의 설치된 음성을 사용할 수 없습니다. 아래 음성팩 설치·설정을 확인하세요."
+            }
+        } finally { app.endPreparation(owner) }
+    }
+
+    private fun unavailableVoices(channels: List<AudioChannelDescriptor>, failedTags: Set<String>): String? {
+        val missing = channels.filter { it.languageTag in failedTags || !readyVoice(it.languageTag) }
+        return if (missing.isEmpty()) null else "${missing.joinToString { it.displayName }} 음성이 준비되지 않았습니다. 원음·자막을 방송하며, 방송 중지 후 음성 준비를 확인하세요."
     }
     private fun readyVoice(language: String): Boolean = app.speechSynthesisProvider.hasActiveMoonshineWorker(language) ||
         app.speechSynthesisProvider.isFallbackReady(language)
@@ -764,6 +854,14 @@ internal class MenuBroadcastController(private val app: GuideCastApplication) {
         line.copy(translations = line.translations + translated)
     }
 
+    private fun recordSpeechFailure(languageTag: String, phase: MenuSpeechFailurePhase, error: Throwable? = null) {
+        RuntimeDiagnosticLog.record("menu_tts_failure", menuSpeechFailureDiagnostic(
+            phase = phase, languageTag = languageTag, error = error,
+            nativeReady = app.speechSynthesisProvider.hasActiveMoonshineWorker(languageTag),
+            offlineReady = app.speechSynthesisProvider.isFallbackReady(languageTag),
+        ), critical = true)
+    }
+
     private suspend fun synthesizeCaption(line: MenuBroadcastCaption, generation: Long, session: StreamSession,
         outputAllowed: () -> Boolean = { true }) = supervisorScope {
         if (!line.isFinal) return@supervisorScope
@@ -771,7 +869,15 @@ internal class MenuBroadcastController(private val app: GuideCastApplication) {
         val sequence = synchronized(transcriptGate) { captionSequences[line.startMs to line.original] }
         line.translations.mapNotNull { (tag, text) -> session.channels.firstOrNull { it.id != "source" && it.languageTag == tag }
             ?.takeIf { text.isNotBlank() }?.let { channel -> async {
-                if (!readyVoice(tag)) return@async
+                if (!readyVoice(tag)) {
+                    recordSpeechFailure(tag, MenuSpeechFailurePhase.NOT_READY)
+                    update(generation) { it.copy(
+                        subtitleOnlyChannelIds = it.subtitleOnlyChannelIds + channel.id,
+                        voiceSetupLanguageTags = it.voiceSetupLanguageTags + tag,
+                        warningMessage = "${channel.displayName} 음성을 사용할 수 없습니다. 원음·자막은 계속되며, 방송 중지 후 음성 준비를 확인하세요.",
+                    ) }
+                    return@async
+                }
                 val synthesisClock = MenuPlaybackClock()
                 try {
                     withMenuPlaybackTimeout(30_000, synthesisClock) {
@@ -783,17 +889,24 @@ internal class MenuBroadcastController(private val app: GuideCastApplication) {
                             }
                         }
                     }
-                } catch (_: MenuPlaybackDeadlineExceeded) {
+                } catch (error: MenuPlaybackDeadlineExceeded) {
+                    recordSpeechFailure(tag, MenuSpeechFailurePhase.TIMEOUT, error)
                     update(generation) { it.copy(warningMessage = "${channel.displayName} 음성 합성 시간이 초과됐습니다. 원음과 자막은 계속 방송합니다.",
-                        unavailableAudioChannelIds = it.unavailableAudioChannelIds + channel.id) }
+                        unavailableAudioChannelIds = it.unavailableAudioChannelIds + channel.id,
+                        voiceSetupLanguageTags = it.voiceSetupLanguageTags + tag) }
                 } catch (cancelled: CancellationException) {
                     currentCoroutineContext().ensureActive()
                     if (!current(generation)) throw cancelled
+                    recordSpeechFailure(tag, MenuSpeechFailurePhase.CANCELLED, cancelled)
                     update(generation) { it.copy(warningMessage = "${channel.displayName} 음성 처리가 중단됐습니다. 다음 문장과 원음 방송은 계속합니다.",
-                        unavailableAudioChannelIds = it.unavailableAudioChannelIds + channel.id) }
+                        unavailableAudioChannelIds = it.unavailableAudioChannelIds + channel.id,
+                        voiceSetupLanguageTags = it.voiceSetupLanguageTags + tag) }
                 }
-                catch (_: Exception) { update(generation) { it.copy(warningMessage = "${channel.displayName} 음성 합성에 실패했습니다. 원음과 자막은 계속 방송합니다.",
-                    unavailableAudioChannelIds = it.unavailableAudioChannelIds + channel.id) } }
+                catch (error: Exception) {
+                    recordSpeechFailure(tag, MenuSpeechFailurePhase.SYNTHESIS, error)
+                    update(generation) { it.copy(warningMessage = "${channel.displayName} 음성 합성에 실패했습니다. 원음과 자막은 계속 방송합니다.",
+                    unavailableAudioChannelIds = it.unavailableAudioChannelIds + channel.id,
+                        voiceSetupLanguageTags = it.voiceSetupLanguageTags + tag) } }
             } } }.awaitAll()
     }
 
@@ -814,7 +927,9 @@ internal class MenuBroadcastController(private val app: GuideCastApplication) {
                     (it.sourcePublishedBytes + part.size) * 1000L / (2 * rate) else it.positionMs)
                 else it.copy(translatedPublishedBytes = it.translatedPublishedBytes + part.size,
                     subtitleOnlyChannelIds = it.subtitleOnlyChannelIds - channel,
-                    unavailableAudioChannelIds = it.unavailableAudioChannelIds - channel) }
+                    unavailableAudioChannelIds = it.unavailableAudioChannelIds - channel,
+                    voiceSetupLanguageTags = it.voiceSetupLanguageTags -
+                        (session.channels.firstOrNull { descriptor -> descriptor.id == channel }?.languageTag ?: channel)) }
             if (paced) delay(maxOf(1, part.size * 1000L / (rate * 2)))
             offset = end
         }

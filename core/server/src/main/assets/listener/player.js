@@ -138,6 +138,7 @@ const channelReadiness = new Map();
 let statusRequestInFlight = null;
 let statusPollHandle = null;
 let statusRefreshFailed = false;
+let statusConnectionLost = false;
 let statusBackoffUntil = 0;
 let statusBackoffScope = null;
 
@@ -169,14 +170,18 @@ function selectedChannelReadiness() {
 }
 
 function canStartLivePlayback() {
+  if (listenerNeedsLink()) return false;
   const readiness = selectedChannelReadiness()?.audioReadiness;
   return Boolean(channelSelect.value) && !["IDLE", "PREPARING", "COMPLETED", "FAILED"].includes(broadcastPhase) &&
     (!readiness || readiness === "READY" || (broadcastPhase === "LIVE" && readiness === "PREPARING"));
 }
 
 function broadcastPresentation() {
+  if (listenerNeedsLink()) return { text: LISTENER_LINK_INSTRUCTION, kind: "warning" };
   if (isReplayMode()) return null;
-  if (statusRefreshFailed) return { text: "방송 상태 확인 지연 · 연결과 방송 상태를 확인하세요", kind: "warning" };
+  if (statusRefreshFailed) return { text: statusConnectionLost
+    ? "방송 종료 또는 연결 문제 · 진행자에게 방송 상태를 확인하세요"
+    : "방송 상태 확인 지연 · 연결과 방송 상태를 확인하세요", kind: "warning" };
   const buffered = audioContext && nextPlayTime - audioContext.currentTime > 0.02;
   if (broadcastPhase === "PREPARING") return { text: "방송 준비 중 · 송출기 준비가 끝나면 재생하세요", kind: "idle" };
   if (broadcastPhase === "PAUSED") return { text: buffered ? "방송 일시정지 · 받은 음성은 계속 재생됩니다" : "방송 일시정지 · 송출기 재개 대기", kind: "idle" };
@@ -199,6 +204,7 @@ function broadcastPresentation() {
 }
 
 function updateLivePlaybackControls() {
+  if (listenerNeedsLink()) { playButton.disabled = true; return; }
   if (isReplayMode()) return;
   playButton.disabled = !canStartLivePlayback() || (desiredState === "playing" && !outputOverloaded);
   if (["IDLE", "COMPLETED", "FAILED"].includes(broadcastPhase)) cancelPlaybackReconnect();
@@ -542,6 +548,7 @@ function clearTranscriptSnapshot() {
 }
 
 function loadTranscripts(forceRefresh = false) {
+  if (listenerNeedsLink()) return Promise.resolve();
   if (document.querySelector("#transcript-scope")?.value === "archive") return globalThis.GuideCastReplay?.loadCaptions(forceRefresh);
   const scope = currentTranscriptScope();
 
@@ -590,6 +597,7 @@ function loadTranscripts(forceRefresh = false) {
       const { response, payload } = result;
       if (!isSameTranscriptScope(currentTranscriptScope(), scope) || document.querySelector("#transcript-scope")?.value === "archive") return;
       if (response.status === 401 || response.status === 403) {
+        if (sessionAccessMode === "qr_token") { showListenerLinkRequired(); return; }
         transcriptBackoffUntil = 0;
         transcriptBackoffScope = null;
         transientTranscriptFailureCount = 0;
@@ -670,12 +678,14 @@ function loadTranscripts(forceRefresh = false) {
 }
 
 function canPollListenerTranscripts() {
+  if (listenerNeedsLink()) return false;
   if (document.visibilityState === "hidden" || pinDialog.open) return false;
   return document.querySelector("#transcript-scope")?.value !== "archive" ||
     !panelTranscript.hidden || Boolean(listenerHud?.isOpen());
 }
 
 function startTranscriptPolling() {
+  if (listenerNeedsLink()) return;
   if (transcriptPollHandle) return;
   if (canPollListenerTranscripts()) loadTranscripts(true);
   transcriptPollHandle = setInterval(() => {
@@ -694,13 +704,13 @@ function setupTabEvents() {
   tabPlayer.addEventListener("click", () => {
     switchTabs("player");
     startTranscriptPolling();
-    transcriptRefreshButton.disabled = false;
+    transcriptRefreshButton.disabled = listenerNeedsLink();
   });
   tabTranscript.addEventListener("click", () => {
     switchTabs("transcript");
     startTranscriptPolling();
     loadTranscripts(true);
-    transcriptRefreshButton.disabled = false;
+    transcriptRefreshButton.disabled = listenerNeedsLink();
   });
   transcriptRefreshButton.addEventListener("click", () => loadTranscripts(true));
   transcriptSelect.addEventListener("change", () => { listenerHud?.update(); loadTranscripts(true); });
@@ -727,6 +737,29 @@ function setupTabEvents() {
   }
 }
 
+const LISTENER_LINK_INSTRUCTION = "방송 진행자의 QR을 스캔하거나 공유받은 청취 링크로 입장하세요";
+function listenerNeedsLink() {
+  return sessionAccessMode === "qr_token" && !accessToken;
+}
+
+function showListenerLinkRequired() {
+  accessToken = "";
+  saveSessionToken("");
+  statusRefreshFailed = false;
+  statusConnectionLost = false;
+  if (statusPollHandle !== null) clearInterval(statusPollHandle);
+  statusPollHandle = null;
+  stopTranscriptPolling();
+  cancelPlaybackReconnect();
+  clearTranscriptSnapshot();
+  renderNoTranscript(LISTENER_LINK_INSTRUCTION);
+  channelSelect.disabled = true;
+  transcriptRefreshButton.disabled = true;
+  playButton.disabled = true;
+  // Keep Pause/Stop available for any audio already buffered or playing.
+  setStatus(LISTENER_LINK_INSTRUCTION, "warning");
+}
+
 async function initialize() {
   try {
     const session = await withListenerRequestTimeout(async signal => {
@@ -735,6 +768,7 @@ async function initialize() {
       return response.json();
     });
     sessionAccessMode = session.access;
+    if (listenerNeedsLink()) { showListenerLinkRequired(); return; }
     if (session.access === "pin" && !accessToken) {
       showPinDialog();
       return;
@@ -742,23 +776,28 @@ async function initialize() {
     await loadChannels();
     startStatusPolling();
   } catch (error) {
+    if (listenerNeedsLink()) { showListenerLinkRequired(); return; }
     setStatus("방송 연결 지연 · 입장 정보와 네트워크를 확인하고 다시 시도하세요", "error");
     startStatusPolling();
   }
 }
 
 function startStatusPolling() {
+  if (listenerNeedsLink()) return;
   if (statusPollHandle !== null) return;
   statusPollHandle = setInterval(() => {
-    if (document.visibilityState === "hidden" || pinDialog.open) return;
+    if (listenerNeedsLink() || document.visibilityState === "hidden" || pinDialog.open) return;
     loadChannels(true).catch(() => {
+      if (listenerNeedsLink()) return;
       statusRefreshFailed = true;
+      statusConnectionLost = true;
       setStatus("방송 상태 확인 지연", "warning");
     });
   }, 2400);
 }
 
 function loadChannels(isRefresh = false) {
+  if (listenerNeedsLink()) return Promise.resolve();
   if (statusRequestInFlight) return statusRequestInFlight;
   const scope = `${accessToken}\n${channelApiUrl("/api/status")}`;
   if (statusBackoffScope === scope && Date.now() < statusBackoffUntil) return Promise.resolve();
@@ -781,11 +820,16 @@ async function refreshChannels(isRefresh) {
     statusBackoffScope = `${requestToken}\n${requestUrl}`;
     statusBackoffUntil = Date.now() + parseRetryAfterHeader(response.headers?.get("Retry-After"));
     statusRefreshFailed = true;
+    statusConnectionLost = false;
     if (!isReplayMode()) setStatus("방송 상태 확인 지연", "warning");
     return;
   }
   statusBackoffScope = null;
   statusBackoffUntil = 0;
+  if ((response.status === 401 || response.status === 403) && sessionAccessMode === "qr_token") {
+    showListenerLinkRequired();
+    return;
+  }
   if (response.status === 401 && sessionAccessMode === "pin") {
     accessToken = "";
     clearTranscriptSnapshot();
@@ -800,6 +844,7 @@ async function refreshChannels(isRefresh) {
     channel && typeof channel.id === "string" && typeof channel.name === "string" && typeof channel.languageTag === "string") : [];
   const previousStatusRefreshFailed = statusRefreshFailed;
   statusRefreshFailed = false;
+  statusConnectionLost = false;
   const phases = ["IDLE", "PREPARING", "LIVE", "PAUSED", "COMPLETED", "FAILED"];
   const readinessStates = ["READY", "PREPARING", "SUBTITLES_ONLY", "RECOVERING", "UNAVAILABLE"];
   const actions = ["NONE", "WAIT_FOR_BROADCASTER", "ASK_BROADCASTER_TO_RETRY", "SELECT_ANOTHER_CHANNEL", "USE_REPLAY"];
@@ -898,6 +943,7 @@ pinForm.addEventListener("submit", async (event) => {
 });
 
 playButton.addEventListener("click", () => {
+  if (listenerNeedsLink()) { showListenerLinkRequired(); return; }
   if (document.querySelector("#listening-mode")?.value === "replay") return globalThis.GuideCastReplay?.start();
   return startPlayback();
 });
@@ -1286,9 +1332,20 @@ function scheduleSamples(samples, request) {
   source.connect(request.gainNode);
   activeSources.add(source);
   source.onended = () => {
-    activeSources.delete(source);
+    const wasScheduled = activeSources.delete(source);
     runSafely(() => source.disconnect());
-    if (broadcastPresentation()) setStatus("받은 음성 재생이 끝났습니다");
+    if (wasScheduled && isCurrentPlaybackRequest(request.generation, request.channelId,
+      request.audioContext, request.gainNode, request.socket)) {
+      if (broadcastPresentation()) setStatus("받은 음성 재생이 끝났습니다");
+      else if (!outputOverloaded && !request.overloaded && reconnectTimer === null &&
+          request.socket?.readyState === WebSocket.OPEN && request.audioContext.state === "running") {
+        const bufferedSeconds = Math.max(0, nextPlayTime - request.audioContext.currentTime);
+        if (bufferedSeconds > BUFFER_WARNING_SECONDS)
+          setStatus("음성을 순서대로 재생 중 · 재생 대기가 늘었습니다", "warning");
+        else if (bufferedSeconds > 0.02) setStatus("음성 수신·재생 중", "live");
+        else setStatus("방송 연결됨 · 선택한 언어의 음성 대기 중");
+      }
+    }
     setDiagnostics();
   };
   source.start(startAt);

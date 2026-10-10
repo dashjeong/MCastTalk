@@ -3,6 +3,8 @@
 globalThis.GuideCastI18n = (() => {
   const locales = ["en", "ja", "zh", "zh-tw", "vi", "nl", "es", "ar"];
   const rows = {
+    "방송 종료 또는 연결 문제 · 진행자에게 방송 상태를 확인하세요": ["The broadcast may have ended or there may be a connection problem. Check with the broadcaster.", "放送が終了したか、接続に問題がある可能性があります。配信者に状況を確認してください。", "广播可能已结束，或连接出现问题。请向广播主持人确认状态。", "廣播可能已結束，或連線出現問題。請向廣播主持人確認狀態。", "Buổi phát có thể đã kết thúc hoặc kết nối gặp sự cố. Hãy kiểm tra với người phát.", "De uitzending is mogelijk afgelopen of er is een verbindingsprobleem. Vraag het de uitzender.", "La emisión puede haber terminado o puede haber un problema de conexión. Consulta al emisor.", "ربما انتهى البث أو توجد مشكلة في الاتصال. تحقق من الحالة مع مقدم البث."],
+    "방송 진행자의 QR을 스캔하거나 공유받은 청취 링크로 입장하세요": ["Scan the broadcaster's QR code or open the shared listening link to join.", "配信者のQRコードを読み取るか、共有された聴取リンクから参加してください。", "请扫描广播主持人的二维码，或打开分享的收听链接进入。", "請掃描廣播主持人的QR碼，或開啟分享的收聽連結進入。", "Quét mã QR của người phát hoặc mở liên kết nghe được chia sẻ để tham gia.", "Scan de QR-code van de uitzender of open de gedeelde luisterlink om deel te nemen.", "Escanea el código QR del emisor o abre el enlace de escucha compartido para entrar.", "امسح رمز QR الخاص بمقدم البث أو افتح رابط الاستماع الذي تمت مشاركته للدخول."],
     "통역 중": ["Interpreting", "通訳中", "正在口译", "正在口譯", "Đang phiên dịch", "Bezig met tolken", "Interpretando", "جارٍ الترجمة الشفهية"],
     "통역 완료": ["Interpretation complete", "通訳完了", "口译完成", "口譯完成", "Phiên dịch hoàn tất", "Vertolking voltooid", "Interpretación completada", "اكتملت الترجمة الشفهية"],
     "통역 중단": ["Interpretation stopped", "通訳中断", "口译已中止", "口譯已中止", "Phiên dịch đã dừng", "Vertolking gestopt", "Interpretación detenida", "توقفت الترجمة الشفهية"],

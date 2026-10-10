@@ -162,6 +162,16 @@ class GalaxySpeechSynthesisProvider(
         ensurePreparationCurrent = {},
     )
 
+    /** Loads verified local voices only; never downloads or repairs model assets. */
+    suspend fun prepareInstalled(
+        languageTags: Collection<String>,
+        warmMoonshineWithNativeAdmission: suspend (String, suspend () -> Unit) -> Unit,
+        ensurePreparationCurrent: () -> Unit,
+    ): GalaxySpeechPreparationReport = prepareInternal(
+        languageTags, warmMoonshineWithNativeAdmission, ensurePreparationCurrent,
+        allowAssetDownloads = false,
+    )
+
     /** Claims a settings generation so broadcast takeover can invalidate slow preparation. */
     suspend fun prepareForSettings(
         languageTags: Collection<String>,
@@ -170,6 +180,7 @@ class GalaxySpeechSynthesisProvider(
             warm: suspend () -> Unit,
         ) -> Unit,
         isAppPreparationCurrent: () -> Boolean,
+        allowAssetDownloads: Boolean = true,
     ): GalaxySpeechPreparationReport {
         val selected = languageTags.toSet()
         require(selected.isNotEmpty() && selected.size <= MAX_BROADCAST_LANGUAGES)
@@ -208,6 +219,7 @@ class GalaxySpeechSynthesisProvider(
             languageTags = selected,
             warmMoonshineWithNativeAdmission = warmMoonshineWithNativeAdmission,
             ensurePreparationCurrent = ensureCurrent,
+            allowAssetDownloads = allowAssetDownloads,
         )
     }
 
@@ -218,6 +230,7 @@ class GalaxySpeechSynthesisProvider(
             warm: suspend () -> Unit,
         ) -> Unit,
         ensurePreparationCurrent: () -> Unit,
+        allowAssetDownloads: Boolean = true,
     ): GalaxySpeechPreparationReport {
         require(languageTags.isNotEmpty() && languageTags.size <= MAX_BROADCAST_LANGUAGES) {
             "Prepare one to $MAX_BROADCAST_LANGUAGES TTS languages"
@@ -234,7 +247,8 @@ class GalaxySpeechSynthesisProvider(
         }
         val outcomes = prepareSpeechSynthesisOutcomesIndependently(
             languageTags = selectedLanguages,
-            timeoutMillis = PER_LANGUAGE_PREPARATION_TIMEOUT_MILLIS,
+            timeoutMillis = if (allowAssetDownloads) PER_LANGUAGE_PREPARATION_TIMEOUT_MILLIS
+                else INSTALLED_VOICE_PREPARATION_TIMEOUT_MILLIS,
             onOutcome = { outcome ->
                 languageReconciliationMutex.withLock {
                     ensurePreparationCurrent()
@@ -254,13 +268,17 @@ class GalaxySpeechSynthesisProvider(
                         if (preference != SpeechVoicePreference.MOONSHINE && !moonshine.isReady(target)) {
                             throw InstalledOfflineVoiceSelected()
                         }
-                        moonshine.prepareAssets(listOf(target))
+                        prepareSpeechAssetsForUse(
+                            allowAssetDownloads = allowAssetDownloads,
+                            installed = { moonshine.isReady(target) },
+                            prepareAssets = { moonshine.prepareAssets(listOf(target)) },
+                        )
                     },
                     warmMoonshine = { target -> moonshine.warm(listOf(target)) },
                     warmMoonshineWithNativeAdmission = warmMoonshineWithNativeAdmission,
                     prepareAndroidOffline = { target -> android.prepare(listOf(target)) },
                     moonshinePreparationTimeoutMillis = if (
-                        moonshineStatuses[languageTag]?.readiness == MoonshineTtsReadiness.READY
+                        !allowAssetDownloads || moonshineStatuses[languageTag]?.readiness == MoonshineTtsReadiness.READY
                     ) {
                         CACHED_MOONSHINE_PREPARATION_TIMEOUT_MILLIS
                     } else {
@@ -464,6 +482,7 @@ class GalaxySpeechSynthesisProvider(
                                     mutableUnavailableLanguageReasons.update { it - languageTag }
                                 },
                                 onFallbackFailure = { error ->
+                                    RuntimeDiagnosticLog.failure("tts_fallback_$languageTag", error)
                                     mutableFallbackLanguageTags.update { it - languageTag }
                                     mutableUnavailableLanguageReasons.update { it + (languageTag to error.conciseMessage()) }
                                 },
@@ -572,6 +591,7 @@ class GalaxySpeechSynthesisProvider(
         const val LOG_TAG = "GuideCastSpeech"
         const val SETTINGS_RETENTION_FAILURE_KEY = "settings"
         const val MAX_BROADCAST_LANGUAGES = MAX_SIMULTANEOUS_TRANSLATED_CHANNELS
+        const val INSTALLED_VOICE_PREPARATION_TIMEOUT_MILLIS = 120_000L
         const val PER_LANGUAGE_PREPARATION_TIMEOUT_MILLIS = 10L * 60 * 1_000
         // A READY voice only needs Binder/native warm-up. A missing voice may still be performing
         // its explicitly requested first download, so leave it most of the outer ten-minute budget.

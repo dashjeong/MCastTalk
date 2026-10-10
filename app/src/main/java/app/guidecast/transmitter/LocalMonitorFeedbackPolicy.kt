@@ -56,7 +56,7 @@ internal object LocalMonitorFeedbackPolicy {
             return LocalMonitorFeedbackDecision(
                 mayRender = true,
                 warning = "Bluetooth 스피커 소리가 내장 마이크로 되돌아오면 떨어져 있어도 반복음이 생길 수 있습니다. " +
-                    "모니터 음량을 낮추거나 이어폰을 사용하세요. 웹 방송 음량은 바뀌지 않습니다.",
+                    "모니터 음량을 낮추거나 이어폰을 사용하세요. 웹오디오방송 음량은 바뀌지 않습니다.",
             )
         }
         if (input.kind == AudioInputKind.WIRED_HEADSET &&

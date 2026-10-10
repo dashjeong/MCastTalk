@@ -134,17 +134,22 @@ class RealtimeInterpretationSegmenter(
         return evaluate(residual, nowNanos, utterance)
     }
 
-    /** Requests one recognizer endpoint only when usable text itself has remained pending. */
+    /** Claims one endpoint after the owner has accepted delivery to the current recognizer. */
     fun shouldRequestRecognizerEndpoint(nowNanos: Long): Boolean {
+        if (!isRecognizerEndpointDue(nowNanos)) return false
+        recognizerEndpointRequested = true
+        return true
+    }
+
+    /** Checks a deadline without consuming it while a recognizer attempt is being replaced. */
+    fun isRecognizerEndpointDue(nowNanos: Long): Boolean {
         if (!policy.recognizerEndpointEnabled) return false
         if (recognizerEndpointRequested || latest?.isFinal != false) return false
         val pendingSince = pendingSinceNanos ?: return false
         if (elapsedMillis(pendingSince, nowNanos) < policy.recognizerEndpointRequestMillis) {
             return false
         }
-        if (residualTokens(observedFullTokens).isEmpty()) return false
-        recognizerEndpointRequested = true
-        return true
+        return residualTokens(observedFullTokens).isNotEmpty()
     }
 
     /** True while a usable, not-yet-committed hypothesis remains buffered. */

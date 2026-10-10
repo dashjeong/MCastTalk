@@ -110,12 +110,12 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
             permissionDenied(); return
         }
         if (liveTranscription && !app.speechRecognitionEngine.status.value.isReady) {
-            mutableState.update { it.copy(message = "먼저 공통 설정에서 음성 인식을 준비하세요. 준비 없이 원음을 방송하려면 ‘녹음만’을 선택하세요. 웹 방송 시작으로 모델을 자동 다운로드하지 않습니다.") }
+            mutableState.update { it.copy(message = "먼저 공통 설정에서 음성 인식을 준비하세요. 준비 없이 원음을 방송하려면 ‘녹음만’을 선택하세요. 웹오디오방송 시작으로 모델을 자동 다운로드하지 않습니다.") }
             return
         }
         audio.close()
         if (!app.menuBroadcast.startLiveNote(source, setOf(target), title, translateFinalCaptions = liveTranscription)) {
-            mutableState.update { it.copy(message = app.menuBroadcast.state.value.errorMessage ?: "다른 입력·방송을 종료한 뒤 웹 방송을 시작하세요.") }
+            mutableState.update { it.copy(message = app.menuBroadcast.state.value.errorMessage ?: "다른 입력·방송을 종료한 뒤 웹오디오방송을 시작하세요.") }
             return
         }
         val generation = app.menuBroadcast.state.value.generation
@@ -127,7 +127,7 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
                         it.phase !in setOf(MenuBroadcastPhase.STARTING) }
                 }
                 if (prepared.generation != generation || prepared.phase != MenuBroadcastPhase.LIVE) {
-                    mutableState.update { it.copy(message = prepared.errorMessage ?: "웹 방송 준비가 중단됐습니다. 다시 시작하세요.") }
+                    mutableState.update { it.copy(message = prepared.errorMessage ?: "웹오디오방송 준비가 중단됐습니다. 다시 시작하세요.") }
                     return@launch
                 }
                 liveWebGeneration = generation
@@ -139,7 +139,7 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
             } catch (cancelled: CancellationException) {
                 stopOwnedWebBroadcast(generation)
                 if (cancelled is TimeoutCancellationException) {
-                    mutableState.update { it.copy(message = "웹 방송 준비 시간이 초과됐습니다. 네트워크 상태를 확인한 뒤 다시 시작하세요.") }
+                    mutableState.update { it.copy(message = "웹오디오방송 준비 시간이 초과됐습니다. 네트워크 상태를 확인한 뒤 다시 시작하세요.") }
                 } else throw cancelled
             }
         }
@@ -150,7 +150,7 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
         if (webStart?.isActive == true || !canWork()) return
         val note = state.value.selected ?: return
         if (note.interrupted) {
-            mutableState.update { it.copy(message = "중단된 녹음을 먼저 복구한 뒤 웹 방송을 시작하세요.") }; return
+            mutableState.update { it.copy(message = "중단된 녹음을 먼저 복구한 뒤 웹오디오방송을 시작하세요.") }; return
         }
         val file = repository.audio(note.id)
         if (!file.isFile || !file.canRead() || file.length() <= 44) {
@@ -160,7 +160,7 @@ internal class VoiceNoteViewModel(application: Application, private val savedSta
         if (app.menuBroadcast.startMedia(MenuBroadcastOrigin.NOTES, Uri.fromFile(file), note.title,
                 note.sourceLanguage ?: "und", voiceNoteBroadcastCaptions(note))) {
             webGeneration = app.menuBroadcast.state.value.generation
-            mutableState.update { it.copy(message = "보관한 원음과 저장된 스크립트로 웹 방송을 준비합니다. 새 번역 요청은 하지 않습니다.") }
+            mutableState.update { it.copy(message = "보관한 원음과 저장된 스크립트로 웹오디오방송을 준비합니다. 새 번역 요청은 하지 않습니다.") }
         } else mutableState.update { it.copy(message = app.menuBroadcast.state.value.errorMessage ?: "다른 입력·방송을 종료한 뒤 다시 시작하세요.") }
     }
 

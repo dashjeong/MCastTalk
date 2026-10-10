@@ -1,11 +1,18 @@
 "use strict";
 
 // Already generated PCM only. Finite 5-second reads; never creates a cloud connection.
-function locateRecordedAudio(segments, seconds) {
-  let start = 0;
+function locateRecordedAudio(segments, seconds, cursor = null) {
+  let start = 0, cursorFound = cursor === null;
   for (const segment of segments) {
     const duration = segment.bytes / (segment.sampleRate * 2);
-    if (seconds < start + duration) return { segment, offset: Math.floor(Math.max(0, seconds - start) * segment.sampleRate) * 2, start };
+    if (cursor && !cursorFound) {
+      if (segment.part !== cursor.part || segment.segment !== cursor.segment) { start += duration; continue; }
+      cursorFound = true;
+      if (cursor.offset < segment.bytes) return { segment, offset: cursor.offset, start };
+    } else if (cursor || seconds < start + duration) {
+      const offset = cursor ? 0 : Math.floor(Math.max(0, seconds - start) * segment.sampleRate) * 2;
+      if (offset < segment.bytes) return { segment, offset, start };
+    }
     start += duration;
   }
   return null;
@@ -62,7 +69,7 @@ if (typeof document !== "undefined" && document.querySelector("#listening-mode")
     globalThis.GuideCastHud?.update();
     return captionPending;
   }
-  let epoch = 0, context = null, source = null, position = 0, scheduledStart = 0, scheduledPosition = 0, scheduledRate = 1, manifest = null, playing = false, ended = false, controller = null, finishWaiting = null;
+  let epoch = 0, context = null, source = null, position = 0, scheduledStart = 0, scheduledPosition = 0, scheduledRate = 1, manifest = null, readCursor = null, playing = false, ended = false, controller = null, finishWaiting = null;
   const format = value => `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, "0")}`;
   const currentPosition = () => source && context ? scheduledPosition + Math.max(0, context.currentTime - scheduledStart) * scheduledRate : position;
   function render() {
@@ -77,21 +84,21 @@ if (typeof document !== "undefined" && document.querySelector("#listening-mode")
       if (!response.ok) throw new Error(response.status === 401 ? "방송에 다시 입장하세요" : "저장 구간을 가져오지 못했습니다");
       return response.json();
     }, signal);
-    if (!Array.isArray(result.segments) || result.segments.some(s => !Number.isSafeInteger(s.bytes) || s.bytes < 0 || !Number.isInteger(s.sampleRate) || s.sampleRate < 8000 || s.sampleRate > 48000)) throw new Error("저장 구간 정보 오류");
+    if (!Array.isArray(result.segments) || result.segments.some(s => !Number.isSafeInteger(s.bytes) || s.bytes < 0 || s.bytes % 2 !== 0 || !Number.isInteger(s.sampleRate) || s.sampleRate < 8000 || s.sampleRate > 48000)) throw new Error("저장 구간 정보 오류");
     return result;
   }
   function cancel(reset = false) {
-    position = currentPosition(); epoch++; playing = false;
+    position = currentPosition(); if (source) readCursor = null; epoch++; playing = false;
     controller?.abort(); controller = null;
     finishWaiting?.(); finishWaiting = null;
     if (source) { source.onended = null; try { source.stop(); } catch (_) {} source = null; }
     if (context) { try { Promise.resolve(context.close()).catch(() => {}); } catch (_) {} context = null; }
-    if (reset) { position = 0; ended = false; playButton.textContent = defaultPlayButtonText; }
+    if (reset) { position = 0; readCursor = null; ended = false; playButton.textContent = defaultPlayButtonText; }
     render();
   }
   async function start() {
     const restart = ended;
-    cancel(); if (restart) position = 0;
+    cancel(); if (restart) { position = 0; readCursor = null; }
     ended = false; playButton.textContent = defaultPlayButtonText;
     stopRuntime(); desiredState = "playing";
     loadCaptions();
@@ -106,7 +113,7 @@ if (typeof document !== "undefined" && document.querySelector("#listening-mode")
       while (playing && activeEpoch === epoch) {
         manifest = await fetchManifest(signal); if (activeEpoch !== epoch) return;
         render();
-        const located = locateRecordedAudio(manifest.segments, position);
+        const located = locateRecordedAudio(manifest.segments, position, readCursor);
         if (!located) {
           const disposition = recordedAudioDisposition(manifest.state, broadcastPhase);
           if (disposition === "completed" || disposition === "interrupted") {
@@ -131,11 +138,13 @@ if (typeof document !== "undefined" && document.querySelector("#listening-mode")
         const pcm = new DataView(bytes), buffer = audio.createBuffer(1, bytes.byteLength / 2, s.sampleRate), samples = buffer.getChannelData(0);
         for (let n = 0; n < samples.length; n++) samples[n] = pcm.getInt16(n * 2, true) / 32768;
         source = audio.createBufferSource(); source.buffer = buffer; source.playbackRate.value = playbackRate; source.connect(audio.destination);
-        scheduledStart = audio.currentTime; scheduledPosition = position; scheduledRate = playbackRate;
+        scheduledStart = audio.currentTime; scheduledPosition = located.start + located.offset / (2 * s.sampleRate); scheduledRate = playbackRate;
         setStatus("저장 음성 재생 중", "live");
         await new Promise(resolve => { finishWaiting = resolve; source.onended = resolve; source.start(); }); if (activeEpoch !== epoch) return; finishWaiting = null;
         if (activeEpoch !== epoch) return;
-        source = null; position += buffer.duration; render();
+        source = null;
+        readCursor = { part: s.part, segment: s.segment, offset: located.offset + count };
+        position = located.start + readCursor.offset / (2 * s.sampleRate); render();
       }
     } catch (error) {
       if (activeEpoch === epoch) {
@@ -150,7 +159,7 @@ if (typeof document !== "undefined" && document.querySelector("#listening-mode")
     document.querySelector("#current-caption").textContent = uiText(mode.value === "replay" ? "저장 스크립트는 HUD 또는 통역 스크립트 탭에서 볼 수 있습니다." : "");
     if (mode.value === "replay") loadCaptions(true);
   });
-  slider.addEventListener("input", () => { const resume = playing, requestedPosition = Number(slider.value); cancel(); ended = false; playButton.textContent = defaultPlayButtonText; position = requestedPosition; render(); if (resume) start(); });
+  slider.addEventListener("input", () => { const resume = playing, requestedPosition = Number(slider.value); cancel(); ended = false; playButton.textContent = defaultPlayButtonText; position = requestedPosition; readCursor = null; render(); if (resume) start(); });
   setInterval(() => { if (playing) render(); }, 500);
   window.addEventListener("pagehide", () => { cancel(); invalidateCaptions(); });
   document.querySelector("#transcript-scope").addEventListener("change", () => {

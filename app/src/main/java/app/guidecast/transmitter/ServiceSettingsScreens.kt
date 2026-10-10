@@ -93,6 +93,8 @@ internal fun MenuServiceSettingsScreen(app: GuideCastApplication, profile: Servi
     val options = all.getValue(profile)
     val languages = if (profile == ServiceMenuProfile.NOTES) VOICE_NOTE_LANGUAGES else FILE_LANGUAGE_OPTIONS
     val maximum = if (profile == ServiceMenuProfile.NOTES) 1 else 4
+    val effectiveTargets = effectiveMenuTargetTags(profile, options.targetTags)
+    val effectiveSource = if (options.automaticSource) null else supportedMenuLanguageTag(options.sourceTag, languages.keys)
     BackHandler(onBack = onBack)
     LazyColumn(Modifier.fillMaxSize().imePadding().semantics { paneTitle = "이 메뉴 설정" },
         contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -109,18 +111,23 @@ internal fun MenuServiceSettingsScreen(app: GuideCastApplication, profile: Servi
         }
         item {
             Text("원문 언어", style = MaterialTheme.typography.titleMedium)
+            if (options.automaticSource) Text(
+                if (profile == ServiceMenuProfile.NOTES) "자동 감지 · 녹음 후 처리" else "자동 감지 · 파일별 처리",
+                style = MaterialTheme.typography.bodySmall)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                languages.forEach { (tag, label) -> FilterChip(options.sourceTag == tag,
+                languages.forEach { (tag, label) -> FilterChip(effectiveSource == tag,
                     enabled = enabled, onClick = { app.serviceMenuProfiles.setLanguages(profile, tag, options.targetTags) }, label = { Text(label) }) }
             }
             Text("번역 언어 · 최대 ${maximum}개")
+            if (options.usesCommonDefaults && options.targetTags.size > maximum)
+                Text("공통 언어 중 이 메뉴가 지원하는 처음 ${maximum}개를 사용합니다.", style = MaterialTheme.typography.bodySmall)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 languages.forEach { (tag, label) ->
-                    val selected = options.targetTags.any { supportedMenuLanguageTag(it, languages.keys) == tag }
-                    FilterChip(selected, enabled = enabled && (selected || options.targetTags.size < maximum), onClick = {
+                    val selected = tag in effectiveTargets
+                    FilterChip(selected, enabled = enabled && (maximum == 1 || selected || effectiveTargets.size < maximum), onClick = {
                         val next = if (maximum == 1) setOf(tag) else if (selected)
-                            options.targetTags.filterNot { supportedMenuLanguageTag(it, languages.keys) == tag }.toSet() else options.targetTags + tag
-                        app.serviceMenuProfiles.setLanguages(profile, options.sourceTag, next)
+                            effectiveTargets - tag else effectiveTargets + tag
+                        app.serviceMenuProfiles.setTargetLanguages(profile, next)
                     }, label = { Text(label) })
                 }
             }
