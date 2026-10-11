@@ -465,6 +465,14 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
             }
             ServiceExperienceToggle("웹오디오방송", "같은 Wi-Fi·핫스팟의 청취자에게 같은 음성을 공유합니다. 청취자마다 API를 다시 호출하지 않습니다.", relay.networkBroadcast, !busy) {
                 app.interpreterRelaySettings.update(relay.copy(networkBroadcast = it)) }
+            if (relay.networkBroadcast) {
+                ServiceExperienceToggle("청취 링크로만 입장",
+                    if (relay.requireListenerLink) "QR 또는 복사한 청취 링크가 필요합니다. 숫자 주소만으로는 청취할 수 없습니다."
+                    else "숫자 주소나 QR로 바로 청취합니다. 같은 네트워크에서 주소에 접근할 수 있는 누구나 방송을 들을 수 있습니다.",
+                    relay.requireListenerLink, !busy) {
+                    app.interpreterRelaySettings.update(relay.copy(requireListenerLink = it))
+                }
+            }
                 }
                 RelaySetupItem.VOICE -> item {
             if (relayVoiceSupported(api)) {

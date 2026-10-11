@@ -9,11 +9,15 @@ internal const val MAX_RELAY_LANGUAGES = 5
 
 internal data class InterpreterRelayOptions(
     val source: String = "ko-KR", val target: String = "en",
-    val networkBroadcast: Boolean = true, val localPlayback: Boolean = true,
+    val networkBroadcast: Boolean = true, val localPlayback: Boolean = false,
     val compareOffline: Boolean = false,
     val targets: List<String> = emptyList(),
     val broadcastTitle: String = "",
+    val requireListenerLink: Boolean = false,
 ) {
+    val listenerAccessMode: OperatorAccessMode get() =
+        if (requireListenerLink) OperatorAccessMode.QR_TOKEN else OperatorAccessMode.OPEN
+
     /** The legacy target remains the device monitor language. */
     val targetLanguageTags: List<String> get() = targets.ifEmpty { listOf(target) }
     fun withTargets(tags: List<String>): InterpreterRelayOptions {
@@ -56,9 +60,10 @@ internal class InterpreterRelaySettings(context: Context) {
         source = preferences.getString("source", "ko-KR") ?: "ko-KR",
         target = preferences.getString("target", "en") ?: "en",
         networkBroadcast = preferences.getBoolean("network", true),
-        localPlayback = preferences.getBoolean("playback", true),
+        localPlayback = preferences.getBoolean("playback", false),
         compareOffline = preferences.getBoolean("compare", false),
         broadcastTitle = preferences.getString("broadcast_title", "").orEmpty(),
+        requireListenerLink = preferences.getBoolean("require_listener_link", false),
     ).let { legacy ->
         val stored = preferences.getString("targets", null)?.split(',').orEmpty()
         normalizeStoredInterpreterRelayOptions(legacy, stored)
@@ -75,7 +80,8 @@ internal class InterpreterRelaySettings(context: Context) {
         preferences.edit().putString("source", options.source).putString("target", options.target)
             .putBoolean("network", options.networkBroadcast).putBoolean("playback", options.localPlayback)
             .putBoolean("compare", options.compareOffline).putString("targets", options.targetLanguageTags.joinToString(","))
-            .putString("broadcast_title", options.broadcastTitle).apply()
+            .putString("broadcast_title", options.broadcastTitle)
+            .putBoolean("require_listener_link", options.requireListenerLink).apply()
         mutable.value = options
     }
     fun rememberRelayApi(options: TranslationApiOptions) {

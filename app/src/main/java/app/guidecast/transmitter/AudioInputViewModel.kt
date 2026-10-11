@@ -972,7 +972,7 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
     fun startInterpreterRelay() {
         if (voiceNoteBusy()) return
         val relay = guideCastApplication.interpreterRelaySettings.state.value
-        BroadcastService.start(getApplication(), OperatorAccessMode.QR_TOKEN,
+        BroadcastService.start(getApplication(), relay.listenerAccessMode,
             translationLanguages = relay.targetLanguageTags.toTypedArray(), sourceLanguageTag = relay.source,
             runMode = if (relay.networkBroadcast) BroadcastRunMode.NETWORK else BroadcastRunMode.STANDALONE,
             interpreterRelay = true, deferRelayInput = true, broadcastTitle = relay.broadcastTitle)

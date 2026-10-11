@@ -100,6 +100,7 @@ const RECONNECT_MAX_DELAY_MS = 5000;
 
 let socket = null;
 let audioContext = null;
+let playbackContextChannel = "";
 let gainNode = null;
 let playbackGeneration = 0;
 let desiredState = "stopped";
@@ -203,10 +204,15 @@ function broadcastPresentation() {
   return null;
 }
 
+function canResumeLiveAudio() {
+  return desiredState === "playing" && audioContext && playbackContextChannel === channelSelect.value &&
+    ["suspended", "interrupted"].includes(audioContext.state);
+}
+
 function updateLivePlaybackControls() {
   if (listenerNeedsLink()) { playButton.disabled = true; return; }
   if (isReplayMode()) return;
-  playButton.disabled = !canStartLivePlayback() || (desiredState === "playing" && !outputOverloaded);
+  playButton.disabled = !canResumeLiveAudio() && (!canStartLivePlayback() || (desiredState === "playing" && !outputOverloaded));
   if (["IDLE", "COMPLETED", "FAILED"].includes(broadcastPhase)) cancelPlaybackReconnect();
 }
 
@@ -971,7 +977,31 @@ channelSelect.addEventListener("change", () => {
   if (canPollListenerTranscripts()) loadTranscripts(true);
 });
 
+async function resumeLiveAudio() {
+  const generation = playbackGeneration, requestedChannel = channelSelect.value;
+  const context = audioContext, gain = gainNode;
+  playButton.disabled = true;
+  let timeout;
+  try {
+    await Promise.race([context.resume(), new Promise((_, reject) => {
+      timeout = setTimeout(() => reject(new Error("Audio resume timed out")), 3000);
+    })]);
+    if (!isCurrentPlaybackRequest(generation, requestedChannel, context, gain)) return;
+    if (context.state !== "running") throw new Error("Audio is suspended");
+    setStatus("방송 연결됨 · 선택한 언어의 음성 대기 중");
+  } catch (_) {
+    if (!isCurrentPlaybackRequest(generation, requestedChannel, context, gain)) return;
+    setStatus("브라우저 오디오가 멈췄습니다. 재생을 다시 누르세요.", "error");
+  } finally {
+    clearTimeout(timeout);
+    if (isCurrentPlaybackRequest(generation, requestedChannel, context, gain)) {
+      updateLivePlaybackControls(); setDiagnostics();
+    }
+  }
+}
+
 async function startPlayback() {
+  if (canResumeLiveAudio()) return resumeLiveAudio();
   if (!canStartLivePlayback()) {
     setStatus("선택한 언어의 음성을 기다리고 있습니다");
     updateLivePlaybackControls();
@@ -1004,7 +1034,14 @@ async function startPlayback() {
     requestGainNode.gain.value = 1;
     requestGainNode.connect(requestAudioContext.destination);
     audioContext = requestAudioContext;
+    playbackContextChannel = requestedChannel;
     gainNode = requestGainNode;
+    requestAudioContext.onstatechange = () => {
+      if (!isCurrentPlaybackRequest(generation, requestedChannel, requestAudioContext, requestGainNode)) return;
+      updateLivePlaybackControls();
+      if (canResumeLiveAudio()) setStatus("브라우저 오디오가 멈췄습니다. 재생을 다시 누르세요.", "error");
+      setDiagnostics();
+    };
 
     await requestAudioContext.resume();
     if (!isCurrentPlaybackRequest(
@@ -1228,7 +1265,9 @@ function handleAudioMessage(event, request) {
     }
     return;
   }
-  if (request.audioContext.state !== "running") {
+  const audioSuspended = ["suspended", "interrupted"].includes(request.audioContext.state);
+  if (request.audioContext.state !== "running" && !audioSuspended) {
+    haltPlaybackIntake(request);
     setStatus("브라우저 오디오가 멈췄습니다. 재생을 다시 누르세요.", "error");
     return;
   }
@@ -1275,6 +1314,9 @@ function handleAudioMessage(event, request) {
       "수신량이 많아 새 음성 수신을 멈췄습니다 · 받은 음성은 계속 재생됩니다. 다시 연결하거나 현재 방송으로 이동하면 대기 음성을 건너뜁니다. 누락 구간은 돌려보기에서 확인하세요.",
       "warning",
     );
+  } else if (audioSuspended) {
+    updateLivePlaybackControls();
+    setStatus("브라우저 오디오가 멈췄습니다. 재생을 다시 누르세요.", "error");
   } else if (nextPlayTime - request.audioContext.currentTime > BUFFER_WARNING_SECONDS) {
     setStatus("음성을 순서대로 재생 중 · 재생 대기가 늘었습니다", "warning");
   } else if (lastRms >= 0.002 || lastPeak >= 0.01) {
@@ -1449,7 +1491,9 @@ function stopRuntime() {
   }
   const contextToClose = audioContext;
   audioContext = null;
+  playbackContextChannel = "";
   if (contextToClose) {
+    contextToClose.onstatechange = null;
     runSafely(() => contextToClose.close());
   }
   nextPlayTime = 0;
