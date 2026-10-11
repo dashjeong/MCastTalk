@@ -110,6 +110,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
 
 private data class TranslationPreparationResult(
@@ -408,6 +409,11 @@ class BroadcastService : Service() {
     private var inputJob: Job? = null
     private var serverStartJob: Job? = null
     private var pendingBroadcastStart: PendingBroadcastStart? = null
+    private class BroadcastFinishOwner(val generation: Long, val recordingId: String?, val stream: StreamSession?) {
+        var job: Job? = null
+    }
+    @Volatile private var broadcastFinishOwner: BroadcastFinishOwner? = null
+    private val incompleteBroadcastGeneration = AtomicLong(-1L)
     private var listenerJob: Job? = null
     private var recordingCaptionJob: Job? = null
     private var translationPreparationJob: Job? = null
@@ -421,12 +427,25 @@ class BroadcastService : Service() {
     private var translationHealthJob: Job? = null
     private var translationPipeline: RunningTranslationPipeline? = null
     @Volatile private var geminiLiveSessions: List<LiveAudioSession> = emptyList()
-    private class NativeInputDrainOwner(val sessionId: Long, val sessions: List<LiveAudioSession>) {
+    private class NativeInputPauseOwner(val sessionId: Long, val broadcastId: Long,
+        val stream: StreamSession, val publication: ChannelAudioPublicationCoordinator,
+        val api: TranslationApiOptions, val relay: InterpreterRelayOptions, val archiveId: Long?,
+        val sessions: List<LiveAudioSession>) {
+        @Volatile var pending = true
+        val completion = InputCompletionReceipt()
+        @Volatile var successful = false
+        var job: Job? = null
+    }
+    @Volatile private var nativeInputPauseOwner: NativeInputPauseOwner? = null
+    @Volatile private var nativeRelayPreparedOptions: InterpreterRelayOptions? = null
+    private class NativeInputDrainOwner(val sessionId: Long, val broadcastId: Long, val sessions: List<LiveAudioSession>) {
+        val completion = InputCompletionReceipt()
+        @Volatile var successful = false
         var job: Job? = null
     }
     @Volatile private var nativeInputDrainOwner: NativeInputDrainOwner? = null
-    private class TextInputDrainOwner(val sessionId: Long, val pipeline: RunningTranslationPipeline,
-        val input: Channel<PcmAudioFrame>) { var job: Job? = null }
+    private class TextInputDrainOwner(val sessionId: Long, val broadcastId: Long, val pipeline: RunningTranslationPipeline,
+        val input: Channel<PcmAudioFrame>) { var job: Job? = null; val completion = InputCompletionReceipt(); @Volatile var successful = false }
     @Volatile private var textInputDrainOwner: TextInputDrainOwner? = null
     @Volatile private var inputCaptureTeardownPending = false
     private var nativeLearningSessions: List<NativeLearningSession> = emptyList()
@@ -654,6 +673,7 @@ class BroadcastService : Service() {
     }
 
     private fun startInput(intent: Intent) {
+        if (broadcastFinishOwner != null) return
         if (app.broadcastRuntime.state.value.inputStopping) return
         val current = app.broadcastRuntime.state.value
         if (current.isInterpreterRelay && current.phase in setOf(BroadcastPhase.LIVE, BroadcastPhase.PAUSED)) {
@@ -696,6 +716,7 @@ class BroadcastService : Service() {
     }
 
     private fun startRelayMicrophone() {
+        if (broadcastFinishOwner != null) return
         if (app.broadcastRuntime.state.value.inputStopping) return
         if (inputJob != null || translationPreparationJob?.isActive == true) return
         val current = app.broadcastRuntime.state.value
@@ -712,6 +733,33 @@ class BroadcastService : Service() {
             return
         }
         val publication = broadcastAudioPublicationCoordinator ?: return
+        val paused = nativeInputPauseOwner
+        if (paused != null) {
+            val reused = synchronized(translationResourceLock) {
+                val sameOwner = nativeInputPauseOwner === paused && !paused.pending &&
+                    isTranslationSessionCurrent(paused.sessionId) && broadcastGeneration.get() == paused.broadcastId &&
+                    stream === paused.stream && publication === paused.publication && relayArchiveSessionId == paused.archiveId &&
+                    api == paused.api && app.interpreterRelaySettings.state.value == paused.relay &&
+                    geminiLiveSessions == paused.sessions && paused.sessions.all { it.canResumeInput }
+                if (sameOwner && paused.sessions.all { it.resumeInput() }) {
+                    nativeInputPauseOwner = null
+                    true
+                } else {
+                    releaseTranslationTestResources(paused.sessionId)
+                    false
+                }
+            }
+            if (reused) {
+                relayMicrophoneRequested = true
+                inputStopCompletion.supersede()
+                streamingInputSuspended = false
+                app.broadcastRuntime.update { it.copy(inputPhase = InputPhase.STARTING, inputStopping = false,
+                    relayPhase = InterpreterRelayPhase.READY, inputErrorMessage = null,
+                    inputProcessingSummary = "마이크를 다시 켭니다. 남은 통역과 같은 연결을 사용합니다.") }
+                startInputCapture(Intent())
+                return
+            }
+        }
         relayMicrophoneRequested = true
         inputStopCompletion.supersede()
         streamingInputSuspended = false
@@ -991,12 +1039,60 @@ class BroadcastService : Service() {
         if (releaseTranslation) releaseTranslationTestResources()
     }
 
+    private fun reserveNativeInputPause(): NativeInputPauseOwner? = synchronized(translationResourceLock) {
+        val current = app.broadcastRuntime.state.value
+        val stream = broadcastStreamSession ?: return@synchronized null
+        val publication = broadcastAudioPublicationCoordinator ?: return@synchronized null
+        val prepared = nativeRelayPreparedOptions ?: return@synchronized null
+        val sessions = geminiLiveSessions
+        if (!current.isInterpreterRelay || current.phase !in setOf(BroadcastPhase.LIVE, BroadcastPhase.PAUSED) ||
+            !translationSessionCoordinator.isSessionActive() || sessions.isEmpty() ||
+            sessions.any { !it.supportsInputPause }) return@synchronized null
+        NativeInputPauseOwner(translationSessionCoordinator.currentSessionId(), broadcastGeneration.get(),
+            stream, publication, app.translationApiSettings.state.value, prepared, relayArchiveSessionId,
+            sessions.toList()).also { owner ->
+            nativeInputPauseOwner = owner
+            app.broadcastRuntime.update { it.copy(inputStopping = true) }
+        }
+    }
+
+    private fun receiveNativeInputPause(owner: NativeInputPauseOwner, started: Boolean) {
+        val task = serviceScope.launch(start = CoroutineStart.LAZY) {
+            val sent = started && withTimeoutOrNull(5_500) {
+                coroutineScope { owner.sessions.map { async { it.awaitInputPause() } }.awaitAll().all { it } }
+            } == true
+            synchronized(translationResourceLock) {
+                if (nativeInputPauseOwner !== owner || !isTranslationSessionCurrent(owner.sessionId) ||
+                    broadcastGeneration.get() != owner.broadcastId) return@synchronized
+                owner.successful = sent
+                if (!sent) incompleteBroadcastGeneration.updateAndGet { maxOf(it, owner.broadcastId) }
+                owner.pending = false
+                if (!sent) releaseTranslationTestResources(owner.sessionId)
+                app.broadcastRuntime.update { it.copy(inputStopping = inputCaptureTeardownPending,
+                    inputProcessingSummary = "마이크 꺼짐 · 새 음성을 수집·전송하지 않습니다. 남은 통역은 계속 수신합니다.",
+                    translationWarning = if (sent) it.translationWarning else
+                        "마이크 종료 신호 전송을 완료하지 못했습니다. 남은 통역은 미완료일 수 있습니다. 마이크를 다시 켜세요.") }
+            }
+            updateNotification()
+        }
+        task.invokeOnCompletion { cause ->
+            val successful = cause == null && owner.successful
+            if (!successful) incompleteBroadcastGeneration.updateAndGet { maxOf(it, owner.broadcastId) }
+            owner.completion.complete(successful)
+        }
+        synchronized(translationResourceLock) {
+            if (nativeInputPauseOwner === owner && isTranslationSessionCurrent(owner.sessionId)) {
+                owner.job = task; task.start()
+            } else task.cancel()
+        }
+    }
+
     private fun reserveNativeInputDrain(): NativeInputDrainOwner? = synchronized(translationResourceLock) {
         if (nativeInputDrainOwner != null) return@synchronized nativeInputDrainOwner
         val sessions = geminiLiveSessions
         if (!translationSessionCoordinator.isSessionActive() || sessions.isEmpty() ||
             sessions.any { !it.supportsInputDrain }) return@synchronized null
-        NativeInputDrainOwner(translationSessionCoordinator.currentSessionId(), sessions.toList()).also {
+        NativeInputDrainOwner(translationSessionCoordinator.currentSessionId(), broadcastGeneration.get(), sessions.toList()).also {
             nativeInputDrainOwner = it
             app.broadcastRuntime.update { state -> state.copy(inputStopping = true, inputDraining = true) }
         }
@@ -1007,11 +1103,31 @@ class BroadcastService : Service() {
             val completed = withTimeoutOrNull(30_000) {
                 coroutineScope { owner.sessions.map { session -> async { session.awaitInputDrain(30_000) } }.awaitAll().all { it } }
             } == true
+            val localPlayback = if (previewPlaybackSessionId == owner.sessionId && previewPlaybackJob?.isActive == true) {
+                val expectedBytes = previewPlaybackChannelId?.let { nativeGeminiTimings[it]?.snapshot()?.optLong("provider_audio_bytes") }
+                withTimeoutOrNull(30_000) {
+                    while (isTranslationSessionCurrent(owner.sessionId)) {
+                        val playback = NativeLocalPlaybackProgress.state.value
+                        if (playback?.generation == owner.sessionId && playback.playbackOwner == nativePlaybackOwnerId &&
+                            ((expectedBytes == 0L && playback.buffer.offeredBytes == 0L) ||
+                                (playback.fullyDrained && (expectedBytes == null || playback.writtenBytes >= expectedBytes))))
+                            return@withTimeoutOrNull true
+                        delay(25)
+                    }
+                    false
+                } == true
+            } else null
+            RuntimeDiagnosticLog.durableRecord("native_output_finish", org.json.JSONObject()
+                .put("session_id", owner.sessionId).put("provider_completed", completed)
+                .put("local_playback_drained", localPlayback ?: org.json.JSONObject.NULL)
+                .put("scope", "LOCAL_TRACK_PROGRESS_NOT_HUMAN_HEARING").toString())
             synchronized(translationResourceLock) {
                 if (nativeInputDrainOwner !== owner || !isTranslationSessionCurrent(owner.sessionId)) return@synchronized
                 val pendingOutput = app.broadcastRuntime.state.value.transcripts.any { row ->
                     row.nativeAudioSessionId == owner.sessionId &&
                         row.liveOutputState in setOf(LiveOutputState.QUEUED, LiveOutputState.GENERATING) }
+                owner.successful = completed && localPlayback != false
+                if (!completed || localPlayback == false) incompleteBroadcastGeneration.updateAndGet { maxOf(it, owner.broadcastId) }
                 nativeInputDrainOwner = null
                 nativeRelayLifecycle?.close()
                 if (!completed) owner.sessions.forEach { it.abortInputDrain(NativeAudioEndReason.TIMEOUT) }
@@ -1027,6 +1143,11 @@ class BroadcastService : Service() {
             }
             updateNotification()
         }
+        task.invokeOnCompletion { cause ->
+            val successful = cause == null && owner.successful
+            if (!successful) incompleteBroadcastGeneration.updateAndGet { maxOf(it, owner.broadcastId) }
+            owner.completion.complete(successful)
+        }
         synchronized(translationResourceLock) {
             if (nativeInputDrainOwner === owner && isTranslationSessionCurrent(owner.sessionId)) {
                 owner.job = task
@@ -1040,7 +1161,7 @@ class BroadcastService : Service() {
         val pipeline = translationPipeline ?: return@synchronized null
         val frames = recognitionFrames ?: return@synchronized null
         if (!translationSessionCoordinator.isSessionActive() || geminiLiveSessions.isNotEmpty()) return@synchronized null
-        TextInputDrainOwner(translationSessionCoordinator.currentSessionId(), pipeline, frames).also {
+        TextInputDrainOwner(translationSessionCoordinator.currentSessionId(), broadcastGeneration.get(), pipeline, frames).also {
             textInputDrainOwner = it
             app.broadcastRuntime.update { state -> state.copy(inputStopping = true, inputDraining = true) }
         }
@@ -1051,6 +1172,8 @@ class BroadcastService : Service() {
             val completed = owner.pipeline.awaitInputCompletion(30_000)
             synchronized(translationResourceLock) {
                 if (textInputDrainOwner !== owner || !isTranslationSessionCurrent(owner.sessionId)) return@synchronized
+                owner.successful = completed
+                if (!completed) incompleteBroadcastGeneration.updateAndGet { maxOf(it, owner.broadcastId) }
                 textInputDrainOwner = null
                 releaseTranslationTestResources(owner.sessionId)
                 app.broadcastRuntime.update { current -> current.copy(
@@ -1065,6 +1188,11 @@ class BroadcastService : Service() {
             }
             updateNotification()
         }
+        task.invokeOnCompletion { cause ->
+            val successful = cause == null && owner.successful
+            if (!successful) incompleteBroadcastGeneration.updateAndGet { maxOf(it, owner.broadcastId) }
+            owner.completion.complete(successful)
+        }
         synchronized(translationResourceLock) {
             if (textInputDrainOwner === owner && isTranslationSessionCurrent(owner.sessionId)) {
                 owner.job = task
@@ -1073,18 +1201,28 @@ class BroadcastService : Service() {
         }
     }
 
-    private fun stopInput(invalidateRequest: Boolean = true, gracefulNative: Boolean = false) {
-        if (gracefulNative && (nativeInputDrainOwner != null || textInputDrainOwner != null)) return
-        val drain = if (gracefulNative) reserveNativeInputDrain() else null
-        val textDrain = if (gracefulNative && drain == null) reserveTextInputDrain() else null
-        val unsupportedDrain = gracefulNative && drain == null && textDrain == null && geminiLiveSessions.isNotEmpty()
+    private fun stopInput(invalidateRequest: Boolean = true, gracefulNative: Boolean = false, finishNative: Boolean = false): List<InputCompletionReceipt> {
+        val existing = synchronized(translationResourceLock) {
+            listOfNotNull(nativeInputDrainOwner?.completion, textInputDrainOwner?.completion,
+                nativeInputPauseOwner?.completion?.takeIf { !finishNative })
+        }
+        if (gracefulNative && existing.isNotEmpty()) return existing
+        if (finishNative) nativeInputPauseOwner = null
+        val pause = if (gracefulNative && !finishNative) reserveNativeInputPause() else null
+        val drain = if (gracefulNative && pause == null) reserveNativeInputDrain() else null
+        val textDrain = if (gracefulNative && pause == null && drain == null) reserveTextInputDrain() else null
+        val unsupportedDrain = gracefulNative && pause == null && drain == null && textDrain == null && geminiLiveSessions.isNotEmpty()
+        val completions = listOfNotNull(pause?.completion, drain?.completion, textDrain?.completion,
+            if (unsupportedDrain) InputCompletionReceipt().also { it.complete(false) } else null)
+        if (unsupportedDrain) incompleteBroadcastGeneration.updateAndGet { maxOf(it, broadcastGeneration.get()) }
+        var pauseStarted = false
         if (app.translationApiSettings.deferredTeacher.value != null)
             app.deferredNativeTeacher.inputStopped(successful = true)
         if (invalidateRequest) app.broadcastRuntime.invalidateInputRequest()
         // Invalidate capture before closing translation queues so an inflight producer cannot
         // send another frame into a replacement provider or the source broadcast.
         invalidateInputCapture()
-        if (drain == null && textDrain == null) suspendInputTranslation() else {
+        if (pause == null && drain == null && textDrain == null) suspendInputTranslation() else {
             synchronized(broadcastResourceLock) {
                 streamingInputSuspended = true
                 pendingStreamingInput = null
@@ -1092,6 +1230,7 @@ class BroadcastService : Service() {
                 translationPreparationJob?.cancel()
                 translationPreparationJob = null
             }
+            pauseStarted = pause?.sessions?.map { it.beginInputPause() }?.all { it } == true
             drain?.sessions?.forEach { it.beginInputDrain() }
             textDrain?.input?.close()
         }
@@ -1109,7 +1248,7 @@ class BroadcastService : Service() {
             current.copy(
                 inputPhase = InputPhase.IDLE,
                 recognitionErrorMessage = null,
-                translationChannels = if (drain != null || textDrain != null) current.translationChannels else current.translationChannels.map { it.copy(
+                translationChannels = if (pause != null || drain != null || textDrain != null) current.translationChannels else current.translationChannels.map { it.copy(
                     translationState = BroadcastChannelWorkerState.IDLE, synthesisState = BroadcastChannelWorkerState.IDLE) },
                 translationWarning = if (unsupportedDrain) current.translationWarning ?:
                     "이 음성 서비스는 입력 종료 후 응답 대기를 지원하지 않아 연결을 중지했습니다. 남은 통역은 미완료일 수 있습니다."
@@ -1128,6 +1267,7 @@ class BroadcastService : Service() {
                 inputErrorMessage = null,
             )
         }
+        if (pause != null) receiveNativeInputPause(pause, pauseStarted)
         if (drain != null) receiveNativeInputDrain(drain)
         if (textDrain != null) receiveTextInputDrain(textDrain)
         updateNotification()
@@ -1137,6 +1277,7 @@ class BroadcastService : Service() {
             startForegroundForBroadcast()
         }
         stopServiceIfUnused()
+        return completions
     }
 
     private fun failInput(message: String) {
@@ -1186,14 +1327,14 @@ class BroadcastService : Service() {
         inputJob = null
         app.recordedPlayback.pauseInput()
         inputCaptureTeardownPending = stop.jobs.isNotEmpty()
-        app.broadcastRuntime.update { it.copy(inputStopping = inputCaptureTeardownPending || nativeInputDrainOwner != null || textInputDrainOwner != null) }
+        app.broadcastRuntime.update { it.copy(inputStopping = inputCaptureTeardownPending || nativeInputPauseOwner?.pending == true || nativeInputDrainOwner != null || textInputDrainOwner != null) }
         stop.jobs.forEach(Job::cancel)
         fun finishIfClosed() {
             inputStopCompletion.completeIfReady(stop.token) {
                 app.broadcastRuntime.update { current ->
                     if (isInputGenerationCurrent(generation)) {
                         inputCaptureTeardownPending = false
-                        current.copy(inputStopping = nativeInputDrainOwner != null || textInputDrainOwner != null)
+                        current.copy(inputStopping = nativeInputPauseOwner?.pending == true || nativeInputDrainOwner != null || textInputDrainOwner != null)
                     } else current
                 }
             }
@@ -1211,6 +1352,7 @@ class BroadcastService : Service() {
     }
 
     private fun startBroadcast(intent: Intent) {
+        if (broadcastFinishOwner != null) { clearBroadcastSecrets(intent); return }
         if (intent.getBooleanExtra(EXTRA_INTERPRETER_RELAY, false) && !intent.getBooleanExtra(EXTRA_DEFER_RELAY_INPUT, false) && app.broadcastRuntime.state.value.phase !in
             setOf(BroadcastPhase.STARTING, BroadcastPhase.LIVE, BroadcastPhase.PAUSED)) {
             val input = app.audioInputRepository.selectedDevice.value
@@ -1312,6 +1454,7 @@ class BroadcastService : Service() {
                 broadcastTitle = broadcastTitle,
                 recordingWarning = null,
                 isInterpreterRelay = relay,
+                lastCompletion = null,
                 relayPhase = if (relay && relayMicrophoneRequested) InterpreterRelayPhase.CONNECTING else InterpreterRelayPhase.IDLE,
                 relayPlayedBytes = 0,
                 relayReferenceCharacters = 0,
@@ -2176,6 +2319,9 @@ class BroadcastService : Service() {
     }
 
     private fun doReleaseTranslationTestResources() {
+        nativeInputPauseOwner?.job?.cancel()
+        nativeInputPauseOwner = null
+        nativeRelayPreparedOptions = null
         nativeInputDrainOwner?.job?.cancel()
         nativeInputDrainOwner = null
         textInputDrainOwner?.job?.cancel()
@@ -2313,7 +2459,7 @@ class BroadcastService : Service() {
                 context = this,
                 streams = app.audioStreams,
                 bindAllInterfacesForDebug = BuildConfig.DEBUG,
-                isLiveAudioBroadcastEnabled = { app.broadcastRuntime.state.value.phase == BroadcastPhase.LIVE },
+                isLiveAudioBroadcastEnabled = { app.broadcastRuntime.state.value.let { it.phase == BroadcastPhase.LIVE || it.broadcastFinishing } },
                 broadcastStatusProvider = ::listenerBroadcastStatus,
                 isSpeakerInputReady = {
                     val state = app.broadcastRuntime.state.value
@@ -2675,6 +2821,7 @@ class BroadcastService : Service() {
     }
 
     private fun pauseBroadcast() {
+        if (broadcastFinishOwner != null) return
         if (app.broadcastRuntime.state.value.phase != BroadcastPhase.LIVE) return
         if (app.broadcastRuntime.state.value.isInterpreterRelay) {
             app.broadcastRuntime.update { it.copy(phase = BroadcastPhase.PAUSED) }
@@ -2687,6 +2834,7 @@ class BroadcastService : Service() {
     }
 
     private fun resumeBroadcast() {
+        if (broadcastFinishOwner != null) return
         if (app.broadcastRuntime.state.value.phase != BroadcastPhase.PAUSED) return
         if (app.broadcastRuntime.state.value.isInterpreterRelay) {
             app.broadcastRuntime.update { it.copy(phase = BroadcastPhase.LIVE) }
@@ -2698,18 +2846,67 @@ class BroadcastService : Service() {
     }
 
     private fun stopBroadcast() {
+        if (broadcastFinishOwner != null) return
+        val owner = BroadcastFinishOwner(broadcastGeneration.get(), app.recordings.activeId, broadcastStreamSession)
+        broadcastFinishOwner = owner
+        app.broadcastRuntime.update { it.copy(broadcastFinishing = true,
+            inputProcessingSummary = "새 입력을 끄고 받은 발화의 통역을 마무리합니다. 음성과 자막 저장 후 방송이 종료됩니다.") }
+        val paused = nativeInputPauseOwner
+        val initialCompletions = if (paused == null) stopInput(gracefulNative = true, finishNative = true) else emptyList()
+        val task = serviceScope.launch(start = CoroutineStart.LAZY) {
+            var completed = true
+            try {
+                val pauseCompleted = paused?.completion?.await() ?: true
+                if (broadcastFinishOwner !== owner || broadcastGeneration.get() != owner.generation) return@launch
+                val completions = if (paused != null) stopInput(gracefulNative = true, finishNative = true) else initialCompletions
+                // Keep the receipts captured before workers start; global resource owners may
+                // already have been cleared by a fast failed completion.
+                val drainCompleted = awaitInputCompletions(completions)
+                completed = pauseCompleted && drainCompleted && incompleteBroadcastGeneration.get() != owner.generation
+                val remoteDelivered = owner.stream?.awaitRemoteDeliveryCompletion(5_000)
+                RuntimeDiagnosticLog.durableRecord("broadcast_output_finish", org.json.JSONObject()
+                    .put("remote_sends_completed", remoteDelivered ?: org.json.JSONObject.NULL)
+                    .put("scope", "EXISTING_LISTENER_SOCKET_SENDS_NOT_BROWSER_PLAYBACK_OR_HUMAN_HEARING").toString())
+                completed = completed && remoteDelivered != false
+                if (broadcastFinishOwner !== owner || broadcastGeneration.get() != owner.generation ||
+                    broadcastStreamSession !== owner.stream || app.recordings.activeId != owner.recordingId) return@launch
+                withContext(Dispatchers.IO) { completeBroadcastStop(completed) }
+            } finally {
+                if (broadcastFinishOwner === owner) {
+                    broadcastFinishOwner = null
+                    app.broadcastRuntime.update { it.copy(broadcastFinishing = false) }
+                }
+            }
+        }
+        owner.job = task; task.start()
+        updateNotification()
+    }
+
+    private fun completeBroadcastStop(translationCompleted: Boolean) {
+        val finishingSnapshot = app.broadcastRuntime.state.value
         val deferredRecordingId = app.recordings.activeId
         app.broadcastRuntime.invalidateInputRequest()
         if (app.broadcastRuntime.state.value.isInterpreterRelay) stopInput()
         releaseBroadcastResources()
         val socketCleanupPending = synchronized(broadcastResourceLock) { runningServer != null }
-        app.recordings.finish()
+        app.recordings.finish(failed = !translationCompleted || socketCleanupPending)
+        val stored = runCatching { app.recordings.flush() }.isSuccess
+        RuntimeDiagnosticLog.durableRecord("broadcast_finish", org.json.JSONObject()
+            .put("translation_completed", translationCompleted).put("recording_flushed", stored)
+            .put("server_closed", !socketCleanupPending).toString())
         relayArchiveSessionId = null
+        val finishMessage = if (socketCleanupPending)
+            "웹 서버를 종료하지 못했습니다. 방송 중지를 다시 누르세요. 종료 전에는 다른 방송을 시작할 수 없습니다."
+        else if (!stored) "방송은 종료됐지만 저장 완료를 확인하지 못했습니다. 방송 이력을 확인하세요."
+        else if (!translationCompleted) "방송 종료 · 일부 발화의 통역 완료를 확인하지 못했습니다. 방송 이력에서 저장된 내용을 확인하세요."
+        else null
+        val completionNotice = broadcastCompletionNotice(finishingSnapshot, finishMessage)
         app.broadcastRuntime.update { current ->
             current.copy(
                 phase = if (socketCleanupPending) BroadcastPhase.FAILED else BroadcastPhase.IDLE,
                 relayPhase = InterpreterRelayPhase.IDLE,
                 isInterpreterRelay = false,
+                lastCompletion = completionNotice,
                 recordingId = null,
                 broadcastTitle = "",
                 accessMode = null,
@@ -2725,18 +2922,17 @@ class BroadcastService : Service() {
                 translationWarning = null,
                 recognitionErrorMessage = null,
                 testToneActive = false,
-                errorMessage = if (socketCleanupPending)
-                    "웹 서버를 종료하지 못했습니다. 방송 중지를 다시 누르세요. 종료 전에는 다른 방송을 시작할 수 없습니다."
-                else null,
+                errorMessage = broadcastCompletionError(completionNotice, socketCleanupPending),
             )
         }
         if (app.translationApiSettings.deferredTeacher.value != null)
-            app.deferredNativeTeacher.broadcastEnded(deferredRecordingId, successful = !socketCleanupPending)
+            app.deferredNativeTeacher.broadcastEnded(deferredRecordingId, successful = !socketCleanupPending && translationCompleted && stored)
         updateNotification()
         stopServiceIfUnused()
     }
 
     private fun playTestTone() {
+        if (broadcastFinishOwner != null) return
         val current = app.broadcastRuntime.state.value
         if (current.phase != BroadcastPhase.LIVE) return
         if (!testToneRequestPending.compareAndSet(false, true)) return
@@ -2844,6 +3040,7 @@ class BroadcastService : Service() {
     private suspend fun prepareGeminiLive(targets: List<String>, source: String, sessionId: Long,
         archiveSessionId: Long?, stream: StreamSession?, publication: ChannelAudioPublicationCoordinator?): TranslationPreparationResult {
         val options = app.translationApiSettings.state.value
+        val relayOptions = app.interpreterRelaySettings.state.value
         val lifecycle = NativeRelayChannelLifecycle(sessionId, targets)
         check(app.translationApiSettings.authorized(options) && options.allowLiveAudio) { "Gemini Live 키·온라인 허용·이번 실행의 원음 전송 동의를 확인하세요." }
         val referencesByTarget = targets.associateWith { prepareRelayReferences(options, source, it) }
@@ -2947,6 +3144,7 @@ class BroadcastService : Service() {
             })
             nativeRelayLifecycle = lifecycle
             nativeRelayConnections = targets.zip(connections).toMap()
+            nativeRelayPreparedOptions = relayOptions
             geminiLiveSessions = connections
             nativeGeminiTimings = timings.mapKeys { it.key.lowercase(Locale.ROOT) }
             connections.forEach { it.start() }
@@ -4796,7 +4994,6 @@ class BroadcastService : Service() {
 
     private fun stopAll() {
         stopBroadcast()
-        stopInput()
     }
 
     private fun stopProjection() {

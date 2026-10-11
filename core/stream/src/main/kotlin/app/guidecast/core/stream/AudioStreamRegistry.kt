@@ -5,6 +5,8 @@ import java.util.Collections
 import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ReceiveChannel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -168,6 +170,17 @@ class StreamSession internal constructor(
     fun isActive(): Boolean = registry.isActive(this)
 
     /**
+     * Permanently fences new publication/admission, then drains existing remote queues and waits
+     * for their successful socket-send accounting and subscription closure. Call only after all
+     * producers have finished. Local monitors remain open for their own playback-head drain.
+     * A true result with no remote listeners means nothing needed waiting, not proof of delivery
+     * or human hearing. Timeout returns false; caller cancellation propagates. Explicit close or
+     * replacement still cancels immediately. This operation is idempotent and cannot be resumed.
+     */
+    suspend fun awaitRemoteDeliveryCompletion(timeoutMillis: Long): Boolean =
+        registry.awaitRemoteDeliveryCompletion(this, timeoutMillis)
+
+    /**
      * Deactivates only this exact generation. Closing a stale handle can never tear down the
      * newer broadcast that replaced it.
      */
@@ -202,6 +215,9 @@ internal class StreamSessionState(
             this@StreamSessionState.descriptors.forEach { descriptor -> put(descriptor.id, null) }
         }
     var active: Boolean = true
+    var finishingRemote: List<ListenerMailbox>? = null
+    val remoteFinishReady = CompletableDeferred<Unit>()
+    var publicationsInFlight: Int = 0
     val recordingObserver = java.util.concurrent.atomic.AtomicReference<((AudioChannelDescriptor, PcmAudioFrame) -> Unit)?>(null)
     val webSocketObserver = java.util.concurrent.atomic.AtomicReference<((AudioChannelDescriptor, PcmAudioFrame) -> Unit)?>(null)
 }
@@ -254,6 +270,7 @@ class AudioStreamRegistry(
         synchronized(lock) {
             val previous = activeState
             previous.active = false
+            previous.remoteFinishReady.complete(Unit)
             previous.subscribersByChannel.values
                 .flatMap { it.values }
                 .forEach { mailbox -> mailbox.cancelForReplacement() }
@@ -282,7 +299,7 @@ class AudioStreamRegistry(
         channelId: String,
     ): AudioListenerSubscription = synchronized(lock) {
         val state = session.state
-        if (!state.active || state !== activeState) throw StreamSessionSupersededException()
+        if (!state.active || state !== activeState || state.finishingRemote != null) throw StreamSessionSupersededException()
         val descriptor = state.descriptorById[channelId] ?: error("Unknown stream channel")
         enforceAdmissionPolicyLocked(state, channelId)
 
@@ -308,7 +325,7 @@ class AudioStreamRegistry(
         preserveNativeAudio: Boolean,
     ): LocalAudioMonitorSubscription = synchronized(lock) {
         val state = session.state
-        if (!state.active || state !== activeState) throw StreamSessionSupersededException()
+        if (!state.active || state !== activeState || state.finishingRemote != null) throw StreamSessionSupersededException()
         val descriptor = state.descriptorById[channelId] ?: error("Unknown stream channel")
         val id = nextSubscriptionId.incrementAndGet()
         require(!preserveNativeAudio || descriptor.sampleRateHz == 24_000)
@@ -371,11 +388,34 @@ class AudioStreamRegistry(
         session.state.active && session.state === activeState
     }
 
+    internal suspend fun awaitRemoteDeliveryCompletion(session: StreamSession, timeoutMillis: Long): Boolean {
+        require(timeoutMillis > 0)
+        val mailboxes = synchronized(lock) {
+            val state = session.state
+            if (!state.active || state !== activeState) return false
+            state.finishingRemote ?: state.subscribersByChannel.values.flatMap { it.values }.toList().also {
+                state.finishingRemote = it
+                if (state.publicationsInFlight == 0) {
+                    it.forEach(ListenerMailbox::finishRemoteQueue)
+                    state.remoteFinishReady.complete(Unit)
+                }
+            }
+        }
+        val delivered = withTimeoutOrNull(timeoutMillis) {
+            session.state.remoteFinishReady.await()
+            var complete = true
+            for (mailbox in mailboxes) if (!mailbox.remoteDeliveryEnded.await()) complete = false
+            complete
+        } == true
+        return delivered && isActive(session)
+    }
+
     internal fun close(session: StreamSession) {
         synchronized(lock) {
             val state = session.state
             if (!state.active || state !== activeState) return
             state.active = false
+            state.remoteFinishReady.complete(Unit)
             state.webSocketObserver.set(null)
             state.subscribersByChannel.values
                 .flatMap { it.values }
@@ -397,42 +437,53 @@ class AudioStreamRegistry(
         frame: PcmAudioFrame,
     ): StreamPublishResult {
         val targets = synchronized(lock) {
-            if (!state.active || state !== activeState) {
+            if (!state.active || state !== activeState || state.finishingRemote != null) {
                 return StreamPublishResult(StreamPublishStatus.STALE_SESSION)
             }
             if (channelId !in state.descriptorById) {
                 return StreamPublishResult(StreamPublishStatus.UNKNOWN_CHANNEL)
             }
+            state.publicationsInFlight++
             state.publishTargetsByChannel.getValue(channelId)
         }
 
-        var delivered = 0
-        var dropped = 0
-        targets.remote.forEach { target ->
-            val result = target.offer(frame)
-            if (result.delivered) delivered += 1
-            if (result.dropped) dropped += 1
-        }
-        // Local monitor backpressure is deliberately isolated from listener/drop telemetry.
-        // A slow phone speaker must not make the operator believe a hotspot listener is dropping.
-        targets.localMonitors.forEach { target -> target.offer(frame) }
-        // Recording includes frames published before the first listener joins. Its own finite
-        // queue reports gaps independently; no archival failure may stop live audio delivery.
-        state.recordingObserver.get()?.let { observer ->
-            runCatching { observer(state.descriptorById.getValue(channelId), frame) }
-        }
-        if (dropped > 0) {
+        try {
+            var delivered = 0
+            var dropped = 0
+            targets.remote.forEach { target ->
+                val result = target.offer(frame)
+                if (result.delivered) delivered += 1
+                if (result.dropped) dropped += 1
+            }
+            // Local monitor backpressure is deliberately isolated from listener/drop telemetry.
+            // A slow phone speaker must not make the operator believe a hotspot listener is dropping.
+            targets.localMonitors.forEach { target -> target.offer(frame) }
+            // Recording includes frames published before the first listener joins. Its own finite
+            // queue reports gaps independently; no archival failure may stop live audio delivery.
+            state.recordingObserver.get()?.let { observer ->
+                runCatching { observer(state.descriptorById.getValue(channelId), frame) }
+            }
+            if (dropped > 0) {
+                synchronized(lock) {
+                    state.droppedFramesByChannel[channelId] =
+                        state.droppedFramesByChannel.getValue(channelId) + dropped
+                }
+            }
+            return StreamPublishResult(
+                status = StreamPublishStatus.PUBLISHED,
+                targetListeners = targets.remote.size,
+                deliveredFrames = delivered,
+                droppedFrames = dropped,
+            )
+        } finally {
             synchronized(lock) {
-                state.droppedFramesByChannel[channelId] =
-                    state.droppedFramesByChannel.getValue(channelId) + dropped
+                state.publicationsInFlight--
+                if (state.publicationsInFlight == 0 && state.finishingRemote != null) {
+                    state.finishingRemote?.forEach(ListenerMailbox::finishRemoteQueue)
+                    state.remoteFinishReady.complete(Unit)
+                }
             }
         }
-        return StreamPublishResult(
-            status = StreamPublishStatus.PUBLISHED,
-            targetListeners = targets.remote.size,
-            deliveredFrames = delivered,
-            droppedFrames = dropped,
-        )
     }
 
     private fun recordWebSocketDelivery(
@@ -445,6 +496,7 @@ class AudioStreamRegistry(
         synchronized(lock) {
             if (!state.active || state !== activeState) return
             if (state.subscribersByChannel[channelId]?.get(subscriptionId) !== mailbox) return
+            mailbox.recordRemoteDelivery()
             state.webSocketDeliveredFramesByChannel[channelId] =
                 state.webSocketDeliveredFramesByChannel.getValue(channelId) + 1L
             frame.utteranceSequence?.let { sequence ->
@@ -617,6 +669,21 @@ data class LocalAudioBufferSnapshot(
 
 internal class ListenerMailbox(capacity: Int, private val monitorAccounting: Boolean = false,
     private val preserveNativeAudio: Boolean = false) {
+    private var remoteAcceptedFrames = 0L
+    private var remoteDeliveredFrames = 0L
+    private var remoteFinishing = false
+    private var remoteSubscriptionClosed = false
+    val remoteDeliveryEnded = CompletableDeferred<Boolean>()
+    @Synchronized fun recordRemoteDelivery() { remoteDeliveredFrames++ }
+    @Synchronized fun finishRemoteQueue() {
+        remoteFinishing = true
+        queue.close()
+        completeRemoteIfClosed()
+    }
+    private fun completeRemoteIfClosed() {
+        if (remoteFinishing && remoteSubscriptionClosed)
+            remoteDeliveryEnded.complete(remoteDeliveredFrames == remoteAcceptedFrames)
+    }
     private var offeredBytes = 0L
     private var admittedBytes = 0L
     private var dequeuedBytes = 0L
@@ -631,7 +698,7 @@ internal class ListenerMailbox(capacity: Int, private val monitorAccounting: Boo
     val frames: ReceiveChannel<PcmAudioFrame> = queue
 
     @Synchronized private fun admitted(frame: PcmAudioFrame) {
-        if (!monitorAccounting) return
+        if (!monitorAccounting) { remoteAcceptedFrames++; return }
         admittedBytes += frame.bytes.size; pendingBytes += frame.bytes.size; pendingFrames++
     }
     @Synchronized private fun removed(frame: PcmAudioFrame, cancelled: Boolean = false, overwritten: Boolean = false) {
@@ -705,10 +772,13 @@ internal class ListenerMailbox(capacity: Int, private val monitorAccounting: Boo
     @Synchronized
     fun close() {
         queue.close()
+        remoteSubscriptionClosed = true
+        completeRemoteIfClosed()
     }
 
     @Synchronized
     fun cancelForReplacement() {
+        remoteDeliveryEnded.complete(false)
         queue.cancel(CancellationException("Stream session replaced"))
     }
 }

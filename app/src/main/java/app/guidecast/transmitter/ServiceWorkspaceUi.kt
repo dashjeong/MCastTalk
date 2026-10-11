@@ -141,6 +141,7 @@ internal data class WorkspaceFooterPolicy(val broadcastEnabled: Boolean, val inp
 internal fun workspaceFooterPolicy(broadcast: BroadcastSnapshot, broadcastActive: Boolean,
     otherBroadcastActive: Boolean, inputRequestPending: Boolean,
     startBroadcastEnabled: Boolean = true, startInputEnabled: Boolean = true): WorkspaceFooterPolicy {
+    if (broadcast.broadcastFinishing) return WorkspaceFooterPolicy(false, false, false, false)
     val starting = inputRequestPending || broadcast.inputPhase == InputPhase.STARTING
     val canStop = !broadcast.inputStopping && (starting || broadcast.inputPhase == InputPhase.ACTIVE)
     return WorkspaceFooterPolicy(broadcastActive || (!otherBroadcastActive && startBroadcastEnabled),
@@ -159,9 +160,9 @@ internal fun WorkspaceSettingsFooter(broadcast: BroadcastSnapshot, broadcastActi
             if (onBack != null) Button(onClick = onBack, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
                 .testTag("settings-return-to-workspace")) { Text("방송 화면으로") }
             if (broadcastActive || inputRunning) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (broadcastActive) OutlinedButton(onClick = onStopBroadcast,
+                if (broadcastActive) OutlinedButton(onClick = onStopBroadcast, enabled = !broadcast.broadcastFinishing,
                     modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("settings-stop-broadcast")) {
-                    Text(if (broadcast.phase == BroadcastPhase.FAILED) "종료 재시도" else stopBroadcastLabel)
+                    Text(if (broadcast.broadcastFinishing) "남은 통역 저장 중" else if (broadcast.phase == BroadcastPhase.FAILED) "종료 재시도" else stopBroadcastLabel)
                 }
                 if (inputRunning) OutlinedButton(onClick = onStopInput, enabled = !broadcast.inputStopping,
                     modifier = Modifier.weight(1f).heightIn(min = 48.dp).testTag("settings-stop-input")) {
@@ -192,6 +193,7 @@ internal fun StreamingWorkspaceFooter(broadcast: BroadcastSnapshot, broadcastAct
         else -> "$inputName 켜기"
     }
     val broadcastLabel = when {
+        broadcast.broadcastFinishing -> "통역 후 종료"
         broadcastActive && broadcast.phase == BroadcastPhase.FAILED -> "종료 재시도"
         broadcastActive -> stopBroadcastLabel ?: if (standalone) "사용 종료" else "방송 중지"
         standalone -> "단독 사용 시작"

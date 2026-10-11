@@ -2,6 +2,8 @@ package app.guidecast.transmitter
 
 import app.guidecast.core.stream.StreamPublishResult
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 
 internal enum class LiveAudioLoss { BEFORE_READY, INPUT_OVERFLOW, INPUT_ABANDONED, OUTPUT_BLOCKED, LISTENER_OVERFLOW, INPUT_SEND_UNCONFIRMED }
@@ -37,6 +39,8 @@ internal class GeminiLiveSourceProgress(private val deadlineNanos: Long = 60_000
     private var lastNoticeSource: Long? = null
     private var lastNoticeEpisode: Long? = null
     private var activeBytesSinceSource = 0L
+    private var boundaryRequestedForSource: Long? = null
+    private var terminalSourceObservation: Long? = null
     private var inputEnded = false
     private var terminalClaimed = false
     init { require(deadlineNanos > quietNanos && quietNanos > 0) }
@@ -63,6 +67,7 @@ internal class GeminiLiveSourceProgress(private val deadlineNanos: Long = 60_000
     @Synchronized fun providerResponse(now: Long, event: GeminiLiveEvent) {
         if (inputEnded || terminalClaimed) return
         val hasOutput = !event.translation.isNullOrBlank() || event.audio.isNotEmpty()
+        if (event.finished || event.interrupted) terminalSourceObservation = sourceObservation
         if (!event.source.isNullOrBlank() || hasOutput || event.finished || event.interrupted) lastProviderResponse = now
         if (pendingOutputObservation != null && hasOutput) {
             lastPendingOutputProgressAt = now
@@ -109,6 +114,17 @@ internal class GeminiLiveSourceProgress(private val deadlineNanos: Long = 60_000
             lastProviderResponse?.let { (now - it).coerceAtLeast(0L) / 1_000_000 }, kind,
             pending, outputProgressObservation.takeIf { pending != null },
             pendingAge?.coerceAtLeast(0L)?.div(1_000_000))
+    }
+    /** A bounded request to process recognized input; never a speech or completion acknowledgement. */
+    @Synchronized fun claimPendingInputBoundary(now: Long): Boolean {
+        if (inputEnded || terminalClaimed || pendingOutputObservation == null || pendingHasOutput ||
+            boundaryRequestedForSource == sourceObservation || terminalSourceObservation == sourceObservation) return false
+        val progress = lastSource ?: return false
+        // A delayed transcript must not force a boundary across continuing acoustic input.
+        if (lastActiveSent?.let { now - it < 500_000_000L } == true) return false
+        if (now - progress < 5_000_000_000L) return false
+        boundaryRequestedForSource = sourceObservation
+        return true
     }
     @Synchronized fun endInput() { inputEnded = true; clearPendingOutput() }
     @Synchronized fun stalled(now: Long): GeminiLiveSourceStall? {
@@ -192,22 +208,54 @@ internal class GeminiLiveSourceDelayWarningOwner(private val allowed: () -> Bool
 internal fun geminiSourceDelayWarning(current: String?, previous: String?, next: String?): String? =
     if (current.isNullOrBlank() || (previous != null && current == previous)) next else current
 
-/** No pre-connection buffering or replay. Every rejected/abandoned capture is observable. */
+internal sealed interface GeminiLiveInputEvent {
+    data class Audio(val bytes: ByteArray) : GeminiLiveInputEvent
+    class Pause : GeminiLiveInputEvent {
+        val sent = CompletableDeferred<Boolean>()
+        @Volatile var acknowledged = false
+            private set
+        fun acknowledge() { acknowledged = true; sent.complete(true) }
+    }
+}
+
+/** No pre-connection buffering or replay. A pause barrier follows every accepted frame. */
 internal class GeminiLiveInput(private val lost: (LiveAudioLoss, Int) -> Unit) {
-    private val channel = Channel<ByteArray>(5, onUndeliveredElement = { lost(LiveAudioLoss.INPUT_ABANDONED, it.size) })
+    private val channel = Channel<GeminiLiveInputEvent>(5, onUndeliveredElement = {
+        when (it) {
+            is GeminiLiveInputEvent.Audio -> lost(LiveAudioLoss.INPUT_ABANDONED, it.bytes.size)
+            is GeminiLiveInputEvent.Pause -> it.sent.complete(false)
+        }
+    })
     private var ready = false
     private var closed = false
-    val frames = channel.receiveAsFlow()
+    private var pause: GeminiLiveInputEvent.Pause? = null
+    val events = channel.receiveAsFlow()
+    val frames = events.map { (it as GeminiLiveInputEvent.Audio).bytes }
+    val isPaused: Boolean @Synchronized get() = pause != null
+    val canResume: Boolean @Synchronized get() = ready && !closed && pause?.acknowledged == true
     @Synchronized fun markReady() { if (!closed) ready = true }
     @Synchronized fun offer(bytes: ByteArray): Boolean {
-        if (!ready || closed) { lost(if (closed) LiveAudioLoss.INPUT_ABANDONED else LiveAudioLoss.BEFORE_READY, bytes.size); return true }
-        if (channel.trySend(bytes.copyOf()).isSuccess) return true
+        if (!ready || closed || pause != null) { lost(if (closed || pause != null) LiveAudioLoss.INPUT_ABANDONED else LiveAudioLoss.BEFORE_READY, bytes.size); return true }
+        if (channel.trySend(GeminiLiveInputEvent.Audio(bytes.copyOf())).isSuccess) return true
         lost(LiveAudioLoss.INPUT_OVERFLOW, bytes.size)
         close()
         return false
     }
+    @Synchronized fun beginPause(): GeminiLiveInputEvent.Pause? {
+        if (!ready || closed || pause != null) return null
+        return GeminiLiveInputEvent.Pause().also { pause = it }
+    }
+    suspend fun sendPause(barrier: GeminiLiveInputEvent.Pause) {
+        check(synchronized(this) { pause === barrier && !closed })
+        channel.send(barrier)
+    }
+    @Synchronized fun resume(): Boolean {
+        if (!canResume) return false
+        pause = null
+        return true
+    }
     @Synchronized fun endInput() { closed = true; ready = false; channel.close() }
-    @Synchronized fun close() { closed = true; ready = false; channel.cancel() }
+    @Synchronized fun close() { closed = true; ready = false; pause?.sent?.complete(false); channel.cancel() }
 }
 
 /** Queue admission is not playback; per-listener congestion must not be reported as success. */

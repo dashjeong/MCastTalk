@@ -199,7 +199,7 @@ internal fun InterpreterRelayScreen(app: GuideCastApplication, broadcast: Broadc
     if (confirmEnd) AlertDialog(onDismissRequest = { confirmEnd = false },
         title = { Text(if (endingCleanupRetry) "남아 있는 방송 종료 정리를 다시 시도할까요?" else "방송을 종료할까요?") },
         text = { Text(if (endingCleanupRetry) "남아 있는 방송 연결의 종료를 다시 확인합니다. 새 방송이나 마이크·AI 연결은 시작하지 않습니다."
-            else "마이크와 통역 연결도 종료합니다. 음성과 스크립트는 방송 이력에서 확인할 수 있습니다. 다음 방송에는 새 접속 권한을 만듭니다.") },
+            else "새 음성 입력을 끄고, 받은 발화의 남은 통역을 처리·저장한 뒤 방송을 종료합니다. 완료하지 못한 내용은 미완료로 표시합니다. 음성과 스크립트는 방송 이력에서 확인할 수 있습니다.") },
         confirmButton = { TextButton(enabled = workspace.broadcastActive, onClick = {
             val current = app.broadcastRuntime.state.value
             confirmEnd = false
@@ -598,6 +598,9 @@ internal fun relayWorkspaceControlState(broadcast: BroadcastSnapshot, menuActive
         own -> broadcast
         cleanupPending -> BroadcastSnapshot(phase = BroadcastPhase.FAILED, errorMessage = broadcast.errorMessage,
             inputStopping = broadcast.inputStopping)
+        !other && broadcast.phase == BroadcastPhase.IDLE &&
+            broadcast.lastCompletion?.owner == BroadcastCompletionOwner.INTERPRETER_RELAY ->
+            BroadcastSnapshot(errorMessage = broadcast.lastCompletion.message)
         else -> BroadcastSnapshot()
     }
     return RelayWorkspaceControlState(shown, own && activePhase || cleanupPending, other,

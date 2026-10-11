@@ -32,7 +32,7 @@ internal class GeminiLiveMonitor {
 
 /** A single language connection feeds any number of local listeners. No queued audio replay. */
 internal class GeminiLiveSession(
-    scope: CoroutineScope,
+    private val scope: CoroutineScope,
     private val options: TranslationApiOptions,
     private val target: String,
     private val settings: TranslationApiSettings,
@@ -50,6 +50,7 @@ internal class GeminiLiveSession(
     private val sourceLanguageTag: String? = null,
 ) : LiveAudioSession {
     private val termination = NativeAudioTermination(onEnded)
+    private val drainWaitBudget = NativeDrainWaitBudget()
     private val drainTraceOrdinal = NativeDrainTraceOrdinals.next()
     private val inputDrain = NativeInputDrainState(onTrace = { event ->
         RuntimeDiagnosticLog.record("native_input_drain", event.detail(drainTraceOrdinal))
@@ -104,6 +105,8 @@ internal class GeminiLiveSession(
                 },
                 onEvent = { event ->
                     check(!termination.isEnded && allowed() && settings.authorized(options))
+                    drainWaitBudget.observe(event.source, event.translation, event.audio.any { it.isNotEmpty() })
+                    if (event.finished || event.interrupted) drainWaitBudget.turnEnded()
                     sourceDelayWarning.sourceReceived(event.source)
                     sourceDelayWarning.providerResponse(event)
                     event.usage?.let { usage ->
@@ -146,9 +149,17 @@ internal class GeminiLiveSession(
                     diagnostics.loss(LiveAudioLoss.INPUT_ABANDONED, bytes)
                 },
                 interpreterInstructions = context.instructions, references = context.references, liveVoice = options.liveVoice, sourceLanguageTag = sourceLanguageTag, inputDrain = inputDrain, drainTraceOrdinal = drainTraceOrdinal,
-                explicitActivity = false,
+                explicitActivity = false, inputEvents = input.events, inputPaused = { input.isPaused },
+                onPendingInputBoundary = {
+                    RuntimeDiagnosticLog.durableRecord("native_pending_boundary", org.json.JSONObject()
+                        .put("session_id", usageSessionId).put("target", diagnosticTarget)
+                        .put("connection_index", connectionIndex).put("source_idle_threshold_ms", 5_000)
+                        .put("stage", "EOS_SENT_RECEIVER_RETAINED")
+                        .put("scope", "PROCESSING_REQUEST_NOT_OUTPUT_OR_COMPLETION_ACK").toString())
+                },
                 onConnectionAttempt = { index, resumed, observed ->
                     check(!termination.isEnded && allowed() && settings.authorized(options) && options.allowLiveAudio)
+                    drainWaitBudget.invalidate()
                     connectionIndex = index; usageReports = 0; wireDiagnostics = observed
                     RuntimeDiagnosticLog.durableRecord("native_audio_connection", org.json.JSONObject()
                         .put("provider", "GEMINI_LIVE").put("session_id", usageSessionId).put("connection_index", index)
@@ -271,6 +282,55 @@ internal class GeminiLiveSession(
             close()
         }
     }
+    private var pauseJob: Job? = null
+    @Volatile private var pauseResult: CompletableDeferred<Boolean>? = null
+    private var pauseOrdinal = 0L
+    private fun recordInputPause(stage: String, ordinal: Long, elapsedNanos: Long? = null) {
+        RuntimeDiagnosticLog.durableRecord("native_input_pause", org.json.JSONObject()
+            .put("session_id", usageSessionId).put("target", diagnosticTarget)
+            .put("settings_revision", options.revision).put("connection_index", connectionIndex)
+            .put("pause_ordinal", ordinal).put("stage", stage)
+            .put("elapsed_ms", elapsedNanos?.div(1_000_000) ?: org.json.JSONObject.NULL)
+            .put("sent_packets", wireDiagnostics.sentPacketCount())
+            .put("scope", "LOCAL_ORDERED_INPUT_BOUNDARY_NOT_PROVIDER_COMPLETION").toString())
+    }
+    override val supportsInputPause: Boolean get() = true
+    override val canResumeInput: Boolean get() = job.isActive && !termination.isEnded &&
+        allowed() && settings.authorized(options) && options.allowLiveAudio && input.canResume
+    override fun beginInputPause(): Boolean {
+        if (termination.isEnded || !allowed() || !settings.authorized(options)) return false
+        val barrier = input.beginPause() ?: return false
+        val result = CompletableDeferred<Boolean>().also { pauseResult = it }
+        val ordinal = ++pauseOrdinal
+        val pauseBudgetGeneration = drainWaitBudget.generation
+        val started = System.nanoTime()
+        recordInputPause("REQUEST", ordinal)
+        pauseJob = scope.launch {
+            var sent = false
+            try {
+                sent = withTimeoutOrNull(5_000) { input.sendPause(barrier); barrier.sent.await() } == true
+                if (!sent) {
+                    recordInputPause("FAILED", ordinal, System.nanoTime() - started)
+                    termination.request(NativeAudioEndReason.TIMEOUT)
+                    onFailure("Gemini Live $target 마이크 종료 신호 전송 실패 · 연결을 중지했습니다. 남은 통역은 미완료일 수 있습니다.")
+                    close()
+                } else {
+                    drainWaitBudget.pauseSent(pauseBudgetGeneration)
+                    recordInputPause("EOS_SENT_RECEIVER_RETAINED", ordinal, System.nanoTime() - started)
+                    monitor.update { it.copy(state = "$target 마이크 꺼짐 · 남은 응답 수신 중") }
+                }
+            } finally { result.complete(sent) }
+        }
+        return true
+    }
+    override suspend fun awaitInputPause(): Boolean = pauseResult?.await() == true
+    override fun resumeInput(): Boolean {
+        if (!canResumeInput || !input.resume()) return false
+        drainWaitBudget.invalidate()
+        recordInputPause("RESUMED_SAME_SESSION", pauseOrdinal)
+        monitor.update { it.copy(state = "$target 연결됨 · 음성 입력 준비") }
+        return true
+    }
     override val supportsInputDrain: Boolean get() = true
     override fun beginInputDrain(): Boolean {
         if (termination.isEnded || !inputDrain.request()) return false
@@ -281,7 +341,16 @@ internal class GeminiLiveSession(
     }
     override suspend fun awaitInputDrain(timeoutMillis: Long): Boolean {
         require(timeoutMillis > 0)
-        val result = withTimeoutOrNull(timeoutMillis) { inputDrain.awaitEnded() }
+        val remaining = drainWaitBudget.remainingMillis(timeoutMillis)
+        // Even an expired response window allows the bounded local EOS send and receiver cleanup.
+        // Its expiry remains an unconfirmed completion, never an acknowledgement of pending speech.
+        val effectiveWait = maxOf(remaining, minOf(timeoutMillis, 3_000L))
+        RuntimeDiagnosticLog.durableRecord("native_input_drain_budget", org.json.JSONObject()
+            .put("session_id", usageSessionId).put("target", diagnosticTarget)
+            .put("connection_index", connectionIndex).put("remaining_response_ms", remaining)
+            .put("effective_wait_ms", effectiveWait)
+            .put("scope", "REUSED_PAUSED_RESPONSE_WAIT_NOT_COMPLETION_ACK").toString())
+        val result = drainWaitBudget.awaitCompletion(timeoutMillis) { inputDrain.awaitEnded() }
         if (result == null) {
             termination.request(NativeAudioEndReason.TIMEOUT)
             close()
@@ -295,7 +364,7 @@ internal class GeminiLiveSession(
     }
     override fun close() {
         termination.request(NativeAudioEndReason.STOPPED); termination.finish()
-        readiness.close(); input.close(); job.cancel()
+        readiness.close(); input.close(); job.cancel(); pauseJob?.cancel(); pauseResult?.complete(false)
     }
 }
 

@@ -105,11 +105,26 @@ data class BroadcastChannelSnapshot(
 
 enum class InterpreterRelayPhase { IDLE, CONNECTING, READY, RECEIVING, PAUSED, FAILED }
 
+enum class BroadcastCompletionOwner { STREAMING, INTERPRETER_RELAY }
+data class BroadcastCompletionNotice(val owner: BroadcastCompletionOwner, val message: String?)
+
+/** A completed operation's notice does not confer ownership of a running service. */
+internal fun broadcastCompletionNotice(snapshot: BroadcastSnapshot, message: String?): BroadcastCompletionNotice {
+    val owner = if (snapshot.isInterpreterRelay) BroadcastCompletionOwner.INTERPRETER_RELAY
+        else if (snapshot.phase == BroadcastPhase.FAILED) snapshot.lastCompletion?.owner ?: BroadcastCompletionOwner.STREAMING
+        else BroadcastCompletionOwner.STREAMING
+    return BroadcastCompletionNotice(owner, message)
+}
+
+internal fun broadcastCompletionError(notice: BroadcastCompletionNotice, cleanupPending: Boolean): String? =
+    notice.message.takeIf { cleanupPending || notice.owner == BroadcastCompletionOwner.STREAMING }
+
 data class BroadcastSnapshot(
     val recordingId: String? = null,
     val broadcastTitle: String = "",
     val recordingWarning: String? = null,
     val isInterpreterRelay: Boolean = false,
+    val lastCompletion: BroadcastCompletionNotice? = null,
     val relayPhase: InterpreterRelayPhase = InterpreterRelayPhase.IDLE,
     val relayPlayedBytes: Long = 0,
     val relayReferenceCharacters: Int = 0,
@@ -120,6 +135,7 @@ data class BroadcastSnapshot(
     val inputPhase: InputPhase = InputPhase.IDLE,
     val inputStopping: Boolean = false,
     val inputDraining: Boolean = false,
+    val broadcastFinishing: Boolean = false,
     val phase: BroadcastPhase = BroadcastPhase.IDLE,
     val accessMode: OperatorAccessMode? = null,
     val listenerUrl: String? = null,
