@@ -3061,6 +3061,8 @@ class BroadcastService : Service() {
             val retiredTurns = retirements.getValue(tag.lowercase(Locale.ROOT))
             val segments = GeminiLiveSegments(tag, source, relayNativeSequenceBase(sessionId, index), sessionId)
             GeminiLiveSession(serviceScope, options, tag, app.translationApiSettings, app.geminiLiveMonitor,
+                transport = GeminiLiveTransport(activityClassifierFactory = { SileroSpeechActivityClassifier(applicationContext) }),
+                useExplicitActivity = options.model == GEMINI_LIVE_AGENT,
                 allowed = { isTranslationSessionCurrent(sessionId) && session.isActive() && lifecycle.accepts(tag) },
                 onEvent = { event ->
                     ensureTranslationSessionCurrent(sessionId)

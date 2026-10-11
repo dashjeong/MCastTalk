@@ -61,6 +61,9 @@ internal class NativeInputDrainState(
         before?.let { trace(NativeDrainTraceKind.REQUEST, it) }
         return true
     }
+    private var hasUntranslatedActivity = false
+    val successful: Boolean @Synchronized get() = completedValue && !hasUntranslatedActivity
+    @Synchronized fun activityOutputMissing() { hasUntranslatedActivity = true }
     @Synchronized fun audioSent(active: Boolean) { if (active) activeInputRevision++ }
     /** Manual activity owns all input up to its successfully sent End. No next activity may be sent until terminal publication. */
     @Synchronized fun activityEndSent() {
@@ -120,7 +123,7 @@ internal class NativeInputDrainState(
     }
     @Synchronized fun sessionEnded(completedNormally: Boolean) {
         val before = if (onTrace != null && !ended.isCompleted) traceState() else null
-        ended.complete(completedNormally && completedValue)
+        ended.complete(completedNormally && completedValue && !hasUntranslatedActivity)
         before?.let { trace(NativeDrainTraceKind.SESSION_ENDED, it, if (completedNormally) 1 else 0) }
     }
     suspend fun awaitEnded(): Boolean = ended.await()

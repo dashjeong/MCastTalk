@@ -291,6 +291,7 @@ internal class GeminiLiveSegments(private val target: String, private val source
             sourceLanguageTag = sourceLanguage, liveSegmentLanguage = target, liveSourceFinal = sourceFinal,
             nativeAudioSessionId = sessionId,
             liveOutputState = when {
+                event.outputMissing -> LiveOutputState.INCOMPLETE
                 needsConfirmation -> LiveOutputState.INCOMPLETE
                 event.finished -> LiveOutputState.GENERATED
                 else -> LiveOutputState.GENERATING

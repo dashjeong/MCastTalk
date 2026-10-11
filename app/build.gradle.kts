@@ -138,8 +138,8 @@ android {
         applicationId = "app.guidecast.transmitter"
         minSdk = 30
         targetSdk = 36
-        versionCode = 83
-        versionName = "0.2.53"
+        versionCode = 86
+        versionName = "0.2.54"
 
         // Supported production devices use ARM64. Keeping only the required ABI
         // avoids shipping an unused second LiteRT-LM native runtime in the sideload APK.
@@ -254,6 +254,7 @@ dependencies {
     implementation(project(":provider:android-tts"))
     implementation(project(":provider:moonshine-tts"))
     implementation(project(":provider:moonshine-stt"))
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.23.2")
     implementation(project(":provider:gemma-translation"))
 
     implementation(libs.androidx.core.ktx)

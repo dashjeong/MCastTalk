@@ -25,11 +25,12 @@ internal class GeminiManualActivityPump(
 ) {
     private data class Packet(
         val bytes: ByteArray, val active: Boolean, val offset: Long, val acceptedNs: Long,
-        val ingressFirstNs: Long, val ingressLastNs: Long, val preRoll: Boolean = false,
+        val ingressFirstNs: Long, val ingressLastNs: Long, val uncertain: Boolean = false, val preRoll: Boolean = false,
     ) {
         fun suffix(from: Int) = copy(bytes = bytes.copyOfRange(from, bytes.size), offset = offset + from)
     }
     private val trace = GeminiManualActivityTrace(nowNanos, traceCapacity)
+    private val suppressedSpeech = SuppressedSpeechEvidence()
     private enum class Phase { IDLE, OPEN, AWAITING_TERMINAL }
     private val queue = ArrayDeque<Packet>()
     private val preRoll = ArrayDeque<Packet>()
@@ -47,6 +48,9 @@ internal class GeminiManualActivityPump(
     private var epoch = 0L
     private var ended = false
     private var aborted = false
+    private var acceptedThrough = 0L
+    private var activityInputEnd = 0L
+    private val pauseBoundaries = ArrayDeque<Long>()
     var suppressedIdleBytes: Long = 0
         private set
     var completedActivities: Long = 0
@@ -62,6 +66,7 @@ internal class GeminiManualActivityPump(
     }
 
     val inputEnded: Boolean get() = ended
+    val hasUnresolvedSpeech: Boolean get() = suppressedSpeech.unresolved
     val hasOpenActivity: Boolean get() = phase == Phase.OPEN || inFlight is GeminiManualCommand.Start
     val activeEndSent: Boolean get() = phase == Phase.AWAITING_TERMINAL
     val activeEpoch: Long get() = epoch
@@ -70,13 +75,15 @@ internal class GeminiManualActivityPump(
     val hasPending: Boolean get() = phase != Phase.IDLE || inFlight != null || queuedBytes > 0
 
     /** active is only a segmentation hint; its silence suppression is counted, never an ACK. */
-    fun accept(packet: ByteArray, active: Boolean, ingressFirstNanos: Long? = null, ingressLastNanos: Long? = ingressFirstNanos) {
+    fun accept(packet: ByteArray, active: Boolean, ingressFirstNanos: Long? = null, ingressLastNanos: Long? = ingressFirstNanos,
+        uncertain: Boolean = false) {
         check(!ended) { "Input already ended" }
         require(packet.isNotEmpty() && packet.size <= 3_200 && packet.size % 2 == 0)
         if (packet.size > maximumQueuedBytes - queuedBytes - unconfirmedAudioBytes)
             throw GeminiManualActivityFailure(GeminiManualActivityFailure.Reason.OVERFLOW, packet.size)
         queue.addLast(Packet(packet.copyOf(), active, trace.accepted(packet.size), trace.relative(),
-            ingressFirstNanos?.let(trace::relative) ?: -1, ingressLastNanos?.let(trace::relative) ?: -1))
+            ingressFirstNanos?.let(trace::relative) ?: -1, ingressLastNanos?.let(trace::relative) ?: -1, uncertain = uncertain))
+        acceptedThrough += packet.size
         queueSize += packet.size
         if (phase == Phase.IDLE && inFlight == null) prepareIdle()
     }
@@ -88,6 +95,16 @@ internal class GeminiManualActivityPump(
         queuedBytes, unconfirmedAudioBytes, completedActivities)
 
     fun endInput() { trace.eof(queuedBytes, unconfirmedAudioBytes); ended = true }
+
+    /** A pause separates queued input too. Resuming never removes this boundary or held audio. */
+    fun pauseInput() {
+        check(!ended && !aborted)
+        if (pauseBoundaries.peekLast() != acceptedThrough) {
+            check(pauseBoundaries.size < 128) { "Too many pending microphone boundaries" }
+            pauseBoundaries.addLast(acceptedThrough)
+        }
+        if (phase == Phase.IDLE && inFlight == null) prepareIdle()
+    }
 
     /** Seal only the audio already sent. Untouched queued input remains for the next activity. */
     fun sealCurrentActivity() {
@@ -113,10 +130,11 @@ internal class GeminiManualActivityPump(
                 }
             }
             Phase.OPEN -> {
-                if (activityBytes > 0 && (sealRequested || activityBytes >= maximumActivityBytes ||
+                if (activityBytes > 0 && (sealRequested || pauseBoundaries.peekFirst()?.let { activityInputEnd >= it } == true || activityBytes >= maximumActivityBytes ||
                         trailingQuietBytes >= silenceBytes || (ended && queue.isEmpty()))) {
                     trace.seal(epoch, when {
                         sealRequested -> GeminiManualSealReason.EXPLICIT_SEAL
+                        pauseBoundaries.peekFirst()?.let { activityInputEnd >= it } == true -> GeminiManualSealReason.INPUT_PAUSE
                         activityBytes >= maximumActivityBytes -> GeminiManualSealReason.MAX_DURATION
                         trailingQuietBytes >= silenceBytes -> GeminiManualSealReason.QUIET
                         else -> GeminiManualSealReason.INPUT_EOF
@@ -156,12 +174,14 @@ internal class GeminiManualActivityPump(
             is GeminiManualCommand.Audio -> {
                 check(phase == Phase.OPEN)
                 inFlightPacket?.let { trace.sent(epoch, it.offset, command.bytes.size, deliveredAudioBytes, it.active, it.preRoll) }
+                activityInputEnd = checkNotNull(inFlightPacket).offset + command.bytes.size
                 activityBytes += command.bytes.size; deliveredAudioBytes += command.bytes.size
                 trailingQuietBytes = if (inFlightActive) 0 else trailingQuietBytes + command.bytes.size
             }
             is GeminiManualCommand.End -> {
                 check(phase == Phase.OPEN && activityBytes > 0)
                 phase = Phase.AWAITING_TERMINAL
+                while (pauseBoundaries.peekFirst()?.let { it <= activityInputEnd } == true) pauseBoundaries.removeFirst()
                 trace.endAck(epoch)
             }
         }
@@ -170,12 +190,12 @@ internal class GeminiManualActivityPump(
     }
 
     /** hasOutput must aggregate only this activity's published text/audio, not an earlier one. */
-    fun turnComplete(interrupted: Boolean, hasOutput: Boolean): Boolean {
+    fun turnComplete(interrupted: Boolean, hasOutput: Boolean, allowMissingOutput: Boolean = false): Boolean {
         if (aborted) return false
         if (interrupted) throw GeminiManualActivityFailure(GeminiManualActivityFailure.Reason.INTERRUPTED)
         if (phase != Phase.AWAITING_TERMINAL || inFlight != null) return false
-        if (!hasOutput) throw GeminiManualActivityFailure(GeminiManualActivityFailure.Reason.NO_OUTPUT)
-        completedActivities++
+        if (!hasOutput && !allowMissingOutput) throw GeminiManualActivityFailure(GeminiManualActivityFailure.Reason.NO_OUTPUT)
+        if (hasOutput) completedActivities++
         trace.terminal(epoch, queuedBytes)
         phase = Phase.IDLE; activityBytes = 0; trailingQuietBytes = 0; sealRequested = false
         return true
@@ -186,16 +206,25 @@ internal class GeminiManualActivityPump(
         val bytes = queuedBytes
         trace.discarded(bytes)
         queue.clear(); preRoll.clear(); queueSize = 0; preRollSize = 0
+        pauseBoundaries.clear()
         ended = true; aborted = true
         return bytes
     }
 
     private fun prepareIdle() {
+        fun passBoundaries(offset: Long) {
+            while (pauseBoundaries.peekFirst()?.let { it <= offset } == true) {
+                suppressPreRoll()
+                pauseBoundaries.removeFirst()
+            }
+        }
         while (queue.isNotEmpty() && !queue.first.active) {
+            passBoundaries(queue.first.offset)
             val packet = queue.removeFirst(); queueSize -= packet.bytes.size
             preRoll.addLast(packet.copy(preRoll = true)); preRollSize += packet.bytes.size
             trimPreRoll()
         }
+        passBoundaries(queue.peekFirst()?.offset ?: acceptedThrough)
         if (queue.isNotEmpty()) {
             while (preRoll.isNotEmpty()) queue.addFirst(preRoll.removeLast())
             queueSize += preRollSize; preRollSize = 0
@@ -207,12 +236,14 @@ internal class GeminiManualActivityPump(
             val packet = preRoll.removeFirst()
             val excess = minOf(packet.bytes.size, preRollSize - maximumPreRollBytes)
             preRollSize -= excess; suppressedIdleBytes += excess
+            suppressedSpeech.suppressed(packet.offset, excess, packet.uncertain)
             if (excess < packet.bytes.size)
                 preRoll.addFirst(packet.suffix(excess))
         }
     }
 
     private fun suppressPreRoll() {
+        preRoll.forEach { suppressedSpeech.suppressed(it.offset, it.bytes.size, it.uncertain) }
         suppressedIdleBytes += preRollSize
         preRoll.clear(); preRollSize = 0
     }

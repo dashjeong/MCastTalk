@@ -130,8 +130,9 @@ private val CONTENT_FIELDS = setOf("inputTranscription", "input_transcription", 
     "groundingMetadata", "grounding_metadata", "urlContextMetadata", "url_context_metadata", "speechState", "speech_state")
 
 /** Emits complete 100ms PCM16 mono16k packets; the caller explicitly flushes or discards the tail. */
-internal class GeminiPcmPacketizer {
-    private val pending = java.io.ByteArrayOutputStream(3_200)
+internal class GeminiPcmPacketizer(private val packetBytes: Int = 3_200) {
+    init { require(packetBytes in 2..3_200 && packetBytes % 2 == 0) }
+    private val pending = java.io.ByteArrayOutputStream(packetBytes)
     private var ended = false
     val pendingBytes: Int get() = pending.size()
     fun accept(frame: ByteArray): List<ByteArray> {
@@ -139,9 +140,9 @@ internal class GeminiPcmPacketizer {
         val packets = ArrayList<ByteArray>()
         var offset = 0
         while (offset < frame.size) {
-            val count = minOf(3_200 - pending.size(), frame.size - offset)
+            val count = minOf(packetBytes - pending.size(), frame.size - offset)
             pending.write(frame, offset, count); offset += count
-            if (pending.size() == 3_200) { packets += pending.toByteArray(); pending.reset() }
+            if (pending.size() == packetBytes) { packets += pending.toByteArray(); pending.reset() }
         }
         return packets
     }

@@ -4733,5 +4733,13 @@
             <sha256 value="994baf5d89bf4caa5ce968e4c4eab135c8f9783ecf4d2b7b0e9d1c8a4ddf1e4f" origin="Maven Central HTTPS and published SHA1 matched cached bytes 2026-10-03"/>
          </artifact>
       </component>
+      <component group="com.microsoft.onnxruntime" name="onnxruntime-android" version="1.23.2">
+         <artifact name="onnxruntime-android-1.23.2.pom">
+            <sha256 value="c0a71d517210cf71bb1fca22b5367b55073b8bdcc29f1054d716db8949b09021" origin="Verified against Maven Central artifact"/>
+         </artifact>
+         <artifact name="onnxruntime-android-1.23.2.aar">
+            <sha256 value="82048d1f462218adae4ba76477089ab0ba76093d84f733540066db1a8ba6b827" origin="Verified against Maven Central artifact"/>
+         </artifact>
+      </component>
    </components>
 </verification-metadata>

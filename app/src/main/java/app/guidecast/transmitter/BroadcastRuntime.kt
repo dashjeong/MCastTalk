@@ -182,6 +182,7 @@ enum class LiveOutputState(val label: String) {
 enum class NativeAudioEndReason(val label: String, val outputState: LiveOutputState) {
     STOPPED("통역 중지", LiveOutputState.CANCELLED),
     INPUT_COMPLETED("입력 종료 · 응답 완료", LiveOutputState.INCOMPLETE),
+    INPUT_INCOMPLETE("입력 종료 · 일부 통역 미완료", LiveOutputState.INCOMPLETE),
     CONSENT_REVOKED("온라인 전송 동의 해제", LiveOutputState.CANCELLED),
     SESSION_ENDED("입력 세션 종료", LiveOutputState.CANCELLED),
     TIMEOUT("시간 제한 종료", LiveOutputState.INCOMPLETE),

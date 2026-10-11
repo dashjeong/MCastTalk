@@ -62,3 +62,5 @@
 # installed device-test APK and from Android component/JNI boundaries. Keep that surface stable;
 # dependency and resource shrinking remain enabled for the alpha artifact.
 -keep class app.guidecast.** { *; }
+# ONNX Runtime resolves tensor/session JNI classes by their Java names.
+-keep class ai.onnxruntime.** { *; }

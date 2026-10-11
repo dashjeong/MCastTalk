@@ -48,6 +48,7 @@ internal class GeminiLiveSession(
     private val onStatus: (String) -> Unit = {},
     private val onSourceDelayStatus: (previous: String?, next: String?) -> Unit = { _, _ -> },
     private val sourceLanguageTag: String? = null,
+    private val useExplicitActivity: Boolean = false,
 ) : LiveAudioSession {
     private val termination = NativeAudioTermination(onEnded)
     private val drainWaitBudget = NativeDrainWaitBudget()
@@ -109,6 +110,10 @@ internal class GeminiLiveSession(
                     if (event.finished || event.interrupted) drainWaitBudget.turnEnded()
                     sourceDelayWarning.sourceReceived(event.source)
                     sourceDelayWarning.providerResponse(event)
+                    if (event.outputMissing) {
+                        RuntimeDiagnosticLog.durableRecord("native_activity_incomplete", "target=$diagnosticTarget connection_index=$connectionIndex reason=NO_RECOGNIZED_OUTPUT")
+                        onStatus("$target · 일부 발화의 통역 응답이 없습니다. 다음 발화는 계속 처리합니다.")
+                    }
                     event.usage?.let { usage ->
                         usageReports++
                         val receipt = org.json.JSONObject().put("provider", "GEMINI_LIVE")
@@ -149,7 +154,7 @@ internal class GeminiLiveSession(
                     diagnostics.loss(LiveAudioLoss.INPUT_ABANDONED, bytes)
                 },
                 interpreterInstructions = context.instructions, references = context.references, liveVoice = options.liveVoice, sourceLanguageTag = sourceLanguageTag, inputDrain = inputDrain, drainTraceOrdinal = drainTraceOrdinal,
-                explicitActivity = false, inputEvents = input.events, inputPaused = { input.isPaused },
+                explicitActivity = useExplicitActivity, inputEvents = input.events, inputPaused = { input.isPaused },
                 onPendingInputBoundary = {
                     RuntimeDiagnosticLog.durableRecord("native_pending_boundary", org.json.JSONObject()
                         .put("session_id", usageSessionId).put("target", diagnosticTarget)
@@ -214,7 +219,8 @@ internal class GeminiLiveSession(
                                 "LANE_SOURCE_OBSERVATION_OUTPUT_UNCONFIRMED_NOT_UTTERANCE_ALIGNMENT"
                                 else "PCM_ENERGY_IS_NOT_SPEECH_OR_PROCESSING_ACK").toString())
                 })
-            if (inputDrain.completed) termination.request(NativeAudioEndReason.INPUT_COMPLETED)
+            if (inputDrain.completed) termination.request(if (inputDrain.successful)
+                NativeAudioEndReason.INPUT_COMPLETED else NativeAudioEndReason.INPUT_INCOMPLETE)
         } catch (cancelled: CancellationException) {
             termination.failed(cancelled, settings.authorized(options), allowed())
             if (cancelled is TimeoutCancellationException) onFailure("Gemini Live 연결 준비 시간 초과 · 다시 시작하세요.")
@@ -316,7 +322,8 @@ internal class GeminiLiveSession(
                     close()
                 } else {
                     drainWaitBudget.pauseSent(pauseBudgetGeneration)
-                    recordInputPause("EOS_SENT_RECEIVER_RETAINED", ordinal, System.nanoTime() - started)
+                    recordInputPause(if (useExplicitActivity) "PAUSE_FENCE_QUEUED_RECEIVER_RETAINED"
+                        else "EOS_SENT_RECEIVER_RETAINED", ordinal, System.nanoTime() - started)
                     monitor.update { it.copy(state = "$target 마이크 꺼짐 · 남은 응답 수신 중") }
                 }
             } finally { result.complete(sent) }

@@ -90,3 +90,12 @@ Pinned model page:
 https://huggingface.co/litert-community/gemma-4-E4B-it-litert-lm/blob/2eee7ac325f20eb8c9ac1d0e972f7c84663062da/gemma-4-E4B-it.litertlm
 This is the general E4B-IT model, not the Translate Gemma 4 Sub GGUF fine-tune.
 The unmodified model is downloaded separately and is not bundled in the APK.
+
+
+Silero VAD v6.2.3
+Offline speech activity detection; not speech recognition or speaker identification.
+Source: https://github.com/snakers4/silero-vad/tree/5cd7945676eb32225748052e2e6a0580e4686a08
+Model: src/silero_vad/data/silero_vad.onnx
+SHA-256: 1a153a22f4509e292a94e67d6f9b85e8deb25b4988682b7e174c65279d8788e3
+License: SILERO-VAD-PINNED-MIT.txt
+Runtime: ONNX Runtime Android 1.23.2 (Microsoft, MIT); included ONNX Runtime license and third-party notices apply.

@@ -2,7 +2,7 @@ package app.guidecast.transmitter
 
 import java.util.ArrayDeque
 
-internal enum class GeminiManualSealReason { NONE, EXPLICIT_SEAL, MAX_DURATION, QUIET, INPUT_EOF }
+internal enum class GeminiManualSealReason { NONE, EXPLICIT_SEAL, MAX_DURATION, QUIET, INPUT_EOF, INPUT_PAUSE }
 
 /** Half-open byte ranges refer to accepted PCM, including subsequently suppressed idle bytes.
  * Ingress times bound Flow delivery, not physical microphone capture. -1 means unobserved.
