@@ -9,7 +9,7 @@ import org.json.JSONObject
 /** Portable preferences only; never credentials, live session identifiers or hardware handles. */
 data class OperatorOptions(
     val sourceLanguageTag: String = DEFAULT_SOURCE_LANGUAGE_TAG,
-    val targetLanguageTags: List<String> = listOf("en", "ja", "zh", "zh-TW", "vi"),
+    val targetLanguageTags: List<String> = listOf("en"),
     val translationEnabled: Boolean = true,
     val useGemma: Boolean = true,
     val selectiveRefinement: Boolean = false,
@@ -29,7 +29,7 @@ data class OperatorOptions(
             val targets = row.optJSONArray("targets")?.let { array ->
                 require(array.length() <= 100) { "Too many language preferences" }
                 (0 until array.length()).map { array.getString(it) }.filter { it in allowed }.distinct().take(7)
-            } ?: listOf("en", "ja", "zh", "zh-TW", "vi").filter { it in allowed }
+            } ?: listOf("en").filter { it in allowed }
             val gemma = row.optBoolean("gemma", true)
             return OperatorOptions(source, targets, row.optBoolean("translation", true), gemma,
                 row.optBoolean("refinement", false) && gemma,

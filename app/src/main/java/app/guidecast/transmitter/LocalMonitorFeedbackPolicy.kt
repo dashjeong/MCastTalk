@@ -23,6 +23,7 @@ internal object LocalMonitorFeedbackPolicy {
         input: AudioInputDevice?,
         inputActive: Boolean,
         output: LocalMonitorRoute,
+        interpretationAllowed: Boolean = false,
     ): LocalMonitorFeedbackDecision {
         if (!inputActive || input == null) return LocalMonitorFeedbackDecision(mayRender = true)
         if (output.kind == AudioOutputKind.UNKNOWN) {
@@ -32,7 +33,7 @@ internal object LocalMonitorFeedbackPolicy {
             )
         }
         if (input.kind == AudioInputKind.BUILT_IN &&
-            output.kind == AudioOutputKind.BUILT_IN_SPEAKER
+            output.kind == AudioOutputKind.BUILT_IN_SPEAKER && !interpretationAllowed
         ) {
             return LocalMonitorFeedbackDecision(
                 mayRender = false,

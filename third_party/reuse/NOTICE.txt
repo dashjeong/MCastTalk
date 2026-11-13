@@ -1,0 +1,17 @@
+MCastTalk RE-USE research harness, 2026.
+
+The native port uses reuse-rs by altunenes, revision
+88638f3e137848a50d6aca6906530ed2b2b72acc, under Apache License 2.0.
+MCastTalk's JNI adapter, model verification, evaluator and bounded STT-copy
+controller are additions; the upstream inference implementation is unmodified.
+Full dependency license texts accompany this research package.
+
+NVIDIA Real-time_RE-USE model weights are NOT included, downloaded automatically,
+or licensed by the application's source-code license. They have separate NVIDIA
+noncommercial research and educational use restrictions. Read NVIDIA-NSCL.txt
+and the original model terms before manually obtaining or using those weights.
+The fixed model revision/hash is recorded in provenance.json.
+
+This is not the noncausal NVIDIA NemotronLabs RE-USE model. No claim of improved
+transcription or certified Android realtime operation follows from compilation.
+The public MCastTalk app keeps its current RNNoise/device processing options.

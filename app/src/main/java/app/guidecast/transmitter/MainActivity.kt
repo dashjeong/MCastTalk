@@ -35,6 +35,8 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -91,6 +93,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
@@ -147,6 +151,8 @@ import com.google.zxing.MultiFormatWriter
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
@@ -192,11 +198,29 @@ class MainActivity : ComponentActivity() {
                 var inputConsentPending by remember { mutableStateOf(false) }
                 val playbackConsentGate = remember { PlaybackConsentGate() }
                 var deniedInputPermission by rememberSaveable { mutableStateOf<String?>(null) }
+                var pendingPermissionAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+                val permissionGate = remember { UiPermissionGate() }
+                fun permissionIdentity(): UiActionIdentity {
+                    val runtime = (application as GuideCastApplication).broadcastRuntime
+                    val input = viewModel.uiState.value
+                    return UiActionIdentity(runtime.state.value.recordingId, runtime.inputRequestEpoch,
+                        input.selectedDevice?.platformId, input.selectedPlaybackTarget?.packageName)
+                }
+                fun cancelNavigationPermissions() {
+                    permissionGate.cancel()
+                    pendingPermissionAction = null
+                    playbackConsentGate.cancel()
+                    inputConsentPending = false
+                }
                 val permissionLauncher = rememberLauncherForActivityResult(
                     ActivityResultContracts.RequestMultiplePermissions(),
                 ) { granted ->
                     permissions = context.inputPermissionState()
                     viewModel.refresh()
+                    val action = pendingPermissionAction
+                    pendingPermissionAction = null
+                    val currentRequest = permissionGate.consume(permissionIdentity())
+                    if (currentRequest && granted.isNotEmpty() && granted.values.all { it }) action?.invoke()
                     deniedInputPermission = buildList {
                         if (granted[Manifest.permission.RECORD_AUDIO] == false) add("마이크")
                         if (granted[Manifest.permission.BLUETOOTH_CONNECT] == false) add("Bluetooth 마이크")
@@ -251,6 +275,36 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                fun startInputWithPermission() {
+                    permissions = context.inputPermissionState()
+                    if (!permissions.recordAudioGranted) {
+                        if (!permissionGate.begin(permissionIdentity())) return
+                        pendingPermissionAction = ::startInputWithPermission
+                        permissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
+                    } else if (state.selectedDevice?.kind == AudioInputKind.DEVICE_PLAYBACK && !projectionRequestPending) {
+                        if (viewModel.preparePlaybackTarget()) {
+                            projectionRequestPending = true
+                            inputConsentPending = true
+                            val currentInput = viewModel.uiState.value
+                            playbackConsentGate.begin(currentInput.selectedDevice?.platformId,
+                                currentInput.selectedPlaybackTarget?.packageName,
+                                (application as GuideCastApplication).broadcastRuntime.inputRequestEpoch)
+                            try {
+                                val manager = context.getSystemService(MediaProjectionManager::class.java)
+                                projectionLauncher.launch(manager.createGuideCastCaptureIntent())
+                            } catch (_: RuntimeException) {
+                                projectionRequestPending = false
+                                inputConsentPending = false
+                                playbackConsentGate.cancel()
+                                playbackConsentGate.consume(null, null)
+                                viewModel.reportProjectionDenied()
+                            }
+                        }
+                    } else if (state.selectedDevice?.kind != AudioInputKind.DEVICE_PLAYBACK) {
+                        viewModel.startInput()
+                    }
+                }
+
                 GuideCastScreen(
                     fileViewModel = fileViewModel,
                     voiceNoteViewModel = voiceNoteViewModel,
@@ -260,7 +314,19 @@ class MainActivity : ComponentActivity() {
                     gemmaState = gemmaState,
                     transcriptArchive = transcriptArchive,
                     permissions = permissions,
-                    onRequestPermissions = { requested -> permissionLauncher.launch(requested) },
+                    onRequestPermissions = { requested ->
+                        if (permissionGate.begin(permissionIdentity())) {
+                            pendingPermissionAction = null
+                            permissionLauncher.launch(requested)
+                        }
+                    },
+                    onRequestPermissionAction = { requested, onGranted ->
+                        if (permissionGate.begin(permissionIdentity())) {
+                            pendingPermissionAction = onGranted
+                            permissionLauncher.launch(requested)
+                        }
+                    },
+                    onNavigate = ::cancelNavigationPermissions,
                     onSelectAutomatic = viewModel::useAutomaticSelection,
                     onSelectDevice = viewModel::selectDevice,
                     onSelectPlaybackTarget = viewModel::selectPlaybackTarget,
@@ -273,6 +339,7 @@ class MainActivity : ComponentActivity() {
                     onPrepareTranslationModels = viewModel::prepareSelectedTranslationModels,
                     onSelectSpeechVoice = viewModel::selectSpeechVoice,
                     onRecheckSpeechVoices = viewModel::recheckInstalledSpeechVoices,
+                    onRecheckSpeechBeforeStart = viewModel::recheckInstalledSpeechVoicesBeforeStart,
                     onCancelModelPreparation = viewModel::cancelModelPreparation,
                     onRemoveTranslationModel = viewModel::removeTranslationModel,
                     onSetTranslationBroadcastEnabled = viewModel::setTranslationBroadcastEnabled,
@@ -289,40 +356,14 @@ class MainActivity : ComponentActivity() {
                             arrayOf("application/octet-stream", "application/*", "*/*"),
                         )
                     },
-                    onStartInput = {
-                        permissions = context.inputPermissionState()
-                        if (!permissions.recordAudioGranted) {
-                            permissionLauncher.launch(arrayOf(Manifest.permission.RECORD_AUDIO))
-                        } else if (state.selectedDevice?.kind == AudioInputKind.DEVICE_PLAYBACK && !projectionRequestPending) {
-                            if (viewModel.preparePlaybackTarget()) {
-                                projectionRequestPending = true
-                                inputConsentPending = true
-                                val currentInput = viewModel.uiState.value
-                                playbackConsentGate.begin(currentInput.selectedDevice?.platformId,
-                                    currentInput.selectedPlaybackTarget?.packageName,
-                                    (application as GuideCastApplication).broadcastRuntime.inputRequestEpoch)
-                                try {
-                                    val manager = context.getSystemService(MediaProjectionManager::class.java)
-                                    projectionLauncher.launch(manager.createGuideCastCaptureIntent())
-                                } catch (_: RuntimeException) {
-                                    projectionRequestPending = false
-                                    inputConsentPending = false
-                                    playbackConsentGate.cancel()
-                                    playbackConsentGate.consume(null, null)
-                                    viewModel.reportProjectionDenied()
-                                }
-                            }
-                        } else if (state.selectedDevice?.kind != AudioInputKind.DEVICE_PLAYBACK) {
-                            viewModel.startInput()
-                        }
-                    },
+                    onStartInput = ::startInputWithPermission,
                     onPauseInput = {
-                        playbackConsentGate.cancel(); inputConsentPending = false
+                        cancelNavigationPermissions()
                         viewModel.pauseInput()
                     },
                     onResumeInput = viewModel::resumeInput,
                     onStopInput = {
-                        playbackConsentGate.cancel(); inputConsentPending = false
+                        cancelNavigationPermissions()
                         viewModel.stopInput()
                     },
                     onStartTranslationTest = viewModel::startTranslationTest,
@@ -335,7 +376,7 @@ class MainActivity : ComponentActivity() {
                     onPauseBroadcast = viewModel::pauseBroadcast,
                     onResumeBroadcast = viewModel::resumeBroadcast,
                     onStopBroadcast = {
-                        playbackConsentGate.cancel(); inputConsentPending = false
+                        cancelNavigationPermissions()
                         viewModel.stopBroadcast()
                     },
                     onPlayTestTone = viewModel::playTestTone,
@@ -375,6 +416,7 @@ private fun GuideCastScreen(
     transcriptArchive: TranscriptArchiveSnapshot,
     permissions: InputPermissionState,
     onRequestPermissions: (Array<String>) -> Unit,
+    onRequestPermissionAction: (Array<String>, () -> Unit) -> Unit = { perms, _ -> onRequestPermissions(perms) },
     onSelectAutomatic: () -> Unit,
     onSelectDevice: (Int) -> Unit,
     onSelectPlaybackTarget: (String) -> Unit,
@@ -387,6 +429,7 @@ private fun GuideCastScreen(
     onPrepareTranslationModels: () -> Unit,
     onSelectSpeechVoice: (String, SpeechVoicePreference) -> Unit,
     onRecheckSpeechVoices: () -> Unit = {},
+    onRecheckSpeechBeforeStart: suspend () -> Unit = {},
     onCancelModelPreparation: () -> Unit,
     onRemoveTranslationModel: (String) -> Unit,
     onSetTranslationBroadcastEnabled: (Boolean) -> Unit,
@@ -419,12 +462,29 @@ private fun GuideCastScreen(
     onLocalMonitorVolume: (Float) -> Unit,
     onStartRelay: () -> Unit = {},
     inputRequestPending: Boolean = false,
+    onNavigate: () -> Unit = {},
 ) {
     var section by rememberSaveable { mutableStateOf(GuideCastSection.BROADCAST) }
-    var voiceNoteDestination by rememberSaveable { mutableStateOf<GuideCastSection?>(null) }
-    var voiceNoteSavingForNavigation by rememberSaveable { mutableStateOf(false) }
-    var service by rememberSaveable { mutableStateOf<MCastService?>(null) }
+    var service by rememberSaveable { mutableStateOf<MCastService?>(MCastService.MULTILINGUAL) }
+    var selectedTab by rememberSaveable { mutableStateOf(MainTab.BROADCAST) }
+    var broadcastService by rememberSaveable { mutableStateOf(MCastService.MULTILINGUAL) }
+    var navigationLeaveGuard by remember { mutableStateOf<NavigationLeaveGuard?>(null) }
+    val registerNavigationLeaveGuard: (NavigationLeaveGuard?) -> Unit = remember {
+        { guard -> navigationLeaveGuard = guard }
+    }
+    var pendingBroadcastStart by remember { mutableStateOf(false) }
+    var previousStartRecording by remember { mutableStateOf<String?>(null) }
+    var pendingMonitorRecording by remember { mutableStateOf<String?>(null) }
+    var endingBroadcast by remember { mutableStateOf<BroadcastSnapshot?>(null) }
+    var endingInputEpoch by remember { mutableStateOf(-1L) }
+    fun requestNavigation(action: () -> Unit) {
+        pendingBroadcastStart = false; pendingMonitorRecording = null
+        onNavigate()
+        val guard = navigationLeaveGuard
+        if (guard == null) action() else guard(action)
+    }
     var showCommonSettings by rememberSaveable { mutableStateOf(false) }
+    var commonSettingsPage by rememberSaveable { mutableStateOf<String?>(null) }
     var menuSettingsProfile by rememberSaveable { mutableStateOf<ServiceMenuProfile?>(null) }
     var showHistorySettings by rememberSaveable { mutableStateOf(false) }
     val serviceScreens = rememberSaveableStateHolder()
@@ -442,7 +502,10 @@ private fun GuideCastScreen(
     var streamApiItem by rememberSaveable { mutableStateOf<String?>(null) }
     var streamSetupMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var relaySettingsRequest by rememberSaveable { mutableStateOf(0) }
+    var relaySettingsItem by rememberSaveable { mutableStateOf<RelaySetupItem?>(null) }
+    var relaySettingsApiItem by rememberSaveable { mutableStateOf<String?>(null) }
     var showServiceStatus by rememberSaveable { mutableStateOf(false) }
+    var showBroadcastQr by rememberSaveable { mutableStateOf(false) }
     var streamDisplayTargets by rememberSaveable { mutableStateOf<ArrayList<String>?>(null) }
     var streamDisplaySource by rememberSaveable { mutableStateOf(true) }
     var relayHudDisplayTargets by rememberSaveable { mutableStateOf<ArrayList<String>?>(null) }
@@ -483,7 +546,6 @@ private fun GuideCastScreen(
         GuideCastSection.MODELS -> settingsListState
     }
     BackHandler(enabled = showLicenses) { showLicenses = false }
-    BackHandler(enabled = showCommonSettings) { showCommonSettings = false }
     BackHandler(enabled = menuSettingsProfile != null) { menuSettingsProfile = null }
     BackHandler(enabled = showGlossary) { closeCommonTool() }
     BackHandler(enabled = showSpeechCorrections) { showSpeechCorrections = false }
@@ -499,26 +561,92 @@ private fun GuideCastScreen(
     val broadcastActive = broadcast.phase == BroadcastPhase.STARTING ||
         broadcast.phase == BroadcastPhase.LIVE ||
         broadcast.phase == BroadcastPhase.PAUSED || broadcastCleanupPending
-    DisposableEffect(app, service, section, showFileTranslation) {
-        app.translationWorkspaceActive.value = service !in setOf(MCastService.RELAY, MCastService.HISTORY) && !broadcast.isInterpreterRelay && !showFileTranslation &&
-            (service in setOf(MCastService.VOICE, MCastService.MULTILINGUAL) || section != GuideCastSection.BROADCAST)
+    val streamingWorkActive = !broadcast.isInterpreterRelay && (inputActive || inputCapturing || broadcastActive ||
+        broadcast.translationTestActive || broadcast.inputDraining || broadcast.broadcastFinishing)
+    val prepareStreamingWorkspace = streamingWorkActive ||
+        (!broadcast.isInterpreterRelay && broadcastService in setOf(MCastService.VOICE, MCastService.MULTILINGUAL))
+    DisposableEffect(app, prepareStreamingWorkspace) {
+        app.translationWorkspaceActive.value = prepareStreamingWorkspace
         onDispose { app.translationWorkspaceActive.value = false }
     }
     val voiceNoteState by voiceNoteViewModel.state.collectAsStateWithLifecycle()
     val recognitionConnection by app.speechRecognitionEngine.status.collectAsStateWithLifecycle()
     val operatorOptions by app.operatorSettings.state.collectAsStateWithLifecycle()
     val apiOptions by app.translationApiSettings.state.collectAsStateWithLifecycle()
+    val favoritesStore = remember(app) { BroadcastFavorites(app) }
+    var favoriteLoading by remember { mutableStateOf(false) }
+    var recheckingStartVoices by remember { mutableStateOf(false) }
+    val favoriteScope = rememberCoroutineScope()
+    val latestFavoriteModels by rememberUpdatedState(translationModels)
+    val latestFavoriteInput by rememberUpdatedState(state)
     val relayOptions by app.interpreterRelaySettings.state.collectAsStateWithLifecycle()
     val menuWebBroadcast by app.menuBroadcast.state.collectAsStateWithLifecycle()
+    var outputChoice by rememberSaveable { mutableStateOf(BroadcastOutput.LISTENERS) }
+    var speakerSound by rememberSaveable { mutableStateOf("en") }
+    val phoneSpeaker = availableBroadcastOutput(outputChoice) == BroadcastOutput.PHONE
+    LaunchedEffect(broadcast.localInterpretationEnabled) {
+        if (!PHONE_SPEAKER_OPTION_ENABLED) {
+            outputChoice = availableBroadcastOutput(outputChoice)
+            if (broadcast.localInterpretationEnabled) BroadcastService.setLocalInterpretationEnabled(app, false)
+        }
+    }
+    val speakerOutput = broadcastSpeakerOutput(state.selectedDevice,
+        state.availableOutputDevices.map { it.toLocalMonitorRoute() }, phoneSpeaker, speakerSound,
+        translationModels.selectedLanguageTags.size, apiOptions.usesNativeLiveAudio)
+    fun selectPhoneLanguage(tag: String) {
+        if (tag == "source" || tag == translationModels.selectedSourceLanguageTag) return
+        translationModels.selectedLanguageTags.filter { it != tag }.forEach(onToggleTranslationLanguage)
+        if (tag !in translationModels.selectedLanguageTags) onToggleTranslationLanguage(tag)
+        speakerSound = tag
+        onSetTranslationBroadcastEnabled(true)
+    }
+    LaunchedEffect(phoneSpeaker, translationModels, apiOptions.revision) {
+        if (phoneSpeaker && !broadcastActive && !inputActive &&
+            translationModels.selectedLanguageTags.size == 1 && !translationModels.broadcastTranslationEnabled &&
+            phoneSpeakerPreparation(apiOptions, translationModels) == null) {
+            onSetTranslationBroadcastEnabled(true)
+        }
+    }
+    LaunchedEffect(apiOptions.usesNativeLiveAudio) {
+        if (apiOptions.usesNativeLiveAudio && phoneSpeaker && !broadcastActive && !inputActive) {
+            outputChoice = BroadcastOutput.LISTENERS
+            BroadcastService.setLocalInterpretationEnabled(app, false)
+        }
+    }
+    LaunchedEffect(apiOptions.usesNativeLiveAudio, selectedTab, broadcastActive, inputActive) {
+        if (selectedTab == MainTab.BROADCAST && section == GuideCastSection.BROADCAST &&
+            !broadcastActive && !inputActive && !pendingBroadcastStart &&
+            service in setOf(MCastService.MULTILINGUAL, MCastService.VOICE, MCastService.RELAY)) {
+            val chosen = if (apiOptions.usesNativeLiveAudio) MCastService.RELAY else MCastService.MULTILINGUAL
+            service = chosen; broadcastService = chosen
+        }
+    }
+    LaunchedEffect(translationModels.selectedLanguageTags) {
+        if (!broadcastActive && speakerSound != "source" && speakerSound !in translationModels.selectedLanguageTags)
+            speakerSound = translationModels.selectedLanguageTags.firstOrNull() ?: "source"
+    }
     fun openStreamingSettings(item: String, message: String? = null) {
+        onNavigate()
+        showCommonSettings = false
+        selectedTab = MainTab.SETTINGS
         showServiceStatus = false
         streamSetupMessage = message
         streamApiItem = item.takeIf { it in setOf("key", "model", "service", "consent") }
         streamSettingsDetail = item.takeIf { it in setOf("input", "output", "overview") }
-        settingsCategory = if (streamApiItem != null) SettingsCategory.MODELS else SettingsCategory.LANGUAGES
+        settingsCategory = when {
+            item == "materials" || item == "tools" -> SettingsCategory.TOOLS
+            streamApiItem != null -> SettingsCategory.MODELS
+            else -> SettingsCategory.LANGUAGES
+        }
         section = GuideCastSection.MODELS
         sectionTopRequest += 1
         if (item == "languages" && message != null) streamTargetPicker = true
+    }
+    fun openInputSettings() {
+        requestNavigation {
+            selectedTab = MainTab.SETTINGS; showCommonSettings = true; commonSettingsPage = "input"
+            showServiceStatus = false; menuSettingsProfile = null
+        }
     }
     fun streamingStartReady(ignorePreparation: Boolean = false): Boolean {
         if (app.menuBroadcast.state.value.isActive) {
@@ -542,9 +670,12 @@ private fun GuideCastScreen(
             openStreamingSettings("input", "입력 장치와 사용할 앱을 선택해 주세요.")
             return false
         }
-        if (!inputCapturing && !permissions.canStartInput(state.selectedDevice?.kind)) {
-            onRequestPermissions(if (!permissions.recordAudioGranted) arrayOf(Manifest.permission.RECORD_AUDIO)
-                else arrayOf(Manifest.permission.BLUETOOTH_CONNECT))
+        val currentPermissions = app.inputPermissionState()
+        if (!inputCapturing && !currentPermissions.canStartInput(state.selectedDevice?.kind)) {
+            onRequestPermissionAction(if (!currentPermissions.recordAudioGranted) arrayOf(Manifest.permission.RECORD_AUDIO)
+                else arrayOf(Manifest.permission.BLUETOOTH_CONNECT), {
+                    if (streamingStartReady(ignorePreparation)) onStartInput()
+                })
             return false
         }
         if (!broadcastActive && runMode == BroadcastRunMode.NETWORK &&
@@ -560,11 +691,55 @@ private fun GuideCastScreen(
     fun dispatchOperatingStart(mode: OperatorAccessMode, pin: CharArray?, speakerPin: CharArray?, requestedMode: BroadcastRunMode) {
         onStartBroadcast(mode, pin, speakerPin, requestedMode)
     }
-    fun startStreamingBroadcast() {
-        val missing = streamingBroadcastRequiredSetting(app.translationApiSettings.state.value,
-            translationModels.broadcastTranslationEnabled)
+    fun startStreamingBroadcast(voiceRechecked: Boolean = false, checkedModels: TranslationModelUiState? = null) {
+        if (recheckingStartVoices && !voiceRechecked) return
+        if (phoneSpeaker && (state.selectedDevice?.kind != AudioInputKind.BUILT_IN || speakerOutput == null)) {
+            openStreamingSettings("input", "이 휴대폰의 마이크와 스피커를 확인해 주세요.")
+            return
+        }
+        val current = app.translationApiSettings.state.value
+        val missing = streamingRequiredSetting(current, translationModels.broadcastTranslationEnabled || phoneSpeaker,
+            translationModels.selectedLanguageTags, app.translationApiSettings.authorized(current))
         if (missing != null) {
-            openStreamingSettings(missing, "통번역 스트리밍에는 문장 번역 서비스를 선택해 주세요. Live 음성 서비스는 통역 중계에서 사용할 수 있습니다.")
+            openStreamingSettings(missing, when (missing) {
+                "key" -> "이용 키를 넣어 주세요."
+                "consent" -> "전송 동의를 확인해 주세요."
+                "languages" -> "들려줄 언어를 하나 이상 골라 주세요."
+                else -> "선택한 통역 방식의 설정을 확인해 주세요."
+            })
+            return
+        }
+        // Validate before opening a room. Caption-only admission needs a service-level control;
+        // an unavailable voice must not be presented as a guaranteed audio-off choice.
+        val startModels = checkedModels ?: translationModels
+        val advice = if (phoneSpeaker) phoneSpeakerPreparation(current, startModels)
+            else streamingPreparationAdvice(current, startModels)
+        if (!voiceRechecked && advice?.voices?.isNotEmpty() == true) {
+            recheckingStartVoices = true
+            favoriteScope.launch {
+                try {
+                    var refreshed = startModels
+                    val remaining = recheckStreamingVoicesOnce(current, startModels.copy(broadcastTranslationEnabled = true)) {
+                        onRecheckSpeechBeforeStart()
+                        val provider = app.speechSynthesisProvider
+                        latestFavoriteModels.copy(ttsStatuses = provider.statuses.value,
+                            ttsFallbackLanguageTags = provider.fallbackLanguageTags.value,
+                            ttsUnavailableLanguageReasons = provider.unavailableLanguageReasons.value).also { refreshed = it }
+                    }
+                    if (favoriteRuntimeBlocked(app) || refreshed.selectedSourceLanguageTag != startModels.selectedSourceLanguageTag ||
+                        refreshed.selectedLanguageTags != startModels.selectedLanguageTags || app.translationApiSettings.state.value != current) return@launch
+                    if (remaining != null) streamPreparationAdvice = remaining
+                    else startStreamingBroadcast(voiceRechecked = true, checkedModels = refreshed)
+                } finally { recheckingStartVoices = false }
+            }
+            return
+        }
+        if (advice != null) {
+            streamPreparationAdvice = advice
+            return
+        }
+        if (phoneSpeaker && !translationModels.broadcastTranslationEnabled) {
+            openStreamingSettings("languages", "통역 준비를 마친 뒤 언어를 다시 골라 주세요.")
             return
         }
         if (runMode == BroadcastRunMode.NETWORK && accessMode == OperatorAccessMode.PIN &&
@@ -573,33 +748,53 @@ private fun GuideCastScreen(
         else if (runMode == BroadcastRunMode.NETWORK && micPinEnabled &&
             !(micPin.length in 4..8 && micPin.all(Char::isDigit)))
             openStreamingSettings("output", "사용할 강사 마이크 PIN을 입력해 주세요.")
-        else dispatchOperatingStart(
+        else {
+            previousStartRecording = broadcast.recordingId
+            pendingBroadcastStart = true
+            dispatchOperatingStart(
             if (runMode == BroadcastRunMode.STANDALONE) OperatorAccessMode.OPEN else accessMode,
             broadcastPin.takeIf { runMode == BroadcastRunMode.NETWORK && accessMode == OperatorAccessMode.PIN }?.toCharArray(),
             micPin.takeIf { runMode == BroadcastRunMode.NETWORK && micPinEnabled }?.toCharArray(), runMode)
+        }
     }
     fun enableStreamingInput(ignorePreparation: Boolean = broadcastActive) {
         if (!streamingStartReady(ignorePreparation)) return
         onStartInput()
+    }
+    LaunchedEffect(broadcast.phase, broadcast.recordingId) {
+        if (pendingBroadcastStart && !broadcast.isInterpreterRelay) {
+            if (broadcast.phase == BroadcastPhase.LIVE && broadcast.recordingId != previousStartRecording) {
+                pendingBroadcastStart = false
+                pendingMonitorRecording = broadcast.recordingId.takeIf { outputChoice != BroadcastOutput.LISTENERS }
+                enableStreamingInput()
+            } else if (broadcast.phase == BroadcastPhase.FAILED) pendingBroadcastStart = false
+        }
+    }
+    LaunchedEffect(pendingMonitorRecording, broadcast.recordingId, broadcast.phase, broadcast.translationChannels,
+        broadcast.inputPhase, broadcast.localInterpretationEnabled, speakerOutput, speakerSound, outputChoice) {
+        val recording = pendingMonitorRecording
+        if (recording != null) {
+            if (broadcast.recordingId != recording || broadcast.phase !in setOf(BroadcastPhase.LIVE, BroadcastPhase.STARTING)) {
+                pendingMonitorRecording = null
+            } else if (broadcast.phase == BroadcastPhase.LIVE && speakerOutput?.platformId != null) {
+                val channel = if (phoneSpeaker) pendingPhoneSpeakerChannel(broadcast, recording, speakerSound)
+                    else if (speakerSound == "source") "source" else
+                        broadcast.translationChannels.firstOrNull { it.languageTag == speakerSound }?.channelId
+                if (channel != null) {
+                    pendingMonitorRecording = null
+                    onStartLocalMonitor(channel, speakerOutput.platformId)
+                }
+            }
+        }
     }
     val fileState by fileViewModel.uiState.collectAsStateWithLifecycle()
     val filePlayback by fileViewModel.playbackState.collectAsStateWithLifecycle()
     val speechPreviewAllowed = !inputActive && !broadcastActive && !broadcast.translationTestActive &&
         !voiceNoteState.recording && !voiceNoteState.busy && !voiceNoteState.playback.isPlaying &&
         !fileState.isConverting && !fileState.isLoading && filePlayback?.isPlaying != true && filePlayback?.isTranslating != true
-    val activeService = when {
-        menuWebBroadcast.isActive -> when (menuWebBroadcast.origin) {
-            MenuBroadcastOrigin.NOTES -> MCastService.NOTES
-            MenuBroadcastOrigin.FILES -> MCastService.FILES
-            MenuBroadcastOrigin.HISTORY -> MCastService.HISTORY
-            null -> null
-        }
-        inputActive || broadcastActive || broadcast.translationTestActive ->
-            if (broadcast.isInterpreterRelay) MCastService.RELAY else MCastService.MULTILINGUAL
-        voiceNoteState.recording || voiceNoteState.busy || voiceNoteState.playback.isPlaying -> MCastService.NOTES
-        fileState.isConverting || fileState.isLoading || filePlayback?.isPlaying == true || filePlayback?.isTranslating == true -> MCastService.FILES
-        else -> null
-    }
+    val activeService = activeMainService(broadcast, broadcastCleanupPending, menuWebBroadcast,
+        notesActive = voiceNoteState.recording || voiceNoteState.busy || voiceNoteState.playback.isPlaying,
+        filesActive = fileState.isConverting || fileState.isLoading || filePlayback?.isPlaying == true || filePlayback?.isTranslating == true)
     val activeWorkNotice = when (activeService) {
         MCastService.NOTES -> when {
             voiceNoteState.recording -> "음성 노트 녹음 중 · 녹음을 종료·저장한 뒤 입력·방송을 시작하세요."
@@ -614,20 +809,55 @@ private fun GuideCastScreen(
         }
         else -> null
     }
-    val selectService: (MCastService) -> Unit = { selected ->
+    fun applyService(selected: MCastService) {
         val destination = if (selected == MCastService.VOICE) MCastService.MULTILINGUAL else selected
         section = GuideCastSection.BROADCAST
         showCommonSettings = false; menuSettingsProfile = null; showHistorySettings = false; showServiceStatus = false
+        commonSettingsPage = null
         showLicenses = false; showGlossary = false; showSpeechCorrections = false; showDomainCorpus = false; returnToCommonTools = false
         showAssistant = false; showDataTransfer = false; showSentenceMemory = false
         showDeveloperLab = false; showFileTranslation = false; showLiveHud = false; showLiveTranscript = false
+        streamApiItem = null; streamSettingsDetail = null; streamSetupMessage = null
+        streamTargetPicker = false; streamPreparationAdvice = null
         service = destination
+        selectedTab = if (destination in setOf(MCastService.HISTORY, MCastService.NOTES, MCastService.FILES))
+            MainTab.RECORDS else MainTab.BROADCAST
+        if (selectedTab == MainTab.BROADCAST) broadcastService = destination
     }
-    BackHandler(enabled = !serviceDrawerOpenOrOpening && (service != null || section != GuideCastSection.BROADCAST) &&
+    val selectService: (MCastService) -> Unit = { selected -> requestNavigation { applyService(selected) } }
+    val selectTab: (MainTab) -> Unit = { tab ->
+      requestNavigation {
+        when (tab) {
+            MainTab.BROADCAST -> applyService(activeService?.takeIf {
+                it in setOf(MCastService.MULTILINGUAL, MCastService.RELAY)
+            } ?: if (apiOptions.usesNativeLiveAudio) MCastService.RELAY else MCastService.MULTILINGUAL)
+            MainTab.RECORDS -> { applyService(MCastService.HISTORY); service = null }
+            MainTab.SETTINGS -> { applyService(broadcastService); showCommonSettings = true; selectedTab = tab }
+        }
+      }
+    }
+    fun closeRecordService() {
+        onNavigate()
+        service = null; selectedTab = MainTab.RECORDS; section = GuideCastSection.BROADCAST
+    }
+    BackHandler(enabled = showCommonSettings) {
+        if (commonSettingsPage != null) commonSettingsPage = null else selectTab(MainTab.BROADCAST)
+    }
+    BackHandler(enabled = !serviceDrawerOpenOrOpening &&
+        (selectedTab != MainTab.BROADCAST || service !in setOf(MCastService.VOICE, MCastService.MULTILINGUAL) || section != GuideCastSection.BROADCAST) &&
         !showLicenses && !showGlossary && !showSpeechCorrections && !showDomainCorpus && !showAssistant &&
         !showDataTransfer && !showSentenceMemory && !showDeveloperLab && !showFileTranslation && !showLiveHud && !showLiveTranscript &&
         !showCommonSettings && menuSettingsProfile == null && !showServiceStatus) {
-        if (section != GuideCastSection.BROADCAST) section = GuideCastSection.BROADCAST else service = null
+        when {
+            selectedTab == MainTab.SETTINGS && section in setOf(GuideCastSection.MODELS, GuideCastSection.TEST) -> selectTab(MainTab.SETTINGS)
+            section == GuideCastSection.MODELS && (streamApiItem != null || streamSettingsDetail != null) -> {
+                streamApiItem = null; streamSettingsDetail = null; streamSetupMessage = null
+            }
+            section != GuideCastSection.BROADCAST -> selectTab(selectedTab)
+            selectedTab == MainTab.RECORDS && service != null -> closeRecordService()
+            selectedTab != MainTab.BROADCAST -> selectTab(MainTab.BROADCAST)
+            else -> selectService(MCastService.MULTILINGUAL)
+        }
     }
     val effectiveAccessMode = if (broadcastActive) {
         broadcast.accessMode ?: accessMode
@@ -635,20 +865,19 @@ private fun GuideCastScreen(
         accessMode
     }
     fun navigateSection(destination: GuideCastSection) {
+      requestNavigation {
         showServiceStatus = false; menuSettingsProfile = null; showHistorySettings = false
         showLicenses = false; showGlossary = false; showSpeechCorrections = false; showDomainCorpus = false; returnToCommonTools = false
         showAssistant = false; showDataTransfer = false; showSentenceMemory = false; showDeveloperLab = false; showFileTranslation = false
         streamApiItem = null; streamSettingsDetail = null; streamSetupMessage = null
-        if (destination == GuideCastSection.MODELS) showCommonSettings = true
-        else section = destination
+        selectedTab = if (destination == GuideCastSection.MODELS) MainTab.SETTINGS else MainTab.BROADCAST
+        showCommonSettings = destination == GuideCastSection.MODELS
+        section = destination
         sectionTopRequest += 1
+      }
     }
-    LaunchedEffect(voiceNoteSavingForNavigation, voiceNoteState.recording, voiceNoteState.busy) {
-        if (voiceNoteSavingForNavigation && !voiceNoteState.recording && !voiceNoteState.busy) {
-            if (voiceNoteState.selected != null) voiceNoteDestination?.let(::navigateSection)
-            voiceNoteDestination = null
-            voiceNoteSavingForNavigation = false
-        }
+    LaunchedEffect(selectedTab, service, section, showLiveHud, showLiveTranscript) {
+        onNavigate()
     }
     LaunchedEffect(section, sectionTopRequest) {
         currentListState.scrollToItem(0)
@@ -659,6 +888,126 @@ private fun GuideCastScreen(
     LaunchedEffect(developerInfo) { if (!developerInfo) showDeveloperLab = false }
     LaunchedEffect(operatorOptions.runMode, broadcastActive) {
         if (!broadcastActive) runMode = operatorOptions.runMode
+    }
+    val latestFavoriteBlocked by rememberUpdatedState(activeService != null || inputCapturing ||
+        broadcast.inputDraining || broadcast.broadcastFinishing)
+    val renderStartScreen: @Composable (() -> Unit) -> Unit = { start ->
+        val native = apiOptions.usesNativeLiveAudio
+        val selectedTargets = if (native) relayOptions.targetLanguageTags else translationModels.selectedLanguageTags.toList()
+        val choices = if (native) nativeRelayTargetLanguageOptions(relayOptions.source).map { it.languageTag to it.label.substringBefore(" ·") }
+            else translationModels.options.map { it.languageTag to it.label.substringBefore(" ·") }
+        val sourceTag = if (native) relayOptions.source else translationModels.selectedSourceLanguageTag
+        val online = apiOptions.provider != TranslationApiProvider.LOCAL
+        val canChange = activeService == null && !inputCapturing && !broadcast.inputDraining && !broadcast.broadcastFinishing && !favoriteLoading
+        val favoriteSetup = BroadcastFavoriteSetup(source = sourceTag, targets = selectedTargets,
+            service = FavoriteTranslationService.from(apiOptions), output = availableBroadcastOutput(outputChoice),
+            speakerSound = if (native) relayOptions.target else speakerSound, inputKind = state.selectedDevice?.kind,
+            voices = selectedFavoriteVoices(selectedTargets, translationModels.voicePreferences), tone = apiOptions.tone,
+            useGemma = translationModels.useGemma, speechEnabled = translationModels.broadcastTranslationEnabled,
+            briefing = app.interpretationBriefingSettings.state.value)
+        BroadcastStartScreen(online, native, canChange,
+            sourceTag to sourceTag.sourceLanguageDisplayName(),
+            (if (native) NATIVE_RELAY_SOURCE_LANGUAGE_OPTIONS else SOURCE_LANGUAGE_OPTIONS).map { it.languageTag to it.label.substringBefore(" ·") },
+            selectedTargets.map { tag -> tag to (choices.firstOrNull { it.first == tag }?.second ?: tag) }, choices,
+            if (native) MAX_RELAY_LANGUAGES else MAX_SIMULTANEOUS_TRANSLATION_LANGUAGES,
+            availableBroadcastOutput(outputChoice), if (native) relayOptions.target else speakerSound,
+            speakerOutput?.label, when { !apiOptions.hasKey -> "이용 키를 넣어 주세요";
+                !app.translationApiSettings.authorized(apiOptions) || (native && !apiOptions.allowLiveAudio) -> "전송 동의를 확인해 주세요"; else -> null },
+            inputLabel = if (state.selectedDevice?.kind == AudioInputKind.DEVICE_PLAYBACK)
+                "기기 출력 · ${state.selectedPlaybackTarget?.label ?: "앱 선택"}" else state.selectedDevice?.label ?: "마이크 선택",
+            onInputSettings = ::openInputSettings,
+            favorites = {
+                BroadcastFavoritesStrip(favoritesStore, favoriteSetup, canChange && !broadcastActive && !translationModels.isBusy,
+                    loading = favoriteLoading,
+                    onNotice = { Toast.makeText(app, it, Toast.LENGTH_LONG).show() }, onApply = { favorite ->
+                      if (!favoriteLoading) {
+                        favoriteLoading = true
+                        favoriteScope.launch {
+                        try {
+                        val result = applyBroadcastFavorite(app, favoriteSetup, favorite.setup,
+                            { latestFavoriteModels }, { latestFavoriteInput }, { latestFavoriteBlocked },
+                            { source -> withTimeoutOrNull(30_000L) {
+                                snapshotFlow { latestFavoriteModels }.first { it.selectedSourceLanguageTag == source && !it.isBusy }
+                            } != null },
+                            onSelectSourceLanguage, onClearTranslationLanguages, onToggleTranslationLanguage,
+                            onSelectDevice, onSelectSpeechVoice, onSetUseGemma, onSetTranslationBroadcastEnabled)
+                        if (result.applied) {
+                            outputChoice = result.setup.output
+                            speakerSound = result.setup.speakerSound
+                            runMode = if (outputChoice == BroadcastOutput.SPEAKER && speakerOutput != null)
+                                BroadcastRunMode.STANDALONE else BroadcastRunMode.NETWORK
+                            app.operatorSettings.setRunMode(runMode)
+                            val loadedNative = app.translationApiSettings.state.value.usesNativeLiveAudio
+                            if (loadedNative) app.interpreterRelaySettings.update(app.interpreterRelaySettings.state.value.copy(
+                                localPlayback = outputChoice != BroadcastOutput.LISTENERS && speakerOutput != null,
+                                networkBroadcast = outputChoice != BroadcastOutput.SPEAKER || speakerOutput == null))
+                            applyService(if (loadedNative) MCastService.RELAY else MCastService.MULTILINGUAL)
+                        }
+                        Toast.makeText(app, result.notice, Toast.LENGTH_LONG).show()
+                        } finally { favoriteLoading = false }
+                        }
+                      }
+                    })
+            },
+            broadcastTitle = relayOptions.broadcastTitle.takeIf { native },
+            onBroadcastTitleChange = { title ->
+                app.interpreterRelaySettings.update(app.interpreterRelaySettings.state.value.copy(broadcastTitle = title))
+            },
+            onMode = { useOnline ->
+                if (canChange) {
+                    if (useOnline) app.translationApiSettings.restoreOnlineSelection()
+                    else app.translationApiSettings.configure(apiOptions.copy(provider = TranslationApiProvider.LOCAL))
+                    applyService(if (app.translationApiSettings.state.value.usesNativeLiveAudio) MCastService.RELAY else MCastService.MULTILINGUAL)
+                }
+            },
+            onSource = { tag -> if (native) app.interpreterRelaySettings.update(relayOptions.withSource(tag)) else onSelectSourceLanguage(tag) },
+            onTarget = { tag ->
+                if (native) app.interpreterRelaySettings.update(relayOptions.withTargets(
+                    if (tag in selectedTargets) selectedTargets - tag else selectedTargets + tag))
+                else if (phoneSpeaker) selectPhoneLanguage(tag)
+                else onToggleTranslationLanguage(tag)
+            },
+            onOutput = { requestedChoice ->
+                val choice = availableBroadcastOutput(requestedChoice)
+                if (choice == BroadcastOutput.PHONE && !native) {
+                    state.availableDevices.firstOrNull { it.kind == AudioInputKind.BUILT_IN }?.let { onSelectDevice(it.platformId) }
+                    val tag = speakerSound.takeIf { it != "source" && it in selectedTargets }
+                        ?: selectedTargets.firstOrNull()
+                        ?: choices.firstOrNull { it.first == "en" && it.first != sourceTag }?.first
+                        ?: choices.firstOrNull { it.first != sourceTag }?.first
+                    tag?.let(::selectPhoneLanguage)
+                }
+                BroadcastService.setLocalInterpretationEnabled(app, choice == BroadcastOutput.PHONE && !native)
+                outputChoice = choice
+                runMode = if (choice == BroadcastOutput.PHONE || (choice == BroadcastOutput.SPEAKER && speakerOutput != null))
+                    BroadcastRunMode.STANDALONE else BroadcastRunMode.NETWORK
+                app.operatorSettings.setRunMode(runMode)
+                if (native) app.interpreterRelaySettings.update(relayOptions.copy(
+                    localPlayback = choice != BroadcastOutput.LISTENERS && speakerOutput != null,
+                    networkBroadcast = choice != BroadcastOutput.SPEAKER || speakerOutput == null))
+            },
+            onSpeakerSound = { tag -> if (native) app.interpreterRelaySettings.update(relayOptions.copy(target = tag))
+                else if (phoneSpeaker) selectPhoneLanguage(tag) else speakerSound = tag },
+            onOnlineSettings = {
+                if (native) {
+                    relaySettingsItem = if (!apiOptions.hasKey) RelaySetupItem.KEY else RelaySetupItem.SERVICE
+                    relaySettingsApiItem = if (!apiOptions.hasKey) "key" else "consent"
+                    relaySettingsRequest += 1
+                }
+                else openStreamingSettings(if (!apiOptions.hasKey) "key" else "consent")
+            }, onStart = {
+                if (canChange) {
+                    // Re-evaluate the physical route at start; retain feedback protection.
+                    BroadcastService.setLocalInterpretationEnabled(app, phoneSpeaker && !native)
+                    runMode = if (phoneSpeaker || (outputChoice == BroadcastOutput.SPEAKER && speakerOutput != null))
+                        BroadcastRunMode.STANDALONE else BroadcastRunMode.NETWORK
+                    app.operatorSettings.setRunMode(runMode)
+                    if (native) app.interpreterRelaySettings.update(relayOptions.copy(
+                        localPlayback = outputChoice != BroadcastOutput.LISTENERS && speakerOutput != null,
+                        networkBroadcast = outputChoice != BroadcastOutput.SPEAKER || speakerOutput == null))
+                    start()
+                }
+            })
     }
     val streamingWorkspace = section == GuideCastSection.BROADCAST &&
         service in setOf(MCastService.VOICE, MCastService.MULTILINGUAL) &&
@@ -672,10 +1021,11 @@ private fun GuideCastScreen(
         !showGlossary && !showSpeechCorrections && !showDomainCorpus
     val streamingBroadcast = if (broadcast.isInterpreterRelay) BroadcastSnapshot() else broadcast
     val streamingBroadcastActive = broadcastActive && !broadcast.isInterpreterRelay
-    val otherStreamingBroadcastActive = menuWebBroadcast.isActive || (broadcast.isInterpreterRelay &&
+    val otherStreamingBroadcastActive = activeService in setOf(MCastService.NOTES, MCastService.FILES, MCastService.HISTORY) || (broadcast.isInterpreterRelay &&
         (broadcastActive || inputActive || inputCapturing))
     val availableStreamDisplayTargets = translationModels.selectedLanguageTags.toList()
     val visibleStreamTargets = workspaceDisplayLanguages(availableStreamDisplayTargets, streamDisplayTargets)
+    if (showBroadcastQr) BroadcastQrScreen(broadcast, broadcastPin) { showBroadcastQr = false }
     BackHandler(enabled = showServiceStatus) { showServiceStatus = false }
     if (showLiveHud) {
         val relayHud = service == MCastService.RELAY || broadcast.isInterpreterRelay
@@ -688,7 +1038,8 @@ private fun GuideCastScreen(
                 else recognitionConnection.message.takeIf { !recognitionConnection.isReady },
             sourceLanguageTag = if (relayHud) relayOptions.source else translationModels.selectedSourceLanguageTag,
             initialShowSource = if (relayHud) relayHudDisplaySource else streamDisplaySource,
-            displayTargetFilter = if (relayHud) relayHudDisplayTargets else visibleStreamTargets)
+            displayTargetFilter = if (relayHud) relayHudDisplayTargets else visibleStreamTargets,
+            channels = broadcast.translationChannels)
         return
     }
     if (showLiveTranscript) {
@@ -701,28 +1052,46 @@ private fun GuideCastScreen(
         )
         return
     }
+    fun requestStreamingEnd() {
+        val current = app.broadcastRuntime.state.value
+        if (current.isInterpreterRelay || current.broadcastFinishing) return
+        endingBroadcast = current
+        endingInputEpoch = app.broadcastRuntime.inputRequestEpoch
+    }
+    endingBroadcast?.let { ending ->
+        fun stillMatches(current: BroadcastSnapshot) = broadcastEndRequestMatches(current, ending.recordingId,
+            ending.phase == BroadcastPhase.STARTING, endingInputEpoch, app.broadcastRuntime.inputRequestEpoch,
+            ending.phase == BroadcastPhase.FAILED, app.webBroadcastOwnership.currentOwner == "streaming",
+            expectedInterpreterRelay = false)
+        val canEnd = stillMatches(broadcast)
+        AlertDialog(onDismissRequest = { endingBroadcast = null },
+            title = { Text(if (ending.phase == BroadcastPhase.FAILED) "방송 끝내기를 다시 시도할까요?" else "방송을 끝낼까요?") },
+            text = { Text(if (!canEnd) "방송 상태가 바뀌었어요. 창을 닫고 현재 방송을 확인해 주세요."
+                else "마이크를 끄고 남은 통역을 마친 뒤 끝내요. 저장한 음성과 글은 방송 기록에서 볼 수 있어요.") },
+            confirmButton = { TextButton(enabled = canEnd, onClick = {
+                val confirmed = stillMatches(app.broadcastRuntime.state.value)
+                endingBroadcast = null
+                if (confirmed) {
+                    pendingBroadcastStart = false; pendingMonitorRecording = null
+                    onStopBroadcast()
+                }
+            }) { Text("끝내기") } },
+            dismissButton = { TextButton(onClick = { endingBroadcast = null }) { Text("취소") } })
+    }
     streamPreparationAdvice?.let { advice -> AlertDialog(
-        onDismissRequest = { streamPreparationAdvice = null }, title = { Text("통역 준비를 확인해 주세요") },
+        onDismissRequest = { streamPreparationAdvice = null }, title = { Text("방송 준비를 확인해 주세요") },
         text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (advice.recognition) Text("기기 음성인식 · ${translationModels.selectedSourceLanguage.label.substringBefore(" ·")} 준비 확인 필요")
-            if (advice.voices.isNotEmpty()) Text("기기 음성 · ${advice.voices.joinToString(", ")} 준비 확인 필요")
-            if (advice.translators.isNotEmpty()) Text("기기 번역 모델 · ${advice.translators.joinToString(", ")} 준비 확인 필요")
-            Text("방송은 시작할 수 있습니다. 준비가 끝나기 전에는 통역 음성이 나오지 않을 수 있습니다.")
+            if (advice.recognition) Text("${translationModels.selectedSourceLanguage.label.substringBefore(" ·")} 말씀을 알아들을 준비가 아직 안 됐어요. 준비 화면에서 말하는 언어를 확인해 주세요.")
+            if (advice.voices.isNotEmpty()) Text("${advice.voices.joinToString(" · ", transform = ::relayCaptionLanguageLabel)} 음성이 아직 없어요")
+            if (advice.translators.isNotEmpty()) Text("${advice.translators.joinToString(" · ", transform = ::relayCaptionLanguageLabel)} 통역에 쓸 자료를 준비해 주세요.")
+            Text("준비를 마친 뒤 방송을 시작해 주세요.")
         } },
         confirmButton = { TextButton(onClick = {
             streamPreparationAdvice = null
-            openStreamingSettings("preparation", "기기 음성인식·통역 음성을 준비한 뒤 운영 화면에서 시작해 주세요.")
+            openStreamingSettings("preparation", "선택한 언어를 준비한 뒤 방송을 시작해 주세요.")
             streamVoiceRepairTag = if (advice.recognition) null else advice.voices.firstOrNull() ?: advice.translators.firstOrNull()
-        }) { Text("언어·음성 준비로") } },
-        dismissButton = { Column {
-            TextButton(onClick = {
-                streamPreparationAdvice = null
-                if (streamingStartReady(ignorePreparation = true)) {
-                    enableStreamingInput(ignorePreparation = true)
-                }
-            }) { Text("현재 설정으로 시작") }
-            TextButton(onClick = { streamPreparationAdvice = null }) { Text("취소") }
-        } }) }
+        }) { Text(if (!advice.recognition && advice.voices.isNotEmpty()) "음성 내려받기" else "준비 화면 열기") } },
+        dismissButton = { TextButton(onClick = { streamPreparationAdvice = null }) { Text("돌아가기") } }) }
     if (streamTargetPicker) AlertDialog(onDismissRequest = { streamTargetPicker = false }, title = { Text("통역 언어 선택") },
         text = { Column(Modifier.verticalScroll(rememberScrollState())) {
             translationModels.options.forEach { language ->
@@ -736,23 +1105,12 @@ private fun GuideCastScreen(
                 }
             }
         } }, confirmButton = { TextButton(onClick = { streamTargetPicker = false }) { Text("닫기") } })
-    voiceNoteDestination?.let { AlertDialog(
-        onDismissRequest = { if (!voiceNoteSavingForNavigation) voiceNoteDestination = null },
-        title = { Text(if (voiceNoteSavingForNavigation) "녹음을 저장하고 있습니다" else "녹음 중입니다") },
-        text = { Text("화면을 이동하기 전에 녹음을 종료하고 저장합니다. 저장한 녹음과 스크립트는 보관함에 남습니다.") },
-        confirmButton = { TextButton(enabled = !voiceNoteSavingForNavigation, onClick = {
-            voiceNoteSavingForNavigation = true
-            voiceNoteViewModel.stopRecording()
-        }) { Text("종료·저장하고 이동") } },
-        dismissButton = { if (!voiceNoteSavingForNavigation) TextButton(onClick = { voiceNoteDestination = null }) { Text("녹음 계속") } },
-    ) }
     ModalNavigationDrawer(drawerState = serviceDrawer, gesturesEnabled = serviceDrawer.isOpen, drawerContent = {
         ServiceWorkspaceDrawer(service, activeService,
             onSelect = { selected -> selectService(selected); drawerScope.launch { serviceDrawer.close() } },
-            onHome = { selectService(MCastService.MULTILINGUAL); service = null; drawerScope.launch { serviceDrawer.close() } },
-            onCommonSettings = { showServiceStatus = false; menuSettingsProfile = null; showHistorySettings = false;
-                showCommonSettings = true; drawerScope.launch { serviceDrawer.close() } },
-            onTest = { navigateSection(GuideCastSection.TEST); showCommonSettings = false; drawerScope.launch { serviceDrawer.close() } })
+            onHome = { requestNavigation { applyService(MCastService.MULTILINGUAL); service = null }; drawerScope.launch { serviceDrawer.close() } },
+            onCommonSettings = { selectTab(MainTab.SETTINGS); drawerScope.launch { serviceDrawer.close() } },
+            onTest = { navigateSection(GuideCastSection.TEST); drawerScope.launch { serviceDrawer.close() } })
     }) {
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -778,8 +1136,11 @@ private fun GuideCastScreen(
                         else if (menuWebBroadcast.isActive) "송출 중" else "시작 대기", menuWebBroadcast.errorMessage) else null
                 ServiceWorkspaceTopBar(
                     title = when {
-                        showCommonSettings -> "앱 공통 설정"
-                        streamingSettingsSurface -> "통번역 스트리밍 설정"
+                        showCommonSettings -> MainTab.SETTINGS.title
+                        selectedTab == MainTab.RECORDS && service == null -> MainTab.RECORDS.title
+                        service == MCastService.HISTORY -> "방송 기록"
+                        streamingWorkspace || nativeWorkspace -> "방송"
+                        streamingSettingsSurface -> "방송 설정"
                         section == GuideCastSection.TEST -> "방송 전 시험"
                         else -> service?.title ?: "MCastTalk"
                     },
@@ -788,7 +1149,7 @@ private fun GuideCastScreen(
                             BroadcastPhase.STARTING -> if (broadcast.runMode == BroadcastRunMode.STANDALONE) "기기 사용 준비 중" else "방송 준비 중"
                             BroadcastPhase.FAILED -> "종료 확인 필요"
                             BroadcastPhase.PAUSED -> if (broadcast.runMode == BroadcastRunMode.STANDALONE) "기기 사용 일시정지" else "방송 일시정지"
-                            else -> if (broadcast.runMode == BroadcastRunMode.STANDALONE) "기기 사용 중" else "방송 중"
+                            else -> "방송 중"
                         }
                         workspaceBroadcast -> "방송 꺼짐"
                         menuOwn && menuWebBroadcast.phase == MenuBroadcastPhase.STARTING -> "방송 준비 중"
@@ -800,25 +1161,21 @@ private fun GuideCastScreen(
                     }, listenerCount = if (workspaceOwn) broadcast.listenerCount else if (menuOwn) menuWebBroadcast.listenerCount else null, status = status,
                     showSettingsButton = !showCommonSettings && !streamingSettingsSurface,
                     onOpenServices = { drawerScope.launch { serviceDrawer.open() } },
-                    onOpenStatus = { showCommonSettings = false; menuSettingsProfile = null; showHistorySettings = false; showServiceStatus = true },
+                    onOpenStatus = { requestNavigation {
+                        showCommonSettings = false; menuSettingsProfile = null; showHistorySettings = false; showServiceStatus = true
+                    } },
                     onOpenSettings = {
-                        showCommonSettings = false; menuSettingsProfile = null; showHistorySettings = false
-                        showLicenses = false; showGlossary = false; showSpeechCorrections = false; showDomainCorpus = false; returnToCommonTools = false
-                        when (service) {
-                            MCastService.NOTES -> { showServiceStatus = false; menuSettingsProfile = ServiceMenuProfile.NOTES }
-                            MCastService.FILES -> { showServiceStatus = false; menuSettingsProfile = ServiceMenuProfile.FILES }
-                            MCastService.RELAY -> { showServiceStatus = false; section = GuideCastSection.BROADCAST; relaySettingsRequest += 1 }
-                            MCastService.HISTORY -> { showServiceStatus = false; showHistorySettings = true }
-                            MCastService.VOICE, MCastService.MULTILINGUAL -> openStreamingSettings("overview")
-                            null -> { showServiceStatus = false; showCommonSettings = true }
-                        }
+                        if (streamingWorkspace) openStreamingSettings("overview")
+                        else if (service == MCastService.RELAY && !showCommonSettings) {
+                            relaySettingsItem = null; relaySettingsApiItem = null; relaySettingsRequest += 1
+                        } else selectTab(MainTab.SETTINGS)
                     })
                 if (section != GuideCastSection.BROADCAST && !showCommonSettings) TextButton(onClick = {
-                    streamApiItem = null; streamSettingsDetail = null; streamSetupMessage = null
-                    section = GuideCastSection.BROADCAST
-                }) { Text("← 운영 화면으로") }
+                    selectTab(if (selectedTab == MainTab.SETTINGS) MainTab.SETTINGS else MainTab.BROADCAST)
+                }) { Text(if (selectedTab == MainTab.SETTINGS) "설정으로 돌아가기" else "← 방송 탭으로") }
                 val displayedService = if (service == MCastService.VOICE) MCastService.MULTILINGUAL else service
-                if (activeService != null && (section != GuideCastSection.BROADCAST || displayedService != activeService)) {
+                if (activeService != null && (showCommonSettings || selectedTab == MainTab.SETTINGS ||
+                        section != GuideCastSection.BROADCAST || displayedService != activeService)) {
                     activeWorkNotice?.let { notice -> Text(notice, style = MaterialTheme.typography.bodySmall,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp).semantics { liveRegion = LiveRegionMode.Polite }) }
                     val normalizedActive = if (activeService == MCastService.VOICE) MCastService.MULTILINGUAL else activeService
@@ -829,26 +1186,109 @@ private fun GuideCastScreen(
             }
         },
         bottomBar = {
+          Column {
+           Box(Modifier.consumeWindowInsets(WindowInsets.navigationBars)) {
             if (streamingSettingsSurface) WorkspaceSettingsFooter(streamingBroadcast, streamingBroadcastActive,
-                onBack = { streamApiItem = null; streamSettingsDetail = null; streamSetupMessage = null
-                    section = GuideCastSection.BROADCAST },
-                onStopBroadcast = onStopBroadcast, onStopInput = onStopInput,
-                stopBroadcastLabel = if (broadcast.runMode == BroadcastRunMode.STANDALONE) "사용 종료" else "방송 중지")
-            else if (streamingWorkspace) StreamingWorkspaceFooter(
+                onBack = { selectTab(MainTab.BROADCAST) },
+                onStopBroadcast = ::requestStreamingEnd, onStopInput = onStopInput,
+                stopBroadcastLabel = "방송 끝내기")
+            else if (streamingWorkspace && (broadcastActive || inputActive || pendingBroadcastStart)) StreamingWorkspaceFooter(
                 streamingBroadcast, streamingBroadcastActive, (if (streamingBroadcastActive) broadcast.runMode else runMode) == BroadcastRunMode.STANDALONE,
                 otherBroadcastActive = otherStreamingBroadcastActive, inputKind = state.selectedDevice?.kind,
                 inputRequestPending = inputRequestPending && !broadcast.isInterpreterRelay, onStartBroadcast = { startStreamingBroadcast() },
-                onStopBroadcast = onStopBroadcast, onStartInput = { enableStreamingInput() },
-                onPauseInput = onStopInput, onOpenHud = { showLiveHud = true })
+                onStopBroadcast = ::requestStreamingEnd, onStartInput = { enableStreamingInput() },
+                onPauseInput = onStopInput, onPauseBroadcast = onPauseBroadcast, onResumeBroadcast = onResumeBroadcast,
+                onOpenHud = { showLiveHud = true }, onOpenQr = { showBroadcastQr = true })
+           }
+           MainTabBar(selectedTab, selectTab)
+          }
         },
         containerColor = MaterialTheme.colorScheme.background,
     ) { scaffoldPadding ->
         if (showCommonSettings) {
             Box(Modifier.fillMaxSize().padding(scaffoldPadding).consumeWindowInsets(scaffoldPadding)) {
-                CommonServiceSettingsScreen(app, onBack = { showCommonSettings = false },
+              when (commonSettingsPage) {
+                "input" -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    val canSelectInput = !inputCapturing && !broadcast.inputDraining && !broadcast.broadcastFinishing
+                    TextButton(onClick = { commonSettingsPage = null }, modifier = Modifier.heightIn(min = 48.dp)) { Text("설정으로 돌아가기") }
+                    Text("마이크 · 기기 출력", style = MaterialTheme.typography.titleLarge)
+                    if (!permissions.recordAudioGranted) Button(onClick = {
+                        onRequestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO))
+                    }, modifier = Modifier.heightIn(min = 48.dp)) { Text("마이크 접근 허용") }
+                    InputSourcePicker(state, if (apiOptions.usesNativeLiveAudio) relayOptions.source.sourceLanguageDisplayName()
+                        else translationModels.selectedSourceLanguage.label, canSelectInput, permissions.recordAudioGranted,
+                        onSelectAutomatic, onSelectDevice)
+                    if (!canSelectInput) Text("입력이 끝난 뒤 장치와 앱을 바꿀 수 있어요.")
+                    if (state.selectedDevice?.kind == AudioInputKind.DEVICE_PLAYBACK && apiOptions.usesNativeLiveAudio) {
+                        Text("기기 출력은 오프라인이나 온라인 문장 통역에서 쓸 수 있어요")
+                        Button(enabled = canSelectInput && !broadcastActive && activeService == null, onClick = {
+                            app.translationApiSettings.configure(app.translationApiSettings.state.value.copy(provider = TranslationApiProvider.LOCAL))
+                        }, modifier = Modifier.heightIn(min = 48.dp)) { Text("오프라인으로 바꾸기") }
+                        if (broadcastActive) Text("통역 방식을 바꾸려면 진행 중인 방송을 먼저 끝내 주세요.")
+                    }
+                    InputControls(broadcast = broadcast, selectedDevice = state.selectedDevice,
+                        playbackDiagnostics = state.playbackCaptureDiagnostics, playbackTargetApps = state.playbackTargetApps,
+                        selectedPlaybackTarget = state.selectedPlaybackTarget, playbackTargetPackageName = state.playbackTargetPackageName,
+                        onEditPlaybackTargetPackage = onEditPlaybackTargetPackage, playbackTargetRegistrationMessage = state.playbackTargetRegistrationMessage,
+                        canStart = false, onSelectPlaybackTarget = onSelectPlaybackTarget, onRegisterPlaybackTarget = onRegisterPlaybackTarget,
+                        onStart = onStartInput, onPause = onPauseInput, onResume = onResumeInput, onStop = onStopInput,
+                        showRunControls = false, setupEnabled = canSelectInput)
+                }
+                "defaults" -> CommonServiceSettingsScreen(app, onBack = { commonSettingsPage = null },
                     onOpenGlossary = { returnToCommonTools = true; showCommonSettings = false; showGlossary = true },
                     onOpenDomainCorpus = { returnToCommonTools = true; showCommonSettings = false; showDomainCorpus = true },
                     onRecheckSpeechVoices = onRecheckSpeechVoices)
+                "briefing" -> InterpretationBriefingScreen(app.interpretationBriefingSettings, onBack = { commonSettingsPage = null })
+                "licenses" -> LicenseScreen(onBack = { commonSettingsPage = null })
+                "help", "troubleshoot" -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    TextButton(onClick = { commonSettingsPage = null }) { Text("설정으로 돌아가기") }
+                    if (commonSettingsPage == "help") {
+                        Text("말하는 언어와 들려줄 언어를 고른 뒤 방송 시작을 눌러 주세요.")
+                        Text("청취자는 같은 와이파이나 핫스팟에 연결한 뒤 QR을 비추면 들을 수 있어요.")
+                        Text("스피커로 들으려면 스피커나 이어폰을 연결하고 청취 방법을 골라 주세요.")
+                        SettingsInformationCard(onOpenLicenses = { commonSettingsPage = "licenses" })
+                    } else DiagnosticsAndVoiceSettings(onRecheckSpeechVoices)
+                }
+                else -> ServiceSettingsHomeScreen(apiOptions.usesNativeLiveAudio) { item ->
+                    val commonPage = if (item == "briefing") "briefing" else commonSettingsPageFor(item)
+                    if (commonPage != null) requestNavigation {
+                        when (commonPage) {
+                            "materials", "tools", "access" -> {
+                                service = MCastService.MULTILINGUAL
+                                commonSettingsPage = null
+                                openStreamingSettings(if (commonPage == "access") "output" else commonPage)
+                            }
+                            "test" -> {
+                                showCommonSettings = false; commonSettingsPage = null
+                                section = GuideCastSection.TEST; sectionTopRequest += 1
+                            }
+                            else -> commonSettingsPage = commonPage
+                        }
+                    }
+                    else requestNavigation {
+                        showCommonSettings = false
+                        if (apiOptions.usesNativeLiveAudio) {
+                            service = MCastService.RELAY; section = GuideCastSection.BROADCAST
+                            relaySettingsItem = when (item) {
+                                "input", "noise" -> RelaySetupItem.INPUT
+                                "source", "languages" -> RelaySetupItem.LANGUAGES
+                                "voices" -> RelaySetupItem.VOICE
+                                "key" -> RelaySetupItem.KEY
+                                else -> RelaySetupItem.SERVICE
+                            }
+                            relaySettingsApiItem = item.takeIf { it in setOf("key", "service", "consent") }
+                            relaySettingsRequest += 1
+                        } else {
+                            service = MCastService.MULTILINGUAL
+                            openStreamingSettings(when (item) {
+                                "noise" -> "input"; "source" -> "languages"; "voices" -> "preparation"; else -> item
+                            })
+                        }
+                    }
+                }
+              }
             }
             return@Scaffold
         }
@@ -861,7 +1301,7 @@ private fun GuideCastScreen(
             return@Scaffold
         }
         if (showHistorySettings) AlertDialog(onDismissRequest = { showHistorySettings = false },
-            title = { Text("이 메뉴 설정 · 방송 이력") }, text = { Text("저장한 방송을 선택하면 원음과 통역 음성, 전체 스크립트를 확인할 수 있습니다. 웹오디오방송은 해당 방송 상세 화면에서 시작·일시정지·종료합니다. 다시 듣기에는 API 요청을 보내지 않습니다.") },
+            title = { Text("방송 기록 안내") }, text = { Text("저장한 방송에서 원음과 통역 음성, 전체 글을 볼 수 있어요. 다른 사람에게 들려주기도 여기서 켜고 끌 수 있어요. 다시 듣기에는 온라인 통역을 쓰지 않아요.") },
             confirmButton = { TextButton(onClick = { showHistorySettings = false }) { Text("확인") } })
         if (showServiceStatus) {
             val menuOrigin = when (service) {
@@ -873,14 +1313,14 @@ private fun GuideCastScreen(
             val menuOwn = menuOrigin != null && menuWebBroadcast.origin == menuOrigin
             val workspaceOwn = menuOrigin == null && (((service == MCastService.RELAY) == broadcast.isInterpreterRelay) || broadcastCleanupPending)
             Column(Modifier.fillMaxSize().padding(scaffoldPadding).consumeWindowInsets(scaffoldPadding)) {
-                TextButton(onClick = { showServiceStatus = false }) { Text("← 운영 화면으로") }
+                TextButton(onClick = { showServiceStatus = false }) { Text("← 방송 탭으로") }
                 LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     item { Text("청취 주소·QR 및 상태", style = MaterialTheme.typography.headlineSmall) }
                     item {
                         if (workspaceOwn) {
                             Text(streamingWorkspaceStatus(broadcast).label, style = MaterialTheme.typography.titleMedium)
-                            streamingWorkspaceStatus(broadcast).issue?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                            streamingWorkspaceStatus(broadcast).issue?.let { Text(if (developerInfo) it else "소리나 통역 상태를 확인해 주세요", color = MaterialTheme.colorScheme.error) }
                             TextButton(onClick = {
                                 if (service == MCastService.RELAY) { showServiceStatus = false; relaySettingsRequest += 1 }
                                 else openStreamingSettings("overview")
@@ -890,14 +1330,15 @@ private fun GuideCastScreen(
                         }
                     }
                     item { RelayListenerAccessCard(if (menuOrigin == null) broadcast.listenerUrl.takeIf { workspaceOwn } else menuWebBroadcast.listenerUrl.takeIf { menuOwn },
-                        if (menuOrigin == null) workspaceOwn && broadcastActive else menuOwn && menuWebBroadcast.isActive) }
+                        if (menuOrigin == null) workspaceOwn && broadcastActive else menuOwn && menuWebBroadcast.isActive,
+                        channels = if (menuOrigin == null && workspaceOwn) broadcast.translationChannels else emptyList()) }
                     if (workspaceOwn) {
-                        item { Text("청취 연결 ${broadcast.listenerCount}개 · 기기 한 대가 여러 언어를 연결할 수 있습니다.",
+                        if (developerInfo) item { Text("청취 연결 ${broadcast.listenerCount}개 · 기기 한 대가 여러 언어를 연결할 수 있습니다.",
                             style = MaterialTheme.typography.bodySmall) }
                         if (service == MCastService.RELAY) item { WorkspaceNativeLanguageStatus(broadcast.translationChannels) }
                         else item { OutputChannelsCard(broadcast, translationModels,
-                            onOpenTest = { showServiceStatus = false; section = GuideCastSection.TEST }) }
-                        item {
+                            onOpenTest = { navigateSection(GuideCastSection.TEST) }) }
+                        if (developerInfo) item {
                             broadcast.errorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                             broadcast.inputErrorMessage?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                             broadcast.translationWarning?.let { Text(it, color = MaterialTheme.colorScheme.error) }
@@ -936,7 +1377,11 @@ private fun GuideCastScreen(
         }
         if (streamingWorkspace) {
             serviceScreens.SaveableStateProvider("streaming-workspace") {
-            StreamingTranscriptWorkspace(streamingBroadcast, availableStreamDisplayTargets, visibleStreamTargets, streamDisplaySource,
+            if (!broadcastActive && !inputActive && !pendingBroadcastStart) {
+                Box(Modifier.fillMaxSize().padding(scaffoldPadding).consumeWindowInsets(scaffoldPadding)) {
+                    renderStartScreen { startStreamingBroadcast() }
+                }
+            } else StreamingTranscriptWorkspace(streamingBroadcast, availableStreamDisplayTargets, visibleStreamTargets, streamDisplaySource,
                 onToggleSource = { streamDisplaySource = !streamDisplaySource },
                 onToggleTarget = { tag -> streamDisplayTargets = ArrayList(toggleWorkspaceDisplayLanguage(
                     availableStreamDisplayTargets, streamDisplayTargets, tag)) },
@@ -944,11 +1389,10 @@ private fun GuideCastScreen(
                 sourceActions = { row -> SpeechCorrectionAction(row, translationModels.selectedSourceLanguageTag) },
                 originalAudioOnly = !translationModels.broadcastTranslationEnabled,
                 operatingActions = {
-                    if (streamingBroadcastActive && streamingBroadcast.listenerUrl != null)
-                        Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
-                            RelayListenerAccessCard(streamingBroadcast.listenerUrl, true, compact = true)
-                        }
+                    if (phoneSpeaker) PhoneSpeakerStatus(streamingBroadcast)
+                    InterpreterConnectionEntry(streamingBroadcast)
                 },
+                captionOnlyLanguages = translationModels.selectedLanguageTags.filterNot(translationModels::ttsReady).toSet(),
                 modifier = Modifier.fillMaxSize().padding(scaffoldPadding).consumeWindowInsets(scaffoldPadding))
             }
             return@Scaffold
@@ -962,10 +1406,16 @@ private fun GuideCastScreen(
                     showAssistant -> OperatorAssistantScreen(broadcast, translationModels, onBack = { showAssistant = false }, onNavigate = { destination ->
                         showAssistant = false
                         when (destination) {
-                            AssistantDestination.INPUT -> { service = MCastService.MULTILINGUAL; section = GuideCastSection.BROADCAST }
-                            AssistantDestination.TEST -> section = GuideCastSection.TEST
-                            AssistantDestination.LANGUAGES -> { section = GuideCastSection.MODELS; settingsCategory = SettingsCategory.LANGUAGES }
-                            AssistantDestination.LEARNING -> { section = GuideCastSection.MODELS; settingsCategory = SettingsCategory.TOOLS; if (developerInfo) showDeveloperLab = true }
+                            AssistantDestination.INPUT -> applyService(MCastService.MULTILINGUAL)
+                            AssistantDestination.TEST -> navigateSection(GuideCastSection.TEST)
+                            AssistantDestination.LANGUAGES -> {
+                                selectedTab = MainTab.SETTINGS; section = GuideCastSection.MODELS
+                                settingsCategory = SettingsCategory.LANGUAGES
+                            }
+                            AssistantDestination.LEARNING -> {
+                                selectedTab = MainTab.SETTINGS; section = GuideCastSection.MODELS
+                                settingsCategory = SettingsCategory.TOOLS; if (developerInfo) showDeveloperLab = true
+                            }
                         }
                         sectionTopRequest += 1
                     })
@@ -979,25 +1429,41 @@ private fun GuideCastScreen(
                     }
                     service == MCastService.RELAY -> serviceScreens.SaveableStateProvider("relay") {
                         InterpreterRelayScreen(app, broadcast, permissions.recordAudioGranted,
-                            onRequestMicrophone = { onRequestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO)) },
-                            onStart = onStartRelay, onPause = onPauseBroadcast, onResume = onResumeBroadcast,
-                            onStop = onStopBroadcast, onBack = { service = null }, onOpenHud = { showLiveHud = true },
+                            startContent = renderStartScreen,
+                            onOpenQr = { showBroadcastQr = true },
+                            requestedSettingsItem = relaySettingsItem, requestedApiItem = relaySettingsApiItem,
+                            returnToSettingsHome = selectedTab == MainTab.SETTINGS,
+                            onReturnToBroadcast = { selectTab(MainTab.BROADCAST) },
+                            onSettingsClosed = { if (selectedTab == MainTab.SETTINGS) showCommonSettings = true },
+                            onRequestMicrophone = {
+                                val recordingId = broadcast.recordingId
+                                onRequestPermissionAction(arrayOf(Manifest.permission.RECORD_AUDIO), {
+                                    if (relayMicrophoneRequestMatches(recordingId, app.broadcastRuntime.state.value))
+                                        recordingId?.let { BroadcastService.startRelayMicrophone(app, it) }
+                                })
+                            },
+                            onStart = { if (activeService == null || activeService == MCastService.RELAY) onStartRelay() },
+                            onPause = onPauseBroadcast, onResume = onResumeBroadcast,
+                            onStop = onStopBroadcast, onBack = { applyService(MCastService.MULTILINGUAL) }, onOpenHud = { showLiveHud = true },
                             onStartMicrophone = { broadcast.recordingId?.let { BroadcastService.startRelayMicrophone(app, it) } },
                             onStopMicrophone = onStopInput,
                             onOpenFilteredHud = { targets, showSource ->
                                 relayHudDisplayTargets = ArrayList(targets); relayHudDisplaySource = showSource; showLiveHud = true
                             },
-                            settingsRequest = relaySettingsRequest, onSettingsRequestHandled = { relaySettingsRequest = 0 })
+                            settingsRequest = relaySettingsRequest, onSettingsRequestHandled = { relaySettingsRequest = 0 },
+                            registerNavigationLeaveGuard = registerNavigationLeaveGuard)
                     }
                     service == MCastService.HISTORY -> serviceScreens.SaveableStateProvider("broadcast-history") {
-                        BroadcastHistoryScreen(app, onBack = { service = null })
+                        BroadcastHistoryScreen(app, onBack = ::closeRecordService)
                     }
                     service == MCastService.NOTES -> serviceScreens.SaveableStateProvider("notes") {
-                        VoiceNoteRoute(voiceNoteViewModel, onBack = { service = null })
+                        VoiceNoteRoute(voiceNoteViewModel, onBack = ::closeRecordService,
+                            registerNavigationLeaveGuard = registerNavigationLeaveGuard)
                     }
                     service == MCastService.FILES -> serviceScreens.SaveableStateProvider("files") {
-                        FileTranslationRoute(fileViewModel, onBack = { service = null })
+                        FileTranslationRoute(fileViewModel, onBack = ::closeRecordService)
                     }
+                    selectedTab == MainTab.RECORDS -> RecordsHomeScreen(selectService)
                     else -> ServiceHomeScreen(activeService, selectService)
                 }
             }
@@ -1055,7 +1521,7 @@ private fun GuideCastScreen(
             }
 
             if (section == GuideCastSection.TEST) item {
-                OutlinedButton(onClick = { showLiveHud = true }, modifier = Modifier.fillMaxWidth()) { Text("큰 글씨 스크립트 · HUD") }
+                OutlinedButton(onClick = { showLiveHud = true }, modifier = Modifier.fillMaxWidth()) { Text("큰 자막 미리 보기") }
             }
 
             val needsAudioPermission = !permissions.recordAudioGranted &&
@@ -1153,7 +1619,7 @@ private fun GuideCastScreen(
                     }
                     if (streamSettingsDetail != "overview") Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(onClick = { openStreamingSettings("input") }, modifier = Modifier.weight(1f)) { Text("입력 설정") }
-                        OutlinedButton(onClick = { openStreamingSettings("output") }, modifier = Modifier.weight(1f)) { Text("LAN·송출 설정") }
+                        OutlinedButton(onClick = { openStreamingSettings("output") }, modifier = Modifier.weight(1f)) { Text("입장 번호·접속") }
                     }
                     streamSetupMessage?.let { Text(it, color = MaterialTheme.colorScheme.error,
                         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite }) }
@@ -1243,13 +1709,13 @@ private fun GuideCastScreen(
                         BroadcastControls(broadcast, effectiveAccessMode, if (broadcastActive) broadcast.runMode else runMode,
                             { runMode = it; app.operatorSettings.setRunMode(it) }, broadcastPin, micPinEnabled, micPin,
                             true, { accessMode = it }, { broadcastPin = it }, { micPinEnabled = it }, { micPin = it },
-                            onStartBroadcast, onPauseBroadcast, onResumeBroadcast, onStopBroadcast, onPlayTestTone,
+                            onStartBroadcast, onPauseBroadcast, onResumeBroadcast, ::requestStreamingEnd, onPlayTestTone,
                             showRunControls = false)
                     }
 
                   } else {
 
-                  if (settingsCategory == SettingsCategory.TOOLS) item(key = "operator-assistant") {
+                  if (settingsCategory == SettingsCategory.TOOLS && developerInfo) item(key = "operator-assistant") {
                     OutlinedButton(onClick = { showAssistant = true }, modifier = Modifier.fillMaxWidth()) { Text("아스트라 미니미 · 진단과 개선 제안") }
                   }
                   if (settingsCategory == SettingsCategory.TOOLS) item(key = "developer-display") { DeveloperInformationSettings() }
@@ -1267,7 +1733,7 @@ private fun GuideCastScreen(
                     if (broadcastActive) {
                         Text("언어와 AI를 바꾸려면 통번역을 종료해 주세요. 마이크만 끄면 방송 주소와 설정은 유지됩니다.",
                             style = MaterialTheme.typography.bodySmall)
-                        OutlinedButton(onClick = { onStopBroadcast(); onStopInput() }, modifier = Modifier.fillMaxWidth()) {
+                        OutlinedButton(onClick = ::requestStreamingEnd, modifier = Modifier.fillMaxWidth()) {
                             Text("통번역 종료하고 변경")
                         }
                     } else if (inputActive) {
@@ -1284,7 +1750,7 @@ private fun GuideCastScreen(
                                 inputRequestPending, consentRoomId, consentInputEpoch,
                                 app.broadcastRuntime.inputRequestEpoch)
                         },
-                        automaticExampleControls = { AutomaticExampleControls(app.automaticTranslationExamples,
+                        automaticExampleControls = { if (developerInfo) AutomaticExampleControls(app.automaticTranslationExamples,
                             !inputActive && !broadcastActive && !broadcast.translationTestActive, reviewRepository = app.domainCorpus) },
                         onOpenItemHandled = { streamApiItem = null })
                     }
@@ -1357,21 +1823,19 @@ private fun GuideCastScreen(
                     if (settingsCategory == SettingsCategory.TOOLS) Column(
                         verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
-                        OutlinedButton(
-                            onClick = { showGlossary = true },
-                            modifier = Modifier.fillMaxWidth().sizeIn(minHeight = 56.dp),
-                        ) { Text("번역 용어 사전 · 검색 / 수정 / 일괄 등록") }
-                        OutlinedButton(
-                            onClick = { showSpeechCorrections = true },
-                            modifier = Modifier.fillMaxWidth().sizeIn(minHeight = 56.dp),
-                        ) { Text("인식 학습·보정") }
-                        OutlinedButton(
-                            onClick = { showDomainCorpus = true },
-                            modifier = Modifier.fillMaxWidth().sizeIn(minHeight = 56.dp),
-                        ) { Text("도메인 학습·코퍼스") }
+                        OutlinedButton(onClick = { showGlossary = true },
+                            modifier = Modifier.fillMaxWidth().sizeIn(minHeight = 56.dp)) { Text("자주 쓰는 말") }
+                        OutlinedButton(onClick = { showDomainCorpus = true },
+                            modifier = Modifier.fillMaxWidth().sizeIn(minHeight = 56.dp)) { Text("전문 자료") }
+                        if (developerInfo) {
+                            OutlinedButton(
+                                onClick = { showSpeechCorrections = true },
+                                modifier = Modifier.fillMaxWidth().sizeIn(minHeight = 56.dp),
+                            ) { Text("인식 학습·보정") }
+                        }
                         OutlinedButton(onClick = { showDataTransfer = true },
                             modifier = Modifier.fillMaxWidth().sizeIn(minHeight = 56.dp)) {
-                            Text("설정 / 사전 / 스크립트 · 가져오기 / 내보내기")
+                            Text("백업 · 가져오기 · 내보내기")
                         }
                         OutlinedButton(onClick = { showSentenceMemory = true },
                             modifier = Modifier.fillMaxWidth().sizeIn(minHeight = 56.dp)) {
@@ -1405,141 +1869,11 @@ private enum class GuideCastSection(
     val description: String,
 ) {
     BROADCAST("운영", "현장 운영", "안내방송 운영", "입력부터 청취자 웹 송출까지 한눈에 확인하세요."),
-    TEST("시험", "방송 전 점검", "통번역 사전 점검", "실제 문장과 통역 음성을 먼저 듣고 확인하세요."),
-    MODELS("설정", "방송 환경", "언어·모델 설정", "송출 언어와 오프라인 모델을 관리하세요."),
+    TEST("시험", "방송 전 점검", "방송 전 시험", "마이크를 켜서 미리 말해 보고 큰 자막을 확인해 주세요."),
+    MODELS("설정", "방송 환경", "방송 설정", "언어·음성·접속 설정을 확인해 주세요."),
 }
 
-@Composable
-private fun GuideCastSectionTabs(
-    section: GuideCastSection,
-    onSelect: (GuideCastSection) -> Unit,
-) {
-    Surface(
-        color = MaterialTheme.colorScheme.surface,
-        shadowElevation = 10.dp,
-    ) {
-        NavigationBar(
-            containerColor = MaterialTheme.colorScheme.surface,
-            tonalElevation = 0.dp,
-        ) {
-            GuideCastSection.entries.forEach { item ->
-                val selected = item == section
-                NavigationBarItem(
-                    selected = selected,
-                    onClick = { onSelect(item) },
-                    icon = {
-                        Box(
-                            modifier = Modifier
-                                .size(width = 40.dp, height = 28.dp)
-                                .background(
-                                    if (selected) MaterialTheme.colorScheme.primaryContainer
-                                    else Color.Transparent,
-                                    CircleShape,
-                                )
-                                .clearAndSetSemantics { },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            GuideCastSectionIcon(section = item, selected = selected)
-                        }
-                    },
-                    label = {
-                        Text(
-                            item.label,
-                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
-                        )
-                    },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = MaterialTheme.colorScheme.primary,
-                        selectedTextColor = MaterialTheme.colorScheme.primary,
-                        indicatorColor = Color.Transparent,
-                        unselectedIconColor = MaterialTheme.colorScheme.outlineVariant,
-                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                    ),
-                )
-            }
-        }
-    }
-}
 
-@Composable
-private fun GuideCastSectionIcon(section: GuideCastSection, selected: Boolean) {
-    val color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-    val iconContainerColor = if (selected) {
-        MaterialTheme.colorScheme.primaryContainer
-    } else {
-        MaterialTheme.colorScheme.surface
-    }
-    Canvas(
-        modifier = Modifier
-            .size(22.dp)
-            .clearAndSetSemantics { },
-    ) {
-        val strokeWidth = if (selected) 2.2.dp.toPx() else 1.8.dp.toPx()
-        when (section) {
-            GuideCastSection.BROADCAST -> {
-                drawCircle(color = color, radius = 2.4.dp.toPx(), center = Offset(size.width / 2f, size.height / 2f))
-                drawArc(
-                    color = color,
-                    startAngle = 135f,
-                    sweepAngle = 270f,
-                    useCenter = false,
-                    topLeft = Offset(5.dp.toPx(), 5.dp.toPx()),
-                    size = Size(12.dp.toPx(), 12.dp.toPx()),
-                    style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
-                )
-                drawArc(
-                    color = color,
-                    startAngle = 135f,
-                    sweepAngle = 270f,
-                    useCenter = false,
-                    topLeft = Offset(1.5.dp.toPx(), 1.5.dp.toPx()),
-                    size = Size(19.dp.toPx(), 19.dp.toPx()),
-                    style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
-                )
-            }
-
-            GuideCastSection.TEST -> {
-                drawCircle(
-                    color = color,
-                    radius = 9.dp.toPx(),
-                    center = Offset(size.width / 2f, size.height / 2f),
-                    style = Stroke(width = strokeWidth),
-                )
-                val check = Path().apply {
-                    moveTo(6.5.dp.toPx(), 11.dp.toPx())
-                    lineTo(9.5.dp.toPx(), 14.dp.toPx())
-                    lineTo(15.7.dp.toPx(), 7.8.dp.toPx())
-                }
-                drawPath(check, color = color, style = Stroke(width = strokeWidth, cap = StrokeCap.Round))
-            }
-
-            GuideCastSection.MODELS -> {
-                val positions = listOf(7f to 7f, 15f to 11f, 10f to 15f)
-                positions.forEach { (knobX, lineY) ->
-                    val y = lineY.dp.toPx()
-                    drawLine(
-                        color = color,
-                        start = Offset(2.dp.toPx(), y),
-                        end = Offset(20.dp.toPx(), y),
-                        strokeWidth = strokeWidth,
-                        cap = StrokeCap.Round,
-                    )
-                    drawCircle(
-                        color = iconContainerColor,
-                        radius = 3.dp.toPx(),
-                        center = Offset(knobX.dp.toPx(), y),
-                    )
-                    drawCircle(
-                        color = color,
-                        radius = 2.3.dp.toPx(),
-                        center = Offset(knobX.dp.toPx(), y),
-                        style = Stroke(width = strokeWidth),
-                    )
-                }
-            }
-        }
-    }
-}
 
 @Composable
 private fun OperatorHeader(
@@ -2126,8 +2460,10 @@ private fun InputSourcePicker(
                     DropdownMenuItem(
                         text = {
                             Column {
-                                Text(device.label)
-                                Text(device.kind.displayName(), style = MaterialTheme.typography.labelSmall)
+                                Text(if (device.kind == AudioInputKind.DEVICE_PLAYBACK)
+                                    "번역 앱/기기 출력(허용된 앱 재생음)" else device.label)
+                                if (device.kind != AudioInputKind.DEVICE_PLAYBACK)
+                                    Text(device.kind.displayName(), style = MaterialTheme.typography.labelSmall)
                             }
                         },
                         onClick = {
@@ -2311,6 +2647,11 @@ private fun OutputChannelsCard(
 ) {
     val context = LocalContext.current
     val developerInfo = LocalDeveloperInfo.current
+    if (!developerInfo) {
+        BroadcastLanguageStatusList(broadcast.translationChannels,
+            models.selectedLanguageTags.filterNot(models::ttsReady).toSet())
+        return
+    }
     var expandedQrChannelId by rememberSaveable { mutableStateOf<String?>(null) }
     val selectedOptions = selectedTranslationLanguageOptions(models)
     val channels = if (broadcast.translationChannels.isNotEmpty()) {
@@ -2601,6 +2942,9 @@ private fun BroadcastLocalMonitorCard(
         LocalMonitorOutputRoutePlanner.eligible(
             input = selectedInput,
             availableOutputs = outputDevices.map { it.toLocalMonitorRoute() },
+            interpretationAllowed = LocalInterpretationPolicy(broadcast.localInterpretationEnabled).permits(
+                selectedChannelId, broadcast.translationChannels.size, broadcast.isInterpreterRelay,
+                broadcast.inputPhase == InputPhase.ACTIVE),
         )
     }
     var selectedOutputId by rememberSaveable { mutableStateOf<Int?>(null) }
@@ -2628,7 +2972,7 @@ private fun BroadcastLocalMonitorCard(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             Text(
-                "로컬 방송 음원 모니터",
+                "이 기기에서 듣기",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
             )
@@ -2664,7 +3008,9 @@ private fun BroadcastLocalMonitorCard(
                 style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold,
             )
-            Text("모니터 음량 · 웹 송출 음량과 별도", style = MaterialTheme.typography.labelLarge)
+            Text("이 기기 음량 · 웹방송을 듣는 사람의 음량과 별도", style = MaterialTheme.typography.labelLarge)
+            if (broadcast.localInterpretationEnabled && selectedChannelId == "source")
+                Text("말한 그대로는 스피커를 연결해야 들을 수 있어요", style = MaterialTheme.typography.bodySmall)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(0f, 0.25f, 0.5f, 1f).forEach { gain ->
                     FilterChip(
@@ -2705,7 +3051,7 @@ private fun BroadcastLocalMonitorCard(
                             selected = selectedOutputId == output.platformId,
                             enabled = !active,
                             onClick = { selectedOutputId = output.platformId },
-                            label = { Text(output.label) },
+                            label = { Text(if (output.kind == AudioOutputKind.BUILT_IN_SPEAKER) "이 휴대폰 스피커" else output.label) },
                         )
                     }
                 }
@@ -3448,13 +3794,13 @@ private fun PlaybackTargetSelector(
     onRegister: (String) -> Unit,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    Text("출력 대상 앱", fontWeight = FontWeight.SemiBold)
+    Text("사용할 앱 · ${selected?.label ?: manualPackageName.ifBlank { "선택 필요" }}", fontWeight = FontWeight.SemiBold)
     OutlinedButton(
         modifier = Modifier.fillMaxWidth(),
         enabled = enabled && apps.isNotEmpty(),
         onClick = { expanded = true },
     ) {
-        Text(selected?.label ?: "앱 선택")
+        Text("앱 선택")
     }
     if (expanded) {
         PlaybackAppPicker(apps, onSelect = { packageName ->
@@ -3720,8 +4066,9 @@ private fun InputLevel(
         Text(progress.state, style = MaterialTheme.typography.bodySmall,
             color = operatorStatusColor(progress.tone))
     }
-    if (developerInfo && broadcast.recognitionDroppedFrameCount > 0) {
-        Text("인식 처리 지연으로 건너뛴 입력: ${broadcast.recognitionDroppedFrameCount} 프레임 · 원음 입력은 유지",
+    if (broadcast.recognitionDroppedFrameCount > 0) {
+        Text("음성 인식이 밀려 일부 말을 놓쳤습니다. 원음 방송은 계속됩니다. 빠진 문장은 다시 말해 주세요." +
+            if (developerInfo) " (${broadcast.recognitionDroppedFrameCount} 프레임)" else "",
             style = MaterialTheme.typography.labelSmall, color = GuideCastWarning)
     }
     if (broadcast.inputFrameCount > 0L && !broadcast.inputSignalActive && broadcast.inputPeak < 0.01f) {
@@ -3770,6 +4117,7 @@ private fun TranslationModelCard(
     openLanguageTag: String? = null,
     onRepairHandled: () -> Unit = {},
 ) {
+    val developerInfo = LocalDeveloperInfo.current
     var languageQuery by rememberSaveable { mutableStateOf("") }
     var showAdditionalLanguages by rememberSaveable { mutableStateOf(false) }
     var detailLanguageTag by rememberSaveable { mutableStateOf<String?>(null) }
@@ -3787,10 +4135,10 @@ private fun TranslationModelCard(
                     Text("번역 ${state.translationDisplayName(tag)}")
                     Text("통역 음성 · ${state.voicePreparationPresentation(tag).text}")
                     state.ttsUnavailableReason(tag)?.let {
-                        Text(it, color = MaterialTheme.colorScheme.error)
+                        Text(preparationDisplayText(it, developerInfo), color = MaterialTheme.colorScheme.error)
                     }
-                    translationError?.let { Text("번역 오류 · ${it.take(1200)}", color = MaterialTheme.colorScheme.error) }
-                    moonshineTtsFailureDetail(speechStatus)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                    translationError?.let { Text(if (developerInfo) "번역 오류 · ${it.take(1200)}" else "통역 준비를 마치지 못했어요. 다시 확인해 주세요.", color = MaterialTheme.colorScheme.error) }
+                    if (developerInfo) moonshineTtsFailureDetail(speechStatus)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                     SystemVoiceSetupActions(
                         languageLabel = state.options.firstOrNull { it.languageTag == tag }?.label ?: tag,
                         preference = state.voicePreferences[tag] ?: SpeechVoicePreference.AUTO,
@@ -3829,8 +4177,8 @@ private fun TranslationModelCard(
                 fontWeight = FontWeight.SemiBold,
             )
             Text(
-                "말하는 언어를 먼저 선택하세요. 한국어는 Moonshine을 우선 사용하고, " +
-                    "그 밖의 언어는 준비된 Galaxy 온디바이스 음성인식을 사용합니다.",
+                if (developerInfo) "말하는 언어를 먼저 선택하세요. 한국어는 Moonshine, 그 밖의 언어는 준비된 Galaxy 온디바이스 음성인식을 사용합니다."
+                else "말하는 언어를 먼저 골라 주세요. 인터넷 없이 휴대폰에서 말소리를 알아들어요.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -3970,7 +4318,7 @@ private fun TranslationModelCard(
                             Text(option.label, fontWeight = FontWeight.SemiBold)
                             if (selectedOrder != null) {
                                 Text(
-                                    if (state.useGemma &&
+                                    if (developerInfo && state.useGemma &&
                                         GemmaTranslationProvider.supportsTargetLanguage(
                                             option.languageTag,
                                         )
@@ -4006,7 +4354,7 @@ private fun TranslationModelCard(
                                 modifier = Modifier.fillMaxWidth(),
                             )
                             Text(
-                                tts.currentFile ?: "Moonshine 음성 파일 다운로드 중",
+                                if (developerInfo) tts.currentFile ?: "Moonshine 음성 파일 다운로드 중" else "음성을 내려받고 있어요",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -4083,7 +4431,9 @@ private fun TranslationModelCard(
             }
 
             Text(
-                text = if (state.useGemma) {
+                text = if (!developerInfo) {
+                    "휴대폰에서 통역해요. 언어가 많으면 통역 음성이 늦어질 수 있어요."
+                } else if (state.useGemma) {
                     "지원 언어는 Gemma 하나를 공정하게 공유합니다. 완료된 언어부터 송출하며, " +
                         "미지원 언어와 장애 복구는 준비된 ML Kit를 사용합니다."
                 } else {
@@ -4103,13 +4453,14 @@ private fun TranslationPreparationActions(
     onPrepare: () -> Unit,
     onCancelPreparation: () -> Unit,
 ) {
+    val developerInfo = LocalDeveloperInfo.current
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         state.operationProgress?.takeIf { state.isBusy }?.let { progress ->
-            Text(progress, style = MaterialTheme.typography.bodySmall)
+            Text(preparationDisplayText(progress, developerInfo), style = MaterialTheme.typography.bodySmall)
         }
         state.message?.let { message ->
             Text(
-                text = message,
+                text = preparationDisplayText(message, developerInfo),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.primary,
             )
@@ -4126,7 +4477,7 @@ private fun TranslationPreparationActions(
                     color = MaterialTheme.colorScheme.onPrimary,
                 )
                 Spacer(Modifier.size(8.dp))
-                Text(state.operationLabel)
+                Text(preparationDisplayText(state.operationLabel, developerInfo))
             } else {
                 Text("준비 상태 다시 확인 · 실패 항목 재시도")
             }
@@ -4150,22 +4501,24 @@ private fun SpeechVoicePreferencePicker(
     enabled: Boolean,
     onSelect: (SpeechVoicePreference) -> Unit,
 ) {
+    val developerInfo = LocalDeveloperInfo.current
     var expanded by remember(languageTag) { mutableStateOf(false) }
     Box {
         OutlinedButton(enabled = enabled, onClick = { expanded = true }) {
-            Text("음성: ${selected.label}")
+            Text("음성: ${selected.displayLabel(developerInfo)}")
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             SpeechVoicePreference.entries.forEach { choice ->
                 DropdownMenuItem(
-                    text = { Text(choice.label) },
+                    text = { Text(choice.displayLabel(developerInfo)) },
                     onClick = { expanded = false; onSelect(choice) },
                 )
             }
         }
     }
     Text(
-        "이미 설치한 음성은 재사용합니다. Google·Samsung 음성팩은 해당 엔진의 설치 화면에서 준비하고, Moonshine 파일은 Moonshine 선택 후 준비할 때 내려받습니다.",
+        if (developerInfo) "이미 설치한 음성은 재사용합니다. Google·Samsung 음성은 해당 서비스의 설치 화면에서 준비하고, Moonshine 파일은 Moonshine 선택 후 준비할 때 내려받습니다."
+        else "설치된 음성은 그대로 쓸 수 있어요. ‘앱에서 받는 음성’을 고르면 준비할 때 한 번 내려받아요.",
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
@@ -4747,22 +5100,7 @@ private fun BroadcastControls(
     val validMicPin = micPin.length in 4..8 && micPin.all(Char::isDigit)
 
     if (showSetupControls) {
-    Text(
-        text = "사용 방식",
-        style = MaterialTheme.typography.titleLarge,
-        fontWeight = FontWeight.SemiBold,
-    )
-    Text(
-        text = if (runMode == BroadcastRunMode.STANDALONE) "Wi-Fi 없이 이 기기에서 통역과 스크립트를 확인합니다. 음성은 아래 기기 출력에서 재생하세요."
-            else "다른 기기에 방송하려면 핫스팟 또는 같은 Wi-Fi에 연결하세요.",
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-    Spacer(Modifier.height(10.dp))
-
-    Row(Modifier.selectableGroup(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        AccessModeButton(Modifier.weight(1f), "다른 기기에 방송", runMode == BroadcastRunMode.NETWORK, !active) { onRunModeChange(BroadcastRunMode.NETWORK) }
-        AccessModeButton(Modifier.weight(1f), "이 기기에서 사용", runMode == BroadcastRunMode.STANDALONE, !active) { onRunModeChange(BroadcastRunMode.STANDALONE) }
-    }
+    Text("청취 방법은 방송 탭에서 골라요", color = MaterialTheme.colorScheme.onSurfaceVariant)
     Spacer(Modifier.height(10.dp))
     if (runMode == BroadcastRunMode.NETWORK) {
     Row(
@@ -4771,13 +5109,13 @@ private fun BroadcastControls(
     ) {
         AccessModeButton(
             modifier = Modifier.weight(1f),
-            label = "QR 입장코드",
+            label = "방송접속 QR",
             selected = accessMode == OperatorAccessMode.QR_TOKEN,
             enabled = !active,
         ) { onAccessModeChange(OperatorAccessMode.QR_TOKEN) }
         AccessModeButton(
             modifier = Modifier.weight(1f),
-            label = "PIN",
+            label = "입장 번호",
             selected = accessMode == OperatorAccessMode.PIN,
             enabled = !active,
         ) { onAccessModeChange(OperatorAccessMode.PIN) }
@@ -4792,8 +5130,7 @@ private fun BroadcastControls(
     if (accessMode != OperatorAccessMode.OPEN) {
         Text(
             modifier = Modifier.padding(top = 8.dp),
-            text = "QR/PIN은 같은 핫스팟의 입장 제어입니다. 전송 암호화는 아니므로 " +
-                "신뢰하는 WPA2/WPA3 핫스팟에서 사용하세요.",
+            text = "방송접속 QR과 입장 번호는 접속을 제한해요. 소리를 암호화하지는 않으므로 믿을 수 있는 와이파이나 핫스팟에서 사용해 주세요.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
@@ -4805,7 +5142,7 @@ private fun BroadcastControls(
                 .padding(top = 10.dp),
             value = pin,
             onValueChange = { value -> onPinChange(value.filter(Char::isDigit).take(8)) },
-            label = { Text("청취 PIN (4~8자리)") },
+            label = { Text("입장 번호 (4~8자리)") },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
             singleLine = true,
         )
@@ -5259,7 +5596,9 @@ private fun MoonshineTtsReadiness.displayName(): String = when (this) {
     MoonshineTtsReadiness.FAILED -> "준비 실패"
 }
 
+@Composable
 private fun TranslationModelUiState.translationDisplayName(languageTag: String): String {
+    if (!LocalDeveloperInfo.current) return if (translationModelReadyForChannel(this, languageTag)) "준비됨" else "준비 필요"
     val lightweight = readiness(languageTag)
     val gemmaPriority = useGemma &&
         GemmaTranslationProvider.supportsTranslation(selectedSourceLanguageTag, languageTag)

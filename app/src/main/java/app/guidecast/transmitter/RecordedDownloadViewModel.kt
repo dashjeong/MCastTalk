@@ -34,8 +34,8 @@ internal class RecordedDownloadViewModel : ViewModel() {
                         requireNotNull(app.contentResolver.openOutputStream(destination, "wt"))
                     }, { job.ensureActive() })
                 }
-                mutable.value = if (destination == null) RecordedDownloadState(message = "저장을 취소했습니다.")
-                    else RecordedDownloadState(message = "파일을 저장했습니다. 선택한 위치에서 열어보세요.",
+                mutable.value = if (destination == null) RecordedDownloadState(message = "저장을 취소했어요.")
+                    else RecordedDownloadState(message = "파일을 저장했어요. 고른 위치에서 열어보세요.",
                         savedUri = destination, mime = mime, recordingId = name?.take(36))
             } catch (failure: Exception) {
                 val removed = withContext(NonCancellable + Dispatchers.IO) {
@@ -43,12 +43,12 @@ internal class RecordedDownloadViewModel : ViewModel() {
                         runCatching { DocumentsContract.deleteDocument(app.contentResolver, destination) }.getOrDefault(false)
                 }
                 val notice = when {
-                    failure is CancellationException -> "저장을 취소했습니다. 내려받기를 다시 선택할 수 있습니다."
-                    failure is IllegalArgumentException -> "준비한 파일이 없거나 보관 시간이 지났습니다. 내려받기를 다시 선택해 주세요."
-                    else -> "파일 저장 실패 · 저장 위치와 여유 공간을 확인하세요."
+                    failure is CancellationException -> "저장을 취소했어요. 다시 저장할 수 있어요."
+                    failure is IllegalArgumentException -> "준비한 파일이 없거나 보관 시간이 지났어요. 저장을 다시 눌러 주세요."
+                    else -> "파일을 저장하지 못했어요. 저장 위치와 남은 공간을 확인해 주세요."
                 }
                 mutable.value = RecordedDownloadState(message = notice +
-                    if (destination != null && !removed) " 저장 위치에 남은 불완전 파일을 확인하세요." else "")
+                    if (destination != null && !removed) " 저장 위치에 미완성 파일이 남아 있는지 확인해 주세요." else "")
                 if (failure is CancellationException) throw failure
             } finally { copyJob = null }
         }

@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "upstream_code": {
+    "repository": "https://github.com/altunenes/re-use-rs",
+    "revision": "88638f3e137848a50d6aca6906530ed2b2b72acc",
+    "license": "Apache-2.0"
+  },
+  "model": {
+    "id": "nvidia/Real-time_RE-USE",
+    "revision": "4c0c186272ca853cd18d832fc5c28777b62f32d1",
+    "filename": "model.safetensors",
+    "size": 54055764,
+    "sha256": "6eac4e8cc721f99a22cde7eac3c9f8e2826ced5dc8a4234fd1977de1ec0d3ade",
+    "license": "NVIDIA One-Way Noncommercial License; noncommercial research and education only",
+    "included_in_apk_or_repository": false
+  },
+  "inference": { "sample_rate_hz": 16000, "frame_samples": 320, "layers": 3, "look_ahead_frames": 0, "worker_threads": 2 },
+  "release_gate": "No user-facing RE-USE option until matched ASR quality, device timing and thermal acceptance evidence is approved by PM"
+}

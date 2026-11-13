@@ -85,7 +85,14 @@ internal class GeminiLiveSession(
         RuntimeDiagnosticLog.record("gemini_live", "target=$diagnosticTarget state=$state ${diagnostics.summary()}")
         recordWire()
     }
-    private val input = GeminiLiveInput { reason, bytes ->
+    private val input = GeminiLiveInput(onOverflow = {
+        // 입력 콜백에서는 기다리지 않고, 종료·동의 철회 뒤 늦은 안내는 무시한다.
+        scope.launch {
+            if (!termination.isEnded && allowed() && settings.authorized(options) && options.allowLiveAudio) {
+                runCatching { onStatus("통역이 잠깐 밀려 일부 소리를 건너뛰었어요.") }
+            }
+        }
+    }) { reason, bytes ->
         timing?.stages?.inputLoss()
         monitor.loss(target, reason, bytes)
         diagnostics.loss(reason, bytes)
@@ -284,7 +291,7 @@ internal class GeminiLiveSession(
         diagnostics.capture(frame.bytes.size)
         if (!input.offer(frame.bytes)) {
             termination.request(NativeAudioEndReason.OVERLOAD)
-            onFailure("Gemini Live 전송 대기열 초과 · 음성 일부가 미전송되어 해당 연결을 중지했습니다. 다시 시작하세요.")
+            onFailure("통역이 계속 밀려 잠시 멈췄어요. 마이크를 다시 켜 주세요.")
             close()
         }
     }

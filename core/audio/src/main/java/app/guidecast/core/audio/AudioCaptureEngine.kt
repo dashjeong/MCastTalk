@@ -133,6 +133,7 @@ class AudioCaptureEngine(
         .getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val mutableProcessingStatus = MutableStateFlow(AudioProcessingStatus())
     private val processingGeneration = AtomicLong(0)
+    private val microphoneRecorderCreations = AtomicLong(0)
     val processingStatus: StateFlow<AudioProcessingStatus> = mutableProcessingStatus.asStateFlow()
     private val mutableClientSilenced = MutableStateFlow(false)
     val clientSilenced: StateFlow<Boolean> = mutableClientSilenced.asStateFlow()
@@ -143,6 +144,7 @@ class AudioCaptureEngine(
     fun frames(
         preferredDeviceId: Int?,
         config: AudioCaptureConfig = AudioCaptureConfig(),
+        onDiagnosticRead: ((Float) -> Unit)? = null,
     ): Flow<PcmFrame> = captureFlow {
         require(config.noiseMode != MicrophoneNoiseMode.AI || config.sampleRateHz == 16_000)
         val captureRate = if (config.noiseMode == MicrophoneNoiseMode.AI) 48_000 else config.sampleRateHz
@@ -178,6 +180,7 @@ class AudioCaptureEngine(
             throw error
         }
 
+        val recorderCreation = microphoneRecorderCreations.incrementAndGet()
         if (platformDevice != null) {
             val preferredSet = recorder.setPreferredDevice(platformDevice)
             if (!preferredSet && !routeLease.isBluetooth) {
@@ -230,6 +233,7 @@ class AudioCaptureEngine(
             session = processingSession, state = "RECORDING", requestedSampleRateHz = captureRate,
             recorderSampleRateHz = recorder.sampleRate, recorderChannels = recorder.channelCount,
             recorderEncoding = recorder.audioFormat, recordingState = recorder.recordingState,
+            recorderState = recorder.state, audioSource = recorder.audioSource, recorderCreations = recorderCreation,
             routedDeviceType = recorder.routedDevice?.type,
             systemMicrophoneMuted = runCatching { audioManager.isMicrophoneMute }.getOrNull(),
             clientSilenced = runCatching { recorder.activeRecordingConfiguration?.isClientSilenced }.getOrNull()))
@@ -327,6 +331,8 @@ class AudioCaptureEngine(
                 val now = SystemClock.elapsedRealtimeNanos()
                 fun heartbeat() {
                     if (now - lastDiagnosticNanos >= 1_000_000_000L) {
+                        captureDiagnostics.recorder(runCatching { recorder.state }.getOrNull(),
+                            runCatching { recorder.recordingState }.getOrNull())
                         captureDiagnostics.policy(runCatching { audioManager.isMicrophoneMute }.getOrNull(),
                             runCatching { recorder.activeRecordingConfiguration?.isClientSilenced }.getOrNull())
                         publishDiagnostics(); lastDiagnosticNanos = now
@@ -337,7 +343,9 @@ class AudioCaptureEngine(
                         withVerifiedNonBluetoothMicrophoneRoute(expectedNonBluetoothInput,
                             getRoutedDevice = { recorder.routedDevice?.let(::AndroidPlatformAudioDeviceInfo) }) {
                             val raw = buffer.copyOf(count)
-                            captureDiagnostics.read(raw, buffer.size, now)
+                            val diagnosticPeak = captureDiagnostics.read(raw, buffer.size, now)
+                            // 숫자 관측 실패가 입력을 끊지 않게 한다. 원본 PCM은 전달하지 않는다.
+                            if (onDiagnosticRead != null) runCatching { onDiagnosticRead(diagnosticPeak) }
                             val aligned = readAssembler.accept(raw, raw.size)
                             val bytes = denoiser?.process(aligned) ?: aligned
                             heartbeat()

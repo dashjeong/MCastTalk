@@ -14,6 +14,9 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import javax.net.ssl.HttpsURLConnection
 import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
+import kotlinx.coroutines.withContext
 import kotlin.coroutines.resume
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -64,6 +67,14 @@ internal fun interface CloudReviewTransport {
         review(request, apiKey)?.let { TeacherReview(it) }
 }
 
+internal data class TranslationReviewResult(val translation: String, val feedback: LearningFeedback) {
+    override fun toString() = "TranslationReviewResult(stage=${feedback.stage}, text=redacted)"
+}
+
+private class ReviewFeedbackContext(val record: (LearningFeedback) -> Unit) : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<ReviewFeedbackContext>
+}
+
 /** Optional text-only review. No response is allowed to hold up live audio or server control. */
 class CloudTranslationReviewer internal constructor(
     private val settings: DeveloperLabSettings,
@@ -96,17 +107,43 @@ class CloudTranslationReviewer internal constructor(
     }
     private val mutableStatus = MutableStateFlow(CloudReviewStatus.IDLE)
     val status = mutableStatus.asStateFlow()
+    private val mutableFeedback = MutableStateFlow(LearningFeedback(LearningStage.NOT_SENT, "아직 검토를 요청하지 않았습니다."))
+    val feedback = mutableFeedback.asStateFlow()
+    private suspend fun outcome(stage: LearningStage, reason: String) {
+        val result = LearningFeedback(stage, reason)
+        currentCoroutineContext()[ReviewFeedbackContext]?.record?.invoke(result)
+        mutableFeedback.value = result
+        mutableStatus.value = when (stage) {
+            LearningStage.REVIEWING -> CloudReviewStatus.REVIEWING
+            LearningStage.FAILED -> CloudReviewStatus.FALLBACK
+            LearningStage.DEFERRED, LearningStage.APPLIED -> CloudReviewStatus.IDLE
+            else -> CloudReviewStatus.IDLE
+        }
+    }
+
+    /** 화면은 공유된 최근 상태 대신 이 요청에 속한 결과를 받는다. */
+    internal suspend fun refineWithFeedback(sourceLanguageTag: String, targetLanguageTag: String,
+        original: String, draft: String, requestTeacherReview: Boolean = false, contextBefore: String? = null): TranslationReviewResult {
+        var result = LearningFeedback(LearningStage.NOT_SENT, "검토 결과를 확인하지 못했습니다.")
+        val translation = withContext(ReviewFeedbackContext { result = it }) {
+            refine(sourceLanguageTag, targetLanguageTag, original, draft,
+                requestTeacherReview = requestTeacherReview, contextBefore = contextBefore)
+        }
+        return TranslationReviewResult(translation, result)
+    }
 
     suspend fun refine(sourceLanguageTag: String, targetLanguageTag: String, original: String,
         draft: String, live: Boolean = false, requestTeacherReview: Boolean = false, contextBefore: String? = null,
         automaticRecheck: Boolean = false): String {
         val capturedStyle = currentCoroutineContext()[TranslationStyleContext]
-        val register = when (capturedStyle?.style) {
+        val register = when (capturedStyle?.style ?: TranslationStyle.valueOf(settings.state.value.translationRegister.name)) {
             TranslationStyle.AUTO -> TranslationRegister.AUTO
             TranslationStyle.CONVERSATIONAL -> TranslationRegister.CONVERSATIONAL
             else -> TranslationRegister.FORMAL
         }
-        if (!reviewTextWithinBounds(original, draft)) return draft
+        if (!reviewTextWithinBounds(original, draft)) {
+            outcome(LearningStage.NOT_SENT, "원문과 번역의 길이·형식을 확인해 주세요."); return draft
+        }
         val saved = try {
             withTimeoutOrNull(75L) { memory.lookup(sourceLanguageTag, targetLanguageTag, register, original) }
         } catch (cancelled: CancellationException) { throw cancelled }
@@ -124,6 +161,7 @@ class CloudTranslationReviewer internal constructor(
             if (approved?.comparison?.verified == true && approved.outcome == TeacherReviewOutcome.APPROVED &&
                 (saved == null || saved.updatedAtEpochMillis <= (approved.appliedAtEpochMillis ?: 0L))) {
                 progress { it.copy(reused = it.reused + 1) }
+                outcome(LearningStage.APPLIED, "승인된 참고 문장을 적용했습니다.")
                 return approved.after ?: draft
             }
         }
@@ -133,15 +171,18 @@ class CloudTranslationReviewer internal constructor(
                 try { refine(sourceLanguageTag, targetLanguageTag, original, saved.corrected, live = true,
                     contextBefore = contextBefore, automaticRecheck = true) }
                 catch (cancelled: CancellationException) { throw cancelled }
-                catch (_: Exception) { mutableStatus.value = CloudReviewStatus.FALLBACK }
+                catch (_: Exception) { outcome(LearningStage.FAILED, "저장된 문장을 다시 검토하지 못했습니다.") }
             }
             if (options.teacherLearningEnabled) progress { it.copy(reused = it.reused + 1) }
+            outcome(LearningStage.APPLIED, "저장된 참고 문장을 적용했습니다.")
             return saved.corrected
         }
-        if (!maySend(options)) return draft
+        cloudReviewBlockReason(options, developerInfo(), networkAllowed(), live)?.let {
+            outcome(LearningStage.NOT_SENT, it); return draft
+        }
         if (containsCredentialLikeText(original) || containsCredentialLikeText(draft) ||
             containsCredentialLikeText(contextBefore.orEmpty()) || containsCredentialLikeText(options.comparisonSituation)) {
-            mutableStatus.value = CloudReviewStatus.FALLBACK
+            outcome(LearningStage.NOT_SENT, "민감한 정보가 있어 보내지 않았습니다.")
             return draft
         }
         var request = CloudReviewRequest(options.provider, options.modelId, sourceLanguageTag,
@@ -151,34 +192,48 @@ class CloudTranslationReviewer internal constructor(
             secondaryModelId = options.secondaryModelId,
             baselineVersion = if (options.comparisonEnabled) comparativeHash(comparativeVersionHash(previousComparison) + comparativeHumanHash(saved)) else "",
             authorizationRevision = options.authorizationRevision)
-        if (!validCloudRequest(request)) return draft
+        if (!validCloudRequest(request)) {
+            outcome(LearningStage.NOT_SENT, "검토 서비스·언어·문장 형식을 확인해 주세요."); return draft
+        }
         val selective = options.teacherLearningEnabled && options.autoLearnEnabled
         if (selective) {
             val signals = selection.signals(request, requestTeacherReview)
             progress { it.copy(examined = it.examined + 1) }
-            if (signals.isEmpty()) { progress { it.copy(skipped = it.skipped + 1) }; return draft }
+            if (signals.isEmpty()) {
+                progress { it.copy(skipped = it.skipped + 1) }
+                outcome(LearningStage.NOT_SENT, "새로 검토할 내용이 없습니다."); return draft
+            }
             request = request.copy(teacherSignals = signals, requiresAutoLearning = true)
             val persisted = try {
                 withTimeoutOrNull(75L) { memory.teacherReport(selection.key(request)) }
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { return draft }
+            catch (_: Exception) { outcome(LearningStage.FAILED, "이전 검토 기록을 불러오지 못했습니다."); return draft }
             val coolDown = if (persisted?.outcome in setOf(TeacherReviewOutcome.LEARNED, TeacherReviewOutcome.UNCHANGED,
                     TeacherReviewOutcome.APPROVED, TeacherReviewOutcome.DISAGREEMENT, TeacherReviewOutcome.NO_LESSON)) 86_400_000L else 300_000L
             if (persisted != null && (persisted.outcome in setOf(TeacherReviewOutcome.UNDONE, TeacherReviewOutcome.PROPOSED, TeacherReviewOutcome.HELD) ||
                     System.currentTimeMillis() - persisted.createdAtEpochMillis < coolDown)) {
-                progress { it.copy(skipped = it.skipped + 1) }; return draft
+                progress { it.copy(skipped = it.skipped + 1) }
+                outcome(if (persisted.outcome == TeacherReviewOutcome.PROPOSED) LearningStage.APPROVAL_PENDING else LearningStage.NOT_SENT,
+                    if (persisted.outcome == TeacherReviewOutcome.PROPOSED) "이미 저장된 개선안을 확인해 주세요." else "최근에 검토했거나 보류한 문장입니다.")
+                return draft
             }
-            if (!selection.acquire(request)) { progress { it.copy(skipped = it.skipped + 1) }; return draft }
+            if (!selection.acquire(request)) {
+                progress { it.copy(skipped = it.skipped + 1) }
+                outcome(LearningStage.NOT_SENT, "중복 요청이거나 검토 횟수 제한에 걸렸습니다."); return draft
+            }
         }
         // Live review has a useful outcome only when the operator explicitly enabled learning.
-        if (live && !options.autoLearnEnabled) return draft
+        if (live && !options.autoLearnEnabled) {
+            outcome(LearningStage.NOT_SENT, "방송 중에는 검토 결과 저장이 꺼져 있습니다."); return draft
+        }
         val key = requestDedupKey(request)
         if (!admission.acquire(key, live, exclusive = request.comparisonMode)) {
             if (selective) selection.finish(request, completed = false)
-            mutableStatus.value = CloudReviewStatus.BUSY; return draft
+            outcome(LearningStage.NOT_SENT, "중복 요청, 동시 처리, 분당 횟수 제한으로 보내지 않았습니다."); return draft
         }
         if (selective) progress { it.copy(selected = it.selected + 1, lastSignals = request.teacherSignals) }
         if (live) {
+            outcome(LearningStage.DEFERRED, "검토를 예약했습니다. 지금 방송 문장은 바뀌지 않습니다.")
             scope.launch {
                 try { reviewAndMaybeLearn(request, requireLearning = true) }
                 finally { admission.release(key); if (selective) selection.finish(request, completed = false) }
@@ -190,7 +245,7 @@ class CloudTranslationReviewer internal constructor(
     }
 
     private fun maySend(options: DeveloperLabOptions) =
-        networkAllowed() && developerInfo() && options.cloudReviewEnabled && options.hasApiKey
+        cloudReviewBlockReason(options, developerInfo(), networkAllowed(), live = false) == null
 
     private fun mayUseReview(request: CloudReviewRequest): Boolean {
         val current = settings.state.value
@@ -210,12 +265,16 @@ class CloudTranslationReviewer internal constructor(
         // Re-read consent at dispatch; queued work cannot use a toggle that was since disabled.
         val options = settings.state.value
         if (!mayUseReview(request) ||
-            (requireLearning && !options.autoLearnEnabled)) return null
-        val key = settings.apiKey(request.provider) ?: return null
+            (requireLearning && !options.autoLearnEnabled)) {
+            outcome(LearningStage.NOT_SENT, "전송 동의나 저장 설정이 바뀌었습니다."); return null
+        }
+        val key = settings.apiKey(request.provider) ?: run {
+            outcome(LearningStage.NOT_SENT, "검토 서비스의 이용 키를 읽지 못했습니다."); return null
+        }
         if (request.comparisonMode) return try { reviewComparatively(request) }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { mutableStatus.value = CloudReviewStatus.FALLBACK; null }
-        mutableStatus.value = CloudReviewStatus.REVIEWING
+            catch (_: Exception) { outcome(LearningStage.FAILED, "비교 검토를 마치지 못했습니다."); null }
+        outcome(LearningStage.REVIEWING, "문장을 확인하고 있습니다.")
         val review = try {
             withTimeoutOrNull(if (request.teacherSignals.isEmpty()) REVIEW_DEADLINE_MILLIS else TEACHER_DEADLINE_MILLIS) {
                 transport.reviewWithLessons(request, key)
@@ -223,7 +282,7 @@ class CloudTranslationReviewer internal constructor(
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { null }
         currentCoroutineContext().ensureActive()
-        if (!mayUseReview(request)) return null
+        if (!mayUseReview(request)) { outcome(LearningStage.NOT_APPLIED, "검토 중 설정이 바뀌어 결과를 적용하지 않았습니다."); return null }
         val corrected = review?.corrected?.takeIf { conservativeReviewAccepted(request.original, request.draft, it, request.targetLanguageTag) }
         val selective = request.teacherSignals.isNotEmpty()
         if (corrected == null) {
@@ -231,31 +290,33 @@ class CloudTranslationReviewer internal constructor(
                 progress { it.copy(rejected = it.rejected + 1) }
                 report(request, review, if (review == null) TeacherReviewOutcome.UNAVAILABLE else TeacherReviewOutcome.REJECTED)
             }
-            mutableStatus.value = CloudReviewStatus.FALLBACK; return null
+            outcome(LearningStage.FAILED, if (review == null) "응답을 받지 못했거나 시간이 초과됐습니다." else "내용 보존 검사를 통과하지 못했습니다."); return null
         }
         if (selective && normalizeMemorySource(corrected) == normalizeMemorySource(request.draft)) {
             progress { it.copy(unchanged = it.unchanged + 1) }
             report(request, review, TeacherReviewOutcome.UNCHANGED)
             selection.finish(request, completed = true)
-            mutableStatus.value = CloudReviewStatus.IDLE
+            outcome(LearningStage.UNCHANGED, "바꿀 내용이 없습니다.")
             return request.draft
         }
         // A teacher must identify a bounded, recognizable improvement before it becomes a lesson.
         if (selective && review.lessons.isEmpty()) {
             progress { it.copy(rejected = it.rejected + 1) }
             report(request, review, TeacherReviewOutcome.NO_LESSON)
+            outcome(LearningStage.FAILED, "바꿔야 할 이유를 확인하지 못했습니다.")
             return null
         }
         if (selective) {
             val recorded = report(request, review, TeacherReviewOutcome.PROPOSED)
             progress { if (recorded) it.copy(proposed = it.proposed + 1) else it.copy(rejected = it.rejected + 1) }
             selection.finish(request, completed = recorded)
-            mutableStatus.value = if (recorded) CloudReviewStatus.IDLE else CloudReviewStatus.FALLBACK
+            outcome(if (recorded) LearningStage.APPROVAL_PENDING else LearningStage.FAILED,
+                if (recorded) "개선안을 저장했습니다. 확인 후 승인해 주세요." else "개선안을 저장하지 못했습니다.")
             // Approval is a local user operation, never a capability granted to the teacher.
             return request.draft
         }
         val latest = settings.state.value
-        if (!mayUseReview(request)) return null
+        if (!mayUseReview(request)) { outcome(LearningStage.NOT_APPLIED, "검토 중 설정이 바뀌어 결과를 적용하지 않았습니다."); return null }
         if (latest.autoLearnEnabled) {
             val learned = try {
                 withTimeoutOrNull(150L) { memory.upsertIf(SentenceMemoryEntry(
@@ -265,8 +326,10 @@ class CloudTranslationReviewer internal constructor(
                 )) { mayLearn(request) } } == true
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { false }
-            mutableStatus.value = if (learned) CloudReviewStatus.LEARNED else CloudReviewStatus.IDLE
-        } else mutableStatus.value = CloudReviewStatus.IDLE
+            outcome(if (!learned) LearningStage.FAILED else if (requireLearning) LearningStage.DEFERRED else LearningStage.APPLIED,
+                if (!learned) "검토 결과를 저장하지 못했습니다."
+                else if (requireLearning) "저장했습니다. 다음에 같은 문장이 나오면 자동으로 적용합니다." else "검토 결과를 저장하고 적용했습니다.")
+        } else outcome(LearningStage.APPLIED, "이번 문장에만 검토 결과를 적용했습니다.")
         return corrected.takeIf { mayUseReview(request) }
     }
 
@@ -275,9 +338,11 @@ class CloudTranslationReviewer internal constructor(
             request.translationRegister, request.original, request.contextBefore, request.situation)
         val previous = memory.comparativeLesson(lessonKey)
         val previousHuman = memory.lookup(request.sourceLanguageTag, request.targetLanguageTag, request.translationRegister, request.original)
-        if (comparativeHash(comparativeVersionHash(previous) + comparativeHumanHash(previousHuman)) != request.baselineVersion) return null
+        if (comparativeHash(comparativeVersionHash(previous) + comparativeHumanHash(previousHuman)) != request.baselineVersion) {
+            outcome(LearningStage.NOT_SENT, "이전 검토 기록이 바뀌었습니다."); return null
+        }
         val related = memory.relatedComparativeLessons(request.sourceLanguageTag, request.targetLanguageTag, request.original)
-        mutableStatus.value = CloudReviewStatus.REVIEWING
+        outcome(LearningStage.REVIEWING, "두 서비스의 검토 결과를 비교하고 있습니다.")
         val result = withTimeoutOrNull(24_000L) {
             compareTeacherTranslations(request, request.secondaryModelId, request.contextBefore, request.situation, previous, related, previousHuman) { call ->
                 if (!mayUseReview(request)) null else settings.apiKey(call.provider)?.let { key ->
@@ -285,14 +350,25 @@ class CloudTranslationReviewer internal constructor(
                 }
             }
         }
-        if (!mayUseReview(request)) return null
+        if (!mayUseReview(request)) { outcome(LearningStage.NOT_APPLIED, "검토 중 설정이 바뀌어 결과를 적용하지 않았습니다."); return null }
         val recorded = if (result != null) report(request, result.review, result.outcome, result.evidence)
             else report(request, null, TeacherReviewOutcome.UNAVAILABLE)
         progress { if (recorded && result?.outcome == TeacherReviewOutcome.PROPOSED) it.copy(proposed = it.proposed + 1)
             else if (result?.outcome == TeacherReviewOutcome.UNCHANGED) it.copy(unchanged = it.unchanged + 1)
             else it.copy(rejected = it.rejected + 1) }
         selection.finish(request, completed = recorded)
-        mutableStatus.value = if (recorded) CloudReviewStatus.IDLE else CloudReviewStatus.FALLBACK
+        outcome(when {
+            !recorded || result == null -> LearningStage.FAILED
+            result.outcome == TeacherReviewOutcome.PROPOSED -> LearningStage.APPROVAL_PENDING
+            result.outcome == TeacherReviewOutcome.UNCHANGED -> LearningStage.UNCHANGED
+            else -> LearningStage.FAILED
+        }, when {
+            !recorded -> "검토 기록을 저장하지 못했습니다."
+            result == null -> "비교 응답을 받지 못했습니다."
+            result.outcome == TeacherReviewOutcome.PROPOSED -> "개선안을 저장했습니다. 확인 후 승인해 주세요."
+            result.outcome == TeacherReviewOutcome.UNCHANGED -> "바꿀 내용이 없습니다."
+            else -> "두 서비스의 검토 결과가 다르거나, 내용을 그대로 보존했는지 확인하지 못했습니다."
+        })
         return request.draft
     }
 

@@ -26,6 +26,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collectLatest
 import java.io.File
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -96,9 +98,22 @@ class GuideCastApplication : Application() {
         GalaxySpeechRecognitionEngine(
             context = this,
             captureSilenced = audioCaptureEngine.clientSilenced,
+            correctRecognizedText = { text, language ->
+                val options = operatorSettings.state.value
+                val userTerms = recognitionUserTermsSnapshot?.takeIf {
+                    it.first == (TranslationGlossaryRepository.language(language) to options.targetLanguageTags)
+                }?.second.orEmpty()
+                app.guidecast.core.translation.KoreanRecognitionTerms.correct(text, language,
+                    interpretationBriefingSettings.state.value.recognitionHints(language), userTerms)
+            },
             recognitionHints = { language ->
-                (speechCorrections.recognitionHints(language) + sentenceTranslationMemory.recognitionHints(language))
-                    .distinct().take(32)
+                val options = operatorSettings.state.value
+                val glossaryHints = recognitionGlossarySnapshot?.takeIf {
+                    it.first == (TranslationGlossaryRepository.language(language) to options.targetLanguageTags)
+                }?.second.orEmpty()
+                app.guidecast.core.translation.mergeInterpretationRecognitionHints(
+                    interpretationBriefingSettings.state.value.recognitionHints(language), speechCorrections.recognitionHints(language),
+                    glossaryHints, sentenceTranslationMemory.recognitionHints(language))
             },
             warmMoonshineForRestartWithNativeAdmission = { languageTag, warm ->
                 withProcessNativeColdLoadLease(
@@ -110,9 +125,29 @@ class GuideCastApplication : Application() {
                     warm()
                 }
             },
-        )
+        ).also {
+            nativeEngineScope.launch {
+                combine(operatorSettings.state, glossary.revision) { options, _ -> options }.collectLatest { options ->
+                    val source = TranslationGlossaryRepository.language(options.sourceLanguageTag)
+                    recognitionGlossarySnapshot = null
+                    recognitionUserTermsSnapshot = null
+                    val hints = try {
+                        options.targetLanguageTags.flatMap { glossary.recognitionHints(source, it) }
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                    catch (_: Exception) { emptyList() }
+                    recognitionGlossarySnapshot = (source to options.targetLanguageTags.toList()) to hints
+                    val userTerms = try {
+                        options.targetLanguageTags.flatMap { glossary.userRecognitionTerms(source, it) }
+                    } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                    catch (_: Exception) { emptyList() }
+                    recognitionUserTermsSnapshot = (source to options.targetLanguageTags.toList()) to userTerms
+                }
+            }
+        }
     }
     val speechRecognitionEngine by speechRecognitionEngineDelegate
+    @Volatile private var recognitionGlossarySnapshot: Pair<Pair<String, List<String>>, List<String>>? = null
+    @Volatile private var recognitionUserTermsSnapshot: Pair<Pair<String, List<String>>, List<String>>? = null
     val broadcastRuntime = BroadcastRuntime()
     internal val webBroadcastOwnership = WebBroadcastOwnership()
     internal val menuBroadcast by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { MenuBroadcastController(this) }
@@ -127,6 +162,7 @@ class GuideCastApplication : Application() {
         TranslationSessionDiagnostics(this)
     }
     val glossary by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { TranslationGlossaryRepository(this) }
+    val interpretationBriefingSettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { InterpretationBriefingSettings(this) }
     val speechCorrections by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { SpeechCorrectionRepository(this) }
     val uiDisplaySettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { UiDisplaySettings(this) }
     val operatorSettings by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { OperatorSettings(this) }
@@ -149,7 +185,8 @@ class GuideCastApplication : Application() {
     }
     internal val serviceDefaults by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { ServiceDefaults(this) }
     internal val commonServiceApiService by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
-        TranslationApiService(commonServiceApiSettings, shadowAllowed = { false }, comparisonResources = { false })
+        TranslationApiService(commonServiceApiSettings, shadowAllowed = { false }, comparisonResources = { false },
+            briefing = { interpretationBriefingSettings.state.value.referenceText() }, glossaryLookup = glossary::matching)
     }
     internal val serviceMenuProfiles by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
         ServiceMenuProfiles(this, commonServiceApiSettings)
@@ -178,7 +215,8 @@ class GuideCastApplication : Application() {
     val translationApiService by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { TranslationApiService(translationApiSettings, shadowAllowed = { target ->
         learningResourcesAvailable() && translationProvider.hasActivePreparedWorker(target)
     }, comparisonResources = ::learningResourcesAvailable, automaticExamples = automaticTranslationExamples,
-        exampleDomain = domainCorpus::automaticExampleDomain, comparisonLifetime = ::comparisonWorkLifetime) }
+        exampleDomain = domainCorpus::automaticExampleDomain, comparisonLifetime = ::comparisonWorkLifetime,
+        briefing = { interpretationBriefingSettings.state.value.referenceText() }, glossaryLookup = glossary::matching) }
     internal fun comparisonWorkLifetime(): String = listOf(broadcastRuntime.learningActivityEpoch,
         fileWorkOwners.generation, voiceNoteWorkOwners.generation, preparationOwners.currentGeneration).joinToString(":")
     val sentenceTranslationMemory by lazy(LazyThreadSafetyMode.SYNCHRONIZED) { SentenceTranslationMemory(this) }

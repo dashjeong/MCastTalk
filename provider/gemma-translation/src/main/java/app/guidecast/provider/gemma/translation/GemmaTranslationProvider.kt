@@ -199,7 +199,7 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
                         requestId = requestId,
                         service = service,
                         text = text,
-                        contextBefore = boundedWholeGemmaContext(contextBefore.orEmpty()),
+                        contextBefore = boundedWholeGemmaContext(contextBefore.orEmpty(), modelManager.selectedVariant),
                         sourceLanguageTag = source,
                         targetLanguageTag = if (targetLanguageTag.equals("zh-TW", ignoreCase = true)) "zh-TW" else target,
                         selectedModelId = selectedModelId,
@@ -237,14 +237,10 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
         val domainHints = currentCoroutineContext()[app.guidecast.core.translation.DomainTranslationContext]?.hints.orEmpty()
         val review = currentCoroutineContext()[TranslationReviewContext]
         val translationStyle = currentCoroutineContext()[TranslationStyleContext]?.style?.name.orEmpty()
-        // Only the local E4B worker receives this ephemeral history. Cloud providers and E2B
-        // retain their existing request contracts; history is never written to diagnostics.
-        val sessionMemory = if (selectedModelId == GemmaModelVariant.E4B_IT.id) {
-            boundedGemmaSessionMemory(
-                currentCoroutineContext()[app.guidecast.core.translation.TranslationSessionMemoryContext]?.memory.orEmpty(),
-                contextBefore,
-            )
-        } else ""
+        val sessionMemory = gemmaSessionMemory(
+            currentCoroutineContext()[app.guidecast.core.translation.TranslationSessionMemoryContext]?.pairs.orEmpty(),
+            contextBefore, modelManager.selectedVariant)
+        val briefing = currentCoroutineContext()[app.guidecast.core.translation.InterpretationBriefingContext]?.reference.orEmpty()
         val reviewDraft = review?.let {
             require(it.originalText == text &&
                 it.sourceLanguageTag.equals(sourceLanguageTag, ignoreCase = true) &&
@@ -366,6 +362,7 @@ class GemmaTranslationProvider(context: Context) : TranslationEngineProvider, Cl
                         sessionMemory,
                         domainHints,
                         jsonResponseFormat,
+                        briefing,
                         callback,
                     )
                 } catch (error: Throwable) {

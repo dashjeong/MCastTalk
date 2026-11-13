@@ -243,7 +243,15 @@ class RealtimeInterpretationSegmenter(
                 verifiedQuietMillis >=
                 policy.undetectedSpeechUtteranceEndSilenceMillis &&
                 textQuietMillis >= policy.undetectedSpeechUtteranceEndSilenceMillis
+        // Wind/crowd can keep the advisory PCM gate open forever. When the recognizer has produced
+        // no new text for a long, measured window, treat that text silence as a pause signal.
+        // Grammar rules still decide the boundary; this only stops a finished sentence from waiting
+        // for an acoustic quiet that never comes.
+        val textBasedQuietMillis = if (speechActive && textQuietMillis >= TEXT_SILENCE_AS_PAUSE_MILLIS) {
+            textQuietMillis - TEXT_SILENCE_PAUSE_OFFSET_MILLIS
+        } else 0L
         val quietMillis = when {
+            textBasedQuietMillis > 0L -> textBasedQuietMillis
             speechActive -> 0L
             lastSpeechAtNanos != null -> verifiedQuietMillis
             undetectedSpeechQuietReady -> verifiedQuietMillis
@@ -256,8 +264,8 @@ class RealtimeInterpretationSegmenter(
         // Use capture timestamps only: missing frames and scheduling lag cannot add silence.
         val idleLimit = policy.maximumIdleFlushMillis
         if (idleLimit != null &&
-            !speechActive &&
-            measuredContinuousQuietMillis() >= idleLimit &&
+            ((!speechActive && measuredContinuousQuietMillis() >= idleLimit) ||
+                textBasedQuietMillis >= idleLimit) &&
             textSettled &&
             residual.hasUsefulText()
         ) {
@@ -278,18 +286,23 @@ class RealtimeInterpretationSegmenter(
             policy.utteranceEndSilenceMillis
         }
         val requirePositiveKoreanCompletion = requiresPositiveKoreanCompletion()
+        // 짧은 맞장구는 다음 낱말의 일부일 수 있다. 명시된 마침표가 없는 경우만 더 기다린다.
+        val sentencePauseMillis = if (requirePositiveKoreanCompletion && residual.size <= 2 &&
+            tail in KOREAN_STANDALONE_RESPONSES) maxOf(policy.sentencePauseMillis, policy.unpunctuatedPauseMillis)
+            else policy.sentencePauseMillis
         // Quiet speech may never cross the advisory PCM energy gate. Repeated, unchanged
         // complete text can use the short pause; single partials keep the longer fallback.
         val completeSentencePause =
-            (quietMillis >= policy.sentencePauseMillis && textSettled) ||
+            (quietMillis >= sentencePauseMillis && textSettled) ||
+                textBasedQuietMillis >= sentencePauseMillis ||
                 (!speechActive && lastSpeechAtNanos == null &&
-                    verifiedQuietMillis >= policy.sentencePauseMillis &&
-                    textQuietMillis >= policy.sentencePauseMillis)
+                    verifiedQuietMillis >= sentencePauseMillis &&
+                    textQuietMillis >= sentencePauseMillis)
         // Release the earliest confirmed sentence, then evaluate the retained tail separately.
         // A provider callback containing several sentences must not merge them into one request.
         val strongBoundary = stable.indices.firstOrNull { index ->
             val token = stable[index]
-            isStrongBoundary(token) &&
+            isStrongBoundary(token, requirePositiveKoreanCompletion) &&
                 isMeaningBoundary(residual, index) &&
                 (!requirePositiveKoreanCompletion || isPositiveKoreanSentenceEnding(token)) &&
                 (!policy.requireAcousticPauseForBoundary ||
@@ -311,7 +324,7 @@ class RealtimeInterpretationSegmenter(
         if (stableSentenceLimit != null && elapsedMillis >= stableSentenceLimit) {
             val timedResidual = residualTokens(observedFullTokens)
             val boundedBoundary = stable.indices.firstOrNull { index ->
-                isStrongBoundary(stable[index]) &&
+                isStrongBoundary(stable[index], requirePositiveKoreanCompletion) &&
                     isMeaningBoundary(residual, index) &&
                     (!requirePositiveKoreanCompletion ||
                         isPositiveKoreanSentenceEnding(stable[index])) &&
@@ -322,6 +335,24 @@ class RealtimeInterpretationSegmenter(
             } ?: -1
             if (boundedBoundary >= 0 && stable.take(boundedBoundary + 1).hasUsefulText()) {
                 return boundedBoundary + 1
+            }
+        }
+
+        // Twelve seconds without any complete sentence ending (a run-on built from connectives) must
+        // not hold the whole stretch or force a recognizer restart that drops in-flight words.
+        // Release up to the last stable phrase boundary while keeping right context revisable.
+        if (stableSentenceLimit != null && elapsedMillis >= stableSentenceLimit &&
+            stable.size >= policy.minimumContinuousCommitTokens + policy.semanticRightContextTokens
+        ) {
+            // 최대 대기에서는 마지막 연결어미까지 보내고 최소 한 낱말의 오른쪽 문맥을 남긴다.
+            val searchable = stable.dropLast(1)
+            val boundary = searchable.indexOfLast {
+                isKoreanSemanticPhraseBoundary(it) || isPositiveKoreanSentenceEnding(it)
+            }
+            val count = boundary + 1
+            if (count >= policy.minimumContinuousCommitTokens && stable.take(count).hasUsefulText() &&
+                !stable.take(count).hasUnclosedSpeechQuote()) {
+                return count
             }
         }
 
@@ -455,9 +486,13 @@ class RealtimeInterpretationSegmenter(
                     // An apparent -지 ending may still await a late negative auxiliary. Silence
                     // alone cannot turn “알지 … 못했습니다” into an affirmative interpretation.
                     !(word in KOREAN_AMBIGUOUS_JI_ENDINGS && rightContext.isEmpty()) &&
+                    !(word in KOREAN_CONVENTIONAL_GREETINGS && rightContext.isNotEmpty()) &&
                     !(word == "맞아" && rightContext.firstOrNull()?.startsWith("죽") == true) &&
                     !rightContext.isOnlyKoreanPostposedModifiers() &&
                     (word !in KOREAN_STANDALONE_RESPONSES || prefix.size == 1) &&
+                    // 마지막 쉼은 소개 전체의 쉼이다. 구두점 없는 "안녕하십니까 오늘..."의 중간을 자르지 않는다.
+                    !(hasKoreanFormalQuestionEnding(word) && rightContext.isNotEmpty() &&
+                        tokens[index].lastOrNull() !in STRONG_PUNCTUATION) &&
                     !(word == "네" && hasKoreanCounterRightContext(rightContext)) &&
                     !hasKoreanDependentRightContext(rightContext, word)
             }
@@ -484,8 +519,12 @@ class RealtimeInterpretationSegmenter(
             capturedAtElapsedRealtimeNanos = capturedAtNanos,
             recognizedAtElapsedRealtimeNanos = nowNanos,
             contextBefore = contextBefore,
-            firstAudioDeadlineElapsedRealtimeNanos = capturedAtNanos +
-                policy.listenerMaximumWaitMillis * 1_000_000L,
+            // 긴 문장은 말하는 데만 10초 가까이 걸려, 말 시작 기준 마감만 쓰면 번역 전에 이미
+            // 음성이 버려진다(S21 실측: 일본어→한국어 10문장 중 6문장). 확정 뒤 여유를 보장한다.
+            firstAudioDeadlineElapsedRealtimeNanos = maxOf(
+                capturedAtNanos + policy.listenerMaximumWaitMillis * 1_000_000L,
+                nowNanos + policy.speechStartAfterFinalMillis * 1_000_000L,
+            ),
         ).also {
             committedContext.addLast(text)
             while (committedContext.size > MAX_CONTEXT_SEGMENTS) committedContext.removeFirst()
@@ -751,8 +790,10 @@ class RealtimeInterpretationSegmenter(
 
     private companion object {
         const val MAX_UTTERANCE_CHARACTERS = 2_000
-        const val MAX_CONTEXT_SEGMENTS = 2
+        const val MAX_CONTEXT_SEGMENTS = 4
         const val MAX_ALIGNMENT_ANCHOR_TOKENS = 4
+        const val TEXT_SILENCE_AS_PAUSE_MILLIS = 2_200L
+        const val TEXT_SILENCE_PAUSE_OFFSET_MILLIS = 1_000L
         const val ALIGN_DIAGONAL: Byte = 0
         const val ALIGN_DELETE: Byte = 1
         const val ALIGN_INSERT: Byte = 2
@@ -799,6 +840,11 @@ data class RealtimeInterpretationPolicy(
     val maximumIdleFlushMillis: Long? = null,
     /** Bounds holding a stable complete sentence; never chooses an arbitrary word boundary. */
     val maximumStableSentenceWaitMillis: Long? = null,
+    /**
+     * Time a committed sentence always keeps for translation and first audio, counted from the
+     * moment it was committed. Zero keeps only the speech-start based [listenerMaximumWaitMillis].
+     */
+    val speechStartAfterFinalMillis: Long = 0,
 ) {
     init {
         require(stableHypothesisCount in 2..4)
@@ -825,6 +871,7 @@ data class RealtimeInterpretationPolicy(
         require(semanticRightContextTokens in 2..6)
         require(maximumIdleFlushMillis == null || maximumIdleFlushMillis in 5_000..15_000)
         require(maximumStableSentenceWaitMillis == null || maximumStableSentenceWaitMillis in 5_000..15_000)
+        require(speechStartAfterFinalMillis in 0..10_000)
     }
 }
 
@@ -873,6 +920,8 @@ fun sentenceCompletionInterpretationPolicy(): RealtimeInterpretationPolicy =
         preserveIncompleteMeaningAcrossPauses = true,
         maximumIdleFlushMillis = 8_000,
         maximumStableSentenceWaitMillis = 12_000,
+        // 번역 1회(약 3초) + 다시 번역 1회 + 첫 소리. 파이프라인의 "확정 뒤 10초" 상한보다 짧다.
+        speechStartAfterFinalMillis = 8_000,
     )
 
 private fun elapsedMillis(startNanos: Long?, nowNanos: Long): Long =
@@ -932,31 +981,62 @@ private val KOREAN_NUMBER_COUNTERS = setOf(
 )
 private val KOREAN_COUNTER_PARTICLES = setOf("", "가", "이", "를", "을", "는", "은", "의", "로", "쯤", "씩", "나", "만")
 
-private fun isStrongBoundary(token: String): Boolean {
+private fun isStrongBoundary(token: String, allowFormalKoreanQuestion: Boolean = false): Boolean {
     val normalized = token.trimEnd('"', '\'', '”', '’', ')', ']', '}')
     val withoutTrailingPunctuation = normalized.trimEnd('.', '!', '?', '。', '！', '？', ',', ';', ':')
+    // 구두점 재생에 쓰는 기본 정책은 기존 동작을 유지한다. 새 질문형은 제품의 뜻 단위 정책에서만 쓴다.
+    if (!allowFormalKoreanQuestion && hasKoreanFormalQuestionEnding(withoutTrailingPunctuation) &&
+        normalized.lastOrNull() !in STRONG_PUNCTUATION) return false
     if (isLikelyIncompleteBoundaryToken(normalized)) return false
     if (normalized.lastOrNull() in STRONG_PUNCTUATION) return true
     return withoutTrailingPunctuation in KOREAN_COMPLETE_SHORT_REPLIES ||
+        isKoreanSpokenPoliteEnding(withoutTrailingPunctuation) ||
         KOREAN_SENTENCE_ENDINGS.any(withoutTrailingPunctuation::endsWith) ||
         isKoreanConversationalEnding(withoutTrailingPunctuation) ||
-        hasKoreanPastDeclarativeEnding(withoutTrailingPunctuation)
+        hasKoreanPastDeclarativeEnding(withoutTrailingPunctuation) ||
+        hasKoreanFormalQuestionEnding(withoutTrailingPunctuation)
 }
 
 /** Protects common Korean fragments when a recognizer speculatively appends sentence punctuation. */
 private fun isLikelyIncompleteKoreanBoundary(word: String): Boolean =
-    word in KOREAN_INCOMPLETE_BOUNDARY_WORDS ||
-        KOREAN_INCOMPLETE_BOUNDARY_ENDINGS.any(word::endsWith)
+    // 격식 있는 질문의 "-ㅂ니까"를 연결어미 "-니까"로 오인하지 않는다.
+    !hasKoreanFormalQuestionEnding(word) &&
+        (word in KOREAN_INCOMPLETE_BOUNDARY_WORDS ||
+        KOREAN_INCOMPLETE_BOUNDARY_ENDINGS.any(word::endsWith) ||
+        (isKoreanSemanticPhraseBoundary(word) && !isKoreanConversationalEnding(word)))
+
+/**
+ * Polite spoken endings that field guides use as sentence finals ("노동당사고요", "건물인데요",
+ * "고생했대요"). They still need the same measured pause or confirmed right context as formal
+ * endings; this list only stops them from being treated as unfinished clauses forever.
+ */
+private val KOREAN_SPOKEN_POLITE_ENDINGS = listOf(
+    "고요", "구요", "는데요", "은데요", "인데요", "던데요", "대요", "래요", "걸요", "지요",
+    "라구요", "다구요", "봐요", "줘요", "와요", "워요",
+)
+
+private fun isKoreanSpokenPoliteEnding(word: String): Boolean =
+    word.length > 2 && KOREAN_SPOKEN_POLITE_ENDINGS.any(word::endsWith)
 
 private fun isPositiveKoreanSentenceEnding(token: String): Boolean {
     val normalized = token.trimEnd('"', '\'', '”', '’', ')', ']', '}')
         .trimEnd('.', '!', '?', '。', '！', '？', ',', ';', ':', '，', '；', '：')
     return !isLikelyIncompleteKoreanBoundary(normalized) &&
         (normalized in KOREAN_COMPLETE_SHORT_REPLIES ||
+            isKoreanSpokenPoliteEnding(normalized) ||
             KOREAN_SENTENCE_ENDINGS.any(normalized::endsWith) ||
             isKoreanConversationalEnding(normalized) ||
-            hasKoreanPastDeclarativeEnding(normalized))
+            hasKoreanPastDeclarativeEnding(normalized) || hasKoreanFormalQuestionEnding(normalized))
 }
+
+private fun hasKoreanFormalQuestionEnding(word: String): Boolean {
+    if (word in KOREAN_CONVENTIONAL_GREETINGS) return false
+    if (!word.endsWith("니까") || word.length < 3) return false
+    val stem = word[word.length - 3]
+    return stem in '가'..'힣' && (stem.code - '가'.code) % 28 == 17 // 받침 ㅂ
+}
+
+private val KOREAN_CONVENTIONAL_GREETINGS = setOf("안녕하십니까", "반갑습니까")
 
 /**
  * Conversational completions missing from the formal register. Never accept arbitrary -네/-지/
@@ -1073,12 +1153,12 @@ private fun isKoreanSemanticPhraseBoundary(token: String): Boolean {
         return false
     }
     val word = normalized.trim()
+    if (hasKoreanFormalQuestionEnding(word)) return false
     if (word in KOREAN_SEMANTIC_BOUNDARY_WORDS) return true
     if (KOREAN_CONNECTIVE_ENDINGS.any(word::endsWith)) return true
-    // "-고" is productive, but common two-syllable nouns (사고/광고/최고/원고...) and the
-    // conjunction "그리고" must not become false boundaries. Requiring a longer eojeol is a
-    // deliberately conservative offline approximation (이동하고/이어지고/설명하고).
-    return word.length >= 3 && word.endsWith("고") && word !in KOREAN_NON_BOUNDARY_GO_WORDS
+    // 알고/가고 같은 짧은 연결어미도 허용하되 명사·접속사는 경계로 삼지 않는다.
+    return word.length >= 2 && word.endsWith("고") && word !in KOREAN_NON_BOUNDARY_GO_WORDS &&
+        !isKoreanConversationalEnding(word)
 }
 
 private val WHITESPACE = Regex("\\s+")
@@ -1093,6 +1173,7 @@ private val KOREAN_SENTENCE_ENDINGS = listOf(
     "합시다", "갑시다", "봅시다",
     "아요", "어요", "나요", "까요", "네요", "군요", "더라고요", "거든요", "게요", "랍니다", "죠",
     "했다", "한다", "됐다", "된다", "였다", "이다", "있다", "없다", "같다", "싶다", "겠다",
+    "크다", "작다", "빠르다", "느리다", "높다", "낮다", "좋다", "많다", "적다",
     "했어", "있어", "없어", "거야", "할게", "할까", "하자", "가자", "할래",
 )
 private val KOREAN_CONNECTIVE_ENDINGS = listOf(
@@ -1104,7 +1185,7 @@ private val KOREAN_SEMANTIC_BOUNDARY_WORDS = setOf(
     "동안", "이후", "후에", "뒤에", "다음에", "다음으로", "이어서", "따라", "통해", "위해",
 )
 private val KOREAN_NON_BOUNDARY_GO_WORDS = setOf(
-    "그리고", "그러고",
+    "그리고", "그러고", "최고", "사고", "광고", "원고", "창고", "재고", "참고", "보고",
 )
 private val KOREAN_INCOMPLETE_BOUNDARY_WORDS = setOf(
     "내부의", "때문에", "하지만", "어떻게", "그리고", "그러나", "따라서", "그래서",

@@ -138,8 +138,9 @@ android {
         applicationId = "app.guidecast.transmitter"
         minSdk = 30
         targetSdk = 36
-        versionCode = 87
-        versionName = "0.2.55"
+        versionCode = 88
+        versionName = "0.2.56"
+        buildConfigField("boolean", "LOCAL_INTERPRETATION_ENABLED", "false")
 
         // Supported production devices use ARM64. Keeping only the required ABI
         // avoids shipping an unused second LiteRT-LM native runtime in the sideload APK.
@@ -200,11 +201,20 @@ android {
             signingConfig = signingConfigs.findByName("developerAlpha")
             matchingFallbacks += listOf("release")
         }
+        create("pmtest") {
+            initWith(getByName("alpha"))
+            applicationIdSuffix = ".pmtest"
+            signingConfig = signingConfigs.getByName("debug")
+            resValue("string", "app_name", "MCastTalk 시험")
+            buildConfigField("boolean", "LOCAL_INTERPRETATION_ENABLED",
+                (providers.gradleProperty("mcast.localInterpretation").orNull == "true").toString())
+        }
     }
 
     buildFeatures {
         compose = true
         buildConfig = true
+        resValues = true
     }
 
     sourceSets.getByName("main").assets.srcDir(generatedThirdPartyLicenseAssets)
@@ -321,18 +331,19 @@ tasks.named("preBuild").configure {
 val verifyPackagedThirdPartyLicenseAssets by tasks.registering {
     group = "verification"
     description = "Checks every reviewed license and notice in the distributable alpha APK."
-    dependsOn("assembleAlpha")
+    dependsOn("assembleAlpha", "assemblePmtest")
     doLast {
+      for (variant in listOf("alpha", "pmtest")) {
         // Public builds are unsigned. Resolve this build's output metadata instead of
         // accidentally checking a stale signed APK or requiring private signing keys.
-        val outputDirectory = layout.buildDirectory.dir("outputs/apk/alpha").get()
+        val outputDirectory = layout.buildDirectory.dir("outputs/apk/$variant").get()
         val metadata = groovy.json.JsonSlurper().parse(
             outputDirectory.file("output-metadata.json").asFile,
         ) as Map<*, *>
-        check(metadata["variantName"] == "alpha") { "Unexpected APK variant" }
+        check(metadata["variantName"] == variant) { "Unexpected APK variant" }
         val element = (metadata["elements"] as List<*>).single() as Map<*, *>
         val outputFile = element["outputFile"] as String
-        check(outputFile in setOf("app-alpha.apk", "app-alpha-unsigned.apk")) {
+        check(outputFile in setOf("app-$variant.apk", "app-$variant-unsigned.apk")) {
             "Unexpected Alpha APK output filename"
         }
         val apk = File(outputDirectory.asFile, outputFile)
@@ -406,5 +417,6 @@ val verifyPackagedThirdPartyLicenseAssets by tasks.registering {
                 }
             }
         }
+      }
     }
 }

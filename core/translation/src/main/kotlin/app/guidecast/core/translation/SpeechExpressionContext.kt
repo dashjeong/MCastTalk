@@ -6,7 +6,7 @@ import kotlin.coroutines.CoroutineContext
 /** An explicit local synthesis request, never an inferred claim about a speaker's emotion. */
 data class SpeechExpressionProfile(val rate: Float = 0.95f, val pitch: Float = 1.0f) {
     init {
-        require(rate.isFinite() && rate in 0.9f..1.1f)
+        require(rate.isFinite() && rate in 0.9f..1.2f)
         require(pitch.isFinite() && pitch in 0.9f..1.1f)
     }
     companion object { val BASELINE = SpeechExpressionProfile() }

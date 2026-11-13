@@ -11,4 +11,5 @@ oneway interface IGuideCastMoonshineTts {
     void cancel(String clientId, long requestId);
     void shutdown();
     void shutdownWhenIdle(IGuideCastMoonshineTtsShutdownCallback callback);
+    void synthesizeStreamingAtRate(String clientId, long requestId, String text, String languageTag, float rate, IGuideCastMoonshineTtsCallback callback);
 }

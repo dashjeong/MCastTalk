@@ -49,6 +49,7 @@ internal fun LiveTranscriptHud(
     sourceLanguageTag: String? = null,
     initialShowSource: Boolean? = null,
     displayTargetFilter: List<String>? = null,
+    channels: List<BroadcastChannelSnapshot> = emptyList(),
 ) {
     BackHandler(onBack = onBack)
     var controls by rememberSaveable { mutableStateOf(false) }
@@ -59,7 +60,7 @@ internal fun LiveTranscriptHud(
         transcriptHudLanguageTags(targetLanguageTags, transcripts).filter { displayTargetFilter == null || it in displayTargetFilter }
     }
     // Display preferences never mutate broadcast targets or request a translation.
-    var showSource by remember {
+    var showSource by rememberSaveable {
         mutableStateOf(initialShowSource ?: preferences.getBoolean("show_source", "source" in
             preferences.getStringSet("languages", setOf("source")).orEmpty()))
     }
@@ -109,17 +110,18 @@ internal fun LiveTranscriptHud(
             if (manuallyScrolling) follow = false
         }
     }
-    Surface(Modifier.fillMaxSize().semantics { paneTitle = "실시간 스크립트 HUD" }, color = HudBackground) {
+    Surface(Modifier.fillMaxSize().semantics { paneTitle = "큰 자막" }, color = HudBackground) {
       BoxWithConstraints(Modifier.fillMaxSize().safeDrawingPadding()) {
         val shortViewport = maxHeight < 360.dp
         Column(Modifier.fillMaxSize()) {
             FlowRow(Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (!shortViewport) Text("스크립트", color = Color.White, style = MaterialTheme.typography.titleMedium,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.Center) {
+                if (!shortViewport) Text("실시간 자막", color = Color.White, style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.padding(vertical = 12.dp).semantics { heading() })
                 TextButton(onClick = onBack,
                     modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).testTag("hud-close")) {
-                    Text("HUD 닫기", color = Color.White)
+                    Text("큰 자막 닫기", color = Color.White)
                 }
                 Box {
                     TextButton(onClick = { languageMenu = true },
@@ -145,15 +147,40 @@ internal fun LiveTranscriptHud(
                 }
                 TextButton(onClick = { controls = true },
                     modifier = Modifier.sizeIn(minWidth = 48.dp, minHeight = 48.dp).testTag("hud-display-settings")
-                        .semantics { contentDescription = "HUD 표시 설정 열기" }) {
+                        .semantics { contentDescription = "큰 자막 표시 설정 열기" }) {
                     Text("설정", color = Color.White)
+                }
+                languages.forEach { tag ->
+                    val dropped = channels.firstOrNull { it.channelId == tag }?.droppedUtterances ?: 0L
+                    AssistChip(
+                        onClick = {},
+                        label = { Text("${relayCaptionLanguageLabel(tag)} 빠진 문장 $dropped", color = if (dropped > 0) Color(0xFFFFB4AB) else Color.White) },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = if (dropped > 0) Color(0xFF93000A) else Color(0xFF2C312E),
+                            labelColor = Color.White
+                        ),
+                        modifier = Modifier.sizeIn(minHeight = 40.dp)
+                    )
+                }
+            }
+            if (!recoveryMessage.isNullOrBlank()) {
+                Surface(
+                    color = Color(0xFF410002),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        recoveryMessage,
+                        color = Color(0xFFFFDAD6),
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
                 }
             }
             if (rows.isEmpty() || (!sourceVisible && displayedTranslationLanguages.isEmpty())) Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                Text(if (!sourceVisible && displayedTranslationLanguages.isEmpty()) "표시할 언어가 없습니다. HUD를 닫고 원문이나 통역 언어를 선택하세요."
-                    else "아직 표시할 스크립트가 없습니다. 원문·통역문을 수신하면 여기에 표시합니다.",
+                Text(if (!sourceVisible && displayedTranslationLanguages.isEmpty()) "표시할 언어가 없습니다. 큰 자막을 닫고 원문이나 통역 언어를 선택하세요."
+                    else "아직 자막이 없습니다. 원문과 번역을 받으면 여기에 표시합니다.",
                     color = Color.White, style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(24.dp))
-            } else LazyColumn(state = list, reverseLayout = true,
+            } else LazyColumn(state = list, reverseLayout = false,
                 modifier = Modifier.weight(1f).fillMaxWidth().testTag("hud-transcript-list").pointerInput(Unit) {
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false)
@@ -163,7 +190,7 @@ internal fun LiveTranscriptHud(
                 items(rows, key = { it.id }) { group ->
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (sourceVisible) {
-                            Text("원문 · ${group.sourceLanguageTag ?: sourceLanguageTag ?: "언어 미확인"} · ${if (group.sourceText.isBlank()) "미확인" else group.sourceStatusLabel}",
+                            Text("원문 · ${(group.sourceLanguageTag ?: sourceLanguageTag)?.sourceLanguageDisplayName()?.substringBefore(" ·") ?: "언어 미확인"} · ${if (group.sourceText.isBlank()) "미확인" else group.sourceStatusLabel}",
                                 color = HudSource, style = MaterialTheme.typography.labelLarge)
                             Text(group.sourceText.ifBlank { "원문 미확인" }, color = HudSource, fontSize = size.sp, lineHeight = (size * 1.4f).sp)
                         }
@@ -173,11 +200,33 @@ internal fun LiveTranscriptHud(
                         rowLanguages.forEach { tag ->
                             val segment = group.segmentFor(tag)
                             val translated = group.translations[tag]
-                            Text("번역 · ${relayCaptionLanguageLabel(tag)} · ${segment?.liveOutputState?.label ?: if (segment?.isFinal == true) "완료" else "처리 중"}",
+                            val translationError = group.segments.firstNotNullOfOrNull { it.translationErrors[tag] }
+                                ?.takeIf { it.isNotBlank() }
+                            val speechNotice = group.segments.firstNotNullOfOrNull { it.speechNotices[tag] }
+                                ?.takeIf { it.isNotBlank() }
+                            val isDropped = segment?.liveOutputState in setOf(LiveOutputState.INCOMPLETE, LiveOutputState.CANCELLED)
+                            val statusLabel = when {
+                                translationError != null -> "번역 실패"
+                                translated != null && translated.isNotBlank() -> "완료"
+                                isDropped -> "번역 지연 · 원문 참고"
+                                segment?.liveOutputState != null -> segment.liveOutputState.label
+                                else -> "처리 중"
+                            }
+                            val textContent = when {
+                                translated != null && translated.isNotBlank() -> translated
+                                translationError != null -> translationError
+                                isDropped -> "번역 지연 · 원문 참고"
+                                else -> segment?.nativeMissingCaptionLabel(tag) ?: "통역 자막 대기"
+                            }
+                            Text("번역 · ${relayCaptionLanguageLabel(tag)} · $statusLabel",
                                 color = HudTranslation, style = MaterialTheme.typography.labelLarge)
-                            Text(translated?.takeIf { it.isNotBlank() } ?: segment?.nativeMissingCaptionLabel(tag) ?: "통역 자막 대기",
-                                color = if (translated.isNullOrBlank()) Color.LightGray else HudTranslation,
+                            Text(textContent,
+                                color = if (translated.isNullOrBlank() && translationError == null && !isDropped) Color.LightGray else HudTranslation,
                                 fontSize = size.sp, lineHeight = (size * 1.4f).sp)
+                            if (translationError != null && !translated.isNullOrBlank()) {
+                                Text(translationError, color = HudTranslation, fontSize = size.sp)
+                            }
+                            speechNotice?.let { Text(it, color = HudTranslation, fontSize = size.sp) }
                         }
                         group.alignmentNotice?.let { Text(it, color = Color.LightGray, style = MaterialTheme.typography.bodySmall) }
                     }
@@ -186,7 +235,7 @@ internal fun LiveTranscriptHud(
         }
       }
     }
-    if (controls) AlertDialog(onDismissRequest = { controls = false }, title = { Text("HUD 표시 설정") },
+    if (controls) AlertDialog(onDismissRequest = { controls = false }, title = { Text("큰 자막 표시 설정") },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("표시 언어와 글씨만 변경합니다. 번역 요청이나 음성 방송 설정은 바뀌지 않습니다.",

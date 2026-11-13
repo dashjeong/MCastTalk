@@ -25,61 +25,133 @@ import androidx.compose.ui.unit.dp
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-internal fun RelayListenerAccessCard(listenerUrl: String?, broadcasting: Boolean, compact: Boolean = false) {
+internal fun RelayListenerAccessCard(
+    listenerUrl: String?,
+    broadcasting: Boolean,
+    compact: Boolean = false,
+    channels: List<BroadcastChannelSnapshot> = emptyList(),
+) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
-    var enlarged by rememberSaveable(listenerUrl) { mutableStateOf(false) }
+    val translatedChannels = channels.filter { it.channelId != "source" && !it.listenerUrl.isNullOrBlank() }
+    val defaultChannelId = translatedChannels.firstOrNull()?.channelId
+    var selectedChannelId by rememberSaveable(channels.map { it.channelId }.joinToString(",")) {
+        mutableStateOf(defaultChannelId)
+    }
+    val effectiveChannelId = if (selectedChannelId != null && translatedChannels.none { it.channelId == selectedChannelId }) defaultChannelId else selectedChannelId
+    val currentUrl = (if (effectiveChannelId != null) channels.firstOrNull { it.channelId == effectiveChannelId }?.listenerUrl else null) ?: listenerUrl
+    val channelLabel = effectiveChannelId?.let { relayCaptionLanguageLabel(it) }
+
+    var enlarged by rememberSaveable(currentUrl) { mutableStateOf(false) }
     val share = {
-        if (listenerUrl != null) context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
+        if (currentUrl != null) context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
-            putExtra(Intent.EXTRA_TEXT, listenerUrl)
+            putExtra(Intent.EXTRA_TEXT, currentUrl)
         }, "청취 링크 공유"))
     }
-    if (compact && listenerUrl != null) {
+    if (compact && currentUrl != null) {
         val compactControls = workspaceUsesCompactControls(LocalDensity.current.fontScale, LocalConfiguration.current.screenHeightDp)
         if (compactControls) {
             OutlinedCard(onClick = { enlarged = true }, modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp)
                 .testTag("service-broadcast-access-details").semantics { contentDescription = "청취 주소·QR 상세 열기. 복사와 공유" }) {
-                Row(Modifier.fillMaxWidth().padding(4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    QrCode(listenerUrl, "공통 청취 웹페이지 QR 코드 · 누르면 확대", displaySize = 72.dp)
-                    Column(Modifier.weight(1f)) {
-                        Text(if (listenerUrl.contains("#token=")) "방송 기기 주소" else "청취 웹주소", style = MaterialTheme.typography.labelSmall)
-                        SelectionContainer {
-                            Text(listenerDisplayAddress(listenerUrl), modifier = Modifier.horizontalScroll(rememberScrollState())
-                                .testTag("service-broadcast-listener-url"), style = MaterialTheme.typography.bodySmall,
-                                softWrap = false)
+                Column(Modifier.fillMaxWidth().padding(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (translatedChannels.isNotEmpty()) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            translatedChannels.forEach { ch ->
+                                FilterChip(
+                                    selected = effectiveChannelId == ch.channelId,
+                                    onClick = { selectedChannelId = ch.channelId },
+                                    label = { Text(relayCaptionLanguageLabel(ch.languageTag)) },
+                                    modifier = Modifier.sizeIn(minHeight = 36.dp)
+                                )
+                            }
+                            FilterChip(
+                                selected = effectiveChannelId == null,
+                                onClick = { selectedChannelId = null },
+                                label = { Text("공통") },
+                                modifier = Modifier.sizeIn(minHeight = 36.dp)
+                            )
                         }
-                        Text(if (listenerUrl.contains("#token=")) "QR 또는 청취 링크 필요 · 숫자 주소만으로 입장 불가" else "숫자 주소 입력 또는 QR로 청취", style = MaterialTheme.typography.bodySmall)
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                        QrCode(currentUrl, "${channelLabel?.let { "$it " } ?: "공통 "}청취 웹페이지 QR 코드 · 누르면 확대", displaySize = 72.dp)
+                        Column(Modifier.weight(1f)) {
+                            Text(if (currentUrl.contains("#token=")) "${channelLabel?.let { "$it " } ?: ""}방송 기기 주소" else "${channelLabel?.let { "$it " } ?: ""}청취 웹주소", style = MaterialTheme.typography.labelSmall)
+                            SelectionContainer {
+                                Text(listenerDisplayAddress(currentUrl), modifier = Modifier.horizontalScroll(rememberScrollState())
+                                    .testTag("service-broadcast-listener-url"), style = MaterialTheme.typography.bodySmall,
+                                    softWrap = false)
+                            }
+                            Text(if (currentUrl.contains("#token=")) "QR 또는 청취 링크 필요 · 숫자 주소만으로 입장 불가" else "숫자 주소 입력 또는 QR로 청취", style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                 }
             }
-        } else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Column {
-                QrCode(listenerUrl, "공통 청취 웹페이지 QR 코드", displaySize = 88.dp)
-                TextButton(onClick = { enlarged = true }) { Text("QR 확대") }
+        } else Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (translatedChannels.isNotEmpty()) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    translatedChannels.forEach { ch ->
+                        FilterChip(
+                            selected = effectiveChannelId == ch.channelId,
+                            onClick = { selectedChannelId = ch.channelId },
+                            label = { Text(relayCaptionLanguageLabel(ch.languageTag)) },
+                            modifier = Modifier.sizeIn(minHeight = 36.dp)
+                        )
+                    }
+                    FilterChip(
+                        selected = effectiveChannelId == null,
+                        onClick = { selectedChannelId = null },
+                        label = { Text("공통") },
+                        modifier = Modifier.sizeIn(minHeight = 36.dp)
+                    )
+                }
             }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(if (listenerUrl.contains("#token=")) "방송 기기 주소" else "청취 웹주소", style = MaterialTheme.typography.labelSmall)
-                Text(if (listenerUrl.contains("#token=")) "QR 또는 청취 링크 필요 · 숫자 주소만으로 입장 불가" else "숫자 주소 입력 또는 QR로 청취", style = MaterialTheme.typography.bodySmall)
-                SelectionContainer { Text(listenerDisplayAddress(listenerUrl), modifier = Modifier.testTag("service-broadcast-listener-url"), style = MaterialTheme.typography.bodySmall) }
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { clipboard.setText(AnnotatedString(listenerUrl)) }) { Text("청취 링크 복사") }
-                    Button(onClick = share) { Text("공유") }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column {
+                    QrCode(currentUrl, "${channelLabel?.let { "$it " } ?: "공통 "}청취 웹페이지 QR 코드", displaySize = 88.dp)
+                    TextButton(onClick = { enlarged = true }) { Text("QR 확대") }
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(if (currentUrl.contains("#token=")) "${channelLabel?.let { "$it " } ?: ""}방송 기기 주소" else "${channelLabel?.let { "$it " } ?: ""}청취 웹주소", style = MaterialTheme.typography.labelSmall)
+                    Text(if (currentUrl.contains("#token=")) "QR 또는 청취 링크 필요 · 숫자 주소만으로 입장 불가" else "숫자 주소 입력 또는 QR로 청취", style = MaterialTheme.typography.bodySmall)
+                    SelectionContainer { Text(listenerDisplayAddress(currentUrl), modifier = Modifier.testTag("service-broadcast-listener-url"), style = MaterialTheme.typography.bodySmall) }
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { clipboard.setText(AnnotatedString(currentUrl)) }) { Text("청취 링크 복사") }
+                        Button(onClick = share) { Text("공유") }
+                    }
                 }
             }
         }
         if (enlarged) AlertDialog(onDismissRequest = { enlarged = false },
-            title = { Text("청취 웹페이지 QR") },
+            title = { Text("${channelLabel?.let { "$it " } ?: ""}청취 웹페이지 QR") },
             text = { BoxWithConstraints(Modifier.fillMaxWidth()) {
                 val qrSize = minOf(224.dp, maxHeight)
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                QrCode(listenerUrl, "확대한 청취 웹페이지 QR 코드", displaySize = qrSize)
-                Text(if (listenerUrl.contains("#token=")) "방송 기기 주소" else "청취 웹주소", style = MaterialTheme.typography.labelSmall)
-                SelectionContainer { Text(listenerDisplayAddress(listenerUrl), style = MaterialTheme.typography.bodyMedium) }
-                Text(if (listenerUrl.contains("#token=")) "QR 또는 청취 링크 필요 · 숫자 주소만으로 입장 불가" else "숫자 주소 입력 또는 QR로 청취", style = MaterialTheme.typography.bodySmall)
+                if (translatedChannels.isNotEmpty()) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        translatedChannels.forEach { ch ->
+                            FilterChip(
+                                selected = effectiveChannelId == ch.channelId,
+                                onClick = { selectedChannelId = ch.channelId },
+                                label = { Text(relayCaptionLanguageLabel(ch.languageTag)) },
+                                modifier = Modifier.sizeIn(minHeight = 36.dp)
+                            )
+                        }
+                        FilterChip(
+                            selected = effectiveChannelId == null,
+                            onClick = { selectedChannelId = null },
+                            label = { Text("공통") },
+                            modifier = Modifier.sizeIn(minHeight = 36.dp)
+                        )
+                    }
+                }
+                QrCode(currentUrl, "확대한 ${channelLabel?.let { "$it " } ?: "공통 "}청취 웹페이지 QR 코드", displaySize = qrSize)
+                Text(if (currentUrl.contains("#token=")) "${channelLabel?.let { "$it " } ?: ""}방송 기기 주소" else "${channelLabel?.let { "$it " } ?: ""}청취 웹주소", style = MaterialTheme.typography.labelSmall)
+                SelectionContainer { Text(listenerDisplayAddress(currentUrl), style = MaterialTheme.typography.bodyMedium) }
+                Text(if (currentUrl.contains("#token=")) "QR 또는 청취 링크 필요 · 숫자 주소만으로 입장 불가" else "숫자 주소 입력 또는 QR로 청취", style = MaterialTheme.typography.bodySmall)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { clipboard.setText(AnnotatedString(listenerUrl)) }) { Text("청취 링크 복사") }
+                    OutlinedButton(onClick = { clipboard.setText(AnnotatedString(currentUrl)) }) { Text("청취 링크 복사") }
                     Button(onClick = share) { Text("공유") }
                 }
             } } },
@@ -90,17 +162,35 @@ internal fun RelayListenerAccessCard(listenerUrl: String?, broadcasting: Boolean
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("청취 웹페이지", style = MaterialTheme.typography.titleLarge)
             Text("같은 Wi-Fi·핫스팟의 청취자에게 QR 또는 청취 링크를 공유하세요.")
-            if (listenerUrl == null) {
+            if (currentUrl == null) {
                 Text(if (broadcasting) "청취 웹페이지를 준비하고 있습니다." else "중계 시작 후 청취 주소가 만들어집니다.")
             } else {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                    QrCode(listenerUrl, description = "공통 청취 웹페이지 QR 코드")
+                if (translatedChannels.isNotEmpty()) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        translatedChannels.forEach { ch ->
+                            FilterChip(
+                                selected = effectiveChannelId == ch.channelId,
+                                onClick = { selectedChannelId = ch.channelId },
+                                label = { Text(relayCaptionLanguageLabel(ch.languageTag)) },
+                                modifier = Modifier.sizeIn(minHeight = 36.dp)
+                            )
+                        }
+                        FilterChip(
+                            selected = effectiveChannelId == null,
+                            onClick = { selectedChannelId = null },
+                            label = { Text("공통") },
+                            modifier = Modifier.sizeIn(minHeight = 36.dp)
+                        )
+                    }
                 }
-                Text(if (listenerUrl.contains("#token=")) "방송 기기 주소" else "청취 웹주소", style = MaterialTheme.typography.labelSmall)
-                SelectionContainer { Text(listenerDisplayAddress(listenerUrl), style = MaterialTheme.typography.titleMedium) }
-                Text(if (listenerUrl.contains("#token=")) "QR 또는 청취 링크 필요 · 숫자 주소만으로 입장 불가" else "숫자 주소 입력 또는 QR로 청취", style = MaterialTheme.typography.bodySmall)
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    QrCode(currentUrl, description = "${channelLabel?.let { "$it " } ?: "공통 "}청취 웹페이지 QR 코드")
+                }
+                Text(if (currentUrl.contains("#token=")) "${channelLabel?.let { "$it " } ?: ""}방송 기기 주소" else "${channelLabel?.let { "$it " } ?: ""}청취 웹주소", style = MaterialTheme.typography.labelSmall)
+                SelectionContainer { Text(listenerDisplayAddress(currentUrl), style = MaterialTheme.typography.titleMedium) }
+                Text(if (currentUrl.contains("#token=")) "QR 또는 청취 링크 필요 · 숫자 주소만으로 입장 불가" else "숫자 주소 입력 또는 QR로 청취", style = MaterialTheme.typography.bodySmall)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { clipboard.setText(AnnotatedString(listenerUrl)) }, modifier = Modifier.weight(1f)) { Text("청취 링크 복사") }
+                    OutlinedButton(onClick = { clipboard.setText(AnnotatedString(currentUrl)) }, modifier = Modifier.weight(1f)) { Text("청취 링크 복사") }
                     Button(onClick = share, modifier = Modifier.weight(1f)) { Text("공유") }
                 }
                 Text("청취자는 접속한 뒤 듣기와 스크립트의 언어를 각각 고를 수 있습니다. 현재 방송에서 제공하는 언어만 표시합니다.")

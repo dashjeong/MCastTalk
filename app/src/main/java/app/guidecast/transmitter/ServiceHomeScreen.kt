@@ -5,8 +5,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
@@ -20,6 +22,36 @@ internal enum class MCastService(val title: String, val description: String, val
     RELAY("통역 중계", "Live AI의 통역 음성과 원문·번역 자막을 받아보세요.", "온라인 연결 → 마이크 입력 → 직접 통역 음성·자막", "기기 모델·음성팩 없이 온라인 API로 처리합니다. 출력 언어를 최대 5개 선택하고 기기 재생 또는 웹오디오방송을 이용하세요."),
     HISTORY("방송 이력·다시 듣기", "저장한 방송 음성과 스크립트를 보고 공유하세요.", "방송 선택 → 원음·통역 다시 듣기 → 내려받기·공유", "기기에 저장한 음성을 사용합니다. 재생에는 추가 AI 요청이 없습니다."),
     FILES("파일 변환·재생", "음성 파일을 문장으로 바꾸고 다시 들으세요.", "파일 선택 → 전사·번역 → 스크립트 보관·재생", "기기에 있는 파일로 시작하세요. 받아쓰기는 기기의 오프라인 음성 인식 지원이 필요합니다."),
+}
+
+@Composable
+internal fun RecordsHomeScreen(onSelect: (MCastService) -> Unit) {
+    val entries = listOf(MCastService.HISTORY to "방송 기록", MCastService.NOTES to "녹음", MCastService.FILES to "파일")
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        BoxWithConstraints(Modifier.fillMaxSize().padding(24.dp)) {
+            if (workspaceUsesSideAccess(maxWidth.value, maxHeight.value)) {
+                Row(Modifier.fillMaxWidth().align(Alignment.BottomCenter), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    entries.forEach { (service, label) ->
+                        RecordServiceButton(service, label, onSelect, Modifier.weight(1f))
+                    }
+                }
+            } else {
+                Column(Modifier.fillMaxWidth().align(Alignment.BottomCenter), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    entries.forEach { (service, label) ->
+                        RecordServiceButton(service, label, onSelect, Modifier.fillMaxWidth())
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecordServiceButton(service: MCastService, label: String, onSelect: (MCastService) -> Unit, modifier: Modifier) {
+    OutlinedButton(onClick = { onSelect(service) }, shape = MaterialTheme.shapes.medium,
+        modifier = modifier.heightIn(min = 48.dp).testTag("records-entry-${service.name.lowercase()}")) {
+        Text(label, style = MaterialTheme.typography.titleMedium)
+    }
 }
 
 @Composable
@@ -42,7 +74,7 @@ internal fun ServiceHomeScreen(activeService: MCastService?, onSelect: (MCastSer
                 FilledTonalButton(onClick = { onSelect(active) }, modifier = Modifier.fillMaxWidth()) {
                     Text("진행 중인 작업으로 · ${active.title}")
                 }
-                Text("작업을 마친 뒤 다른 음성 작업을 시작할 수 있습니다. 설정은 아래 탭에서 확인하세요.", style = MaterialTheme.typography.bodySmall)
+                Text("작업을 마친 뒤 다른 음성 작업을 시작할 수 있습니다. 설정은 상단 톱니에서 확인하세요.", style = MaterialTheme.typography.bodySmall)
             } }
             items(services.chunked(columns)) { row ->
               Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -59,7 +91,7 @@ internal fun ServiceHomeScreen(activeService: MCastService?, onSelect: (MCastSer
                }
               }
             }
-            item { Text("언어·음성과 데이터 관리는 설정에서, 동작 확인은 시험에서 이용하세요.", style = MaterialTheme.typography.bodySmall) }
+            item { Text("언어·음성과 데이터 관리는 설정(상단 톱니)에서 이용하세요.", style = MaterialTheme.typography.bodySmall) }
         }
       }
     }

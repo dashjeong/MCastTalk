@@ -132,9 +132,11 @@ internal fun DeveloperLabPanel(
             LabSwitch("억양·속도 표현 실험", options.expressiveTtsEnabled, settings::setExpressiveTtsEnabled)
             Text("문장 부호와 선택한 문체를 바탕으로 Android 설치 음성의 속도·높낮이를 0.9–1.1 범위에서 조절합니다. 원음의 감정을 완전히 재현하는 기능은 아닙니다. Moonshine 음성에는 이 조절을 적용하지 않습니다.", style = MaterialTheme.typography.bodySmall)
             LabSwitch("문체·의역 실험", options.paraphraseEnabled, settings::setParaphraseEnabled)
+            LabSwitch("연구용 말투로 덮어쓰기", options.overrideGeneralTone, settings::setOverrideGeneralTone)
+            Text("끄면 일반 설정에서 고른 말투를 따릅니다.", style = MaterialTheme.typography.bodySmall)
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TranslationRegister.entries.forEach { register ->
-                    FilterChip(selected = options.translationRegister == register,
+                    FilterChip(selected = options.translationRegister == register, enabled = options.overrideGeneralTone,
                         onClick = { settings.setTranslationRegister(register) },
                         label = { Text(when (register) { TranslationRegister.AUTO -> "문맥에 맞게"; TranslationRegister.FORMAL -> "공식 안내"; TranslationRegister.CONVERSATIONAL -> "자연스러운 대화" }) })
                 }

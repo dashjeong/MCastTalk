@@ -20,6 +20,7 @@ import app.guidecast.core.stream.PcmAudioFrame
 import app.guidecast.core.translation.RecognizedUtterance
 import app.guidecast.core.translation.SpeechRecognitionConfig
 import app.guidecast.core.translation.SpeechRecognitionEngine
+import app.guidecast.core.translation.SpeechRecognitionEndpointControl
 import app.guidecast.core.translation.normalizeSpeechRecognitionBiasingPhrases
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
@@ -35,6 +36,7 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withTimeout
 
 data class OnDeviceSpeechRecognitionCapability(
@@ -312,6 +314,7 @@ class AndroidOnDeviceSpeechRecognitionEngine(
         frames: Flow<PcmAudioFrame>,
         config: SpeechRecognitionConfig,
     ): Flow<RecognizedUtterance> = callbackFlow {
+        val endpointControl = currentCoroutineContext()[SpeechRecognitionEndpointControl]
         val capability = capability()
         check(capability.available) { capability.reason ?: "온디바이스 음성인식을 사용할 수 없습니다." }
 
@@ -467,27 +470,57 @@ class AndroidOnDeviceSpeechRecognitionEngine(
 
         val writerJob: Job = launch(Dispatchers.IO) {
             frames.collect { frame ->
-                writeRecognitionPcm(frame.bytes, tryWrite = { offset, count ->
-                    try {
-                        Os.write(audioOutput.fileDescriptor, frame.bytes, offset, count)
-                    } catch (error: ErrnoException) {
-                        if (error.errno == OsConstants.EAGAIN || error.errno == OsConstants.EINTR) {
-                            0
-                        } else {
-                            throw error
+                var writtenBytes = 0
+                try {
+                    writeRecognitionPcm(frame.bytes, tryWrite = { offset, count ->
+                        try {
+                            Os.write(audioOutput.fileDescriptor, frame.bytes, offset, count).also {
+                                writtenBytes = offset + it
+                            }
+                        } catch (error: ErrnoException) {
+                            if (error.errno == OsConstants.EAGAIN || error.errno == OsConstants.EINTR) {
+                                0
+                            } else {
+                                throw error
+                            }
                         }
+                    })
+                } finally {
+                    if (endpointControl?.isStopRequested == true && writtenBytes < frame.bytes.size) {
+                        val replayOffset = writtenBytes - writtenBytes % Short.SIZE_BYTES
+                        endpointControl.preserveUnwrittenInput(frame.copy(
+                            bytes = frame.bytes.copyOfRange(replayOffset, frame.bytes.size),
+                            localEnqueuedAtNanos = null,
+                        ))
+                    } else if (writtenBytes == frame.bytes.size) {
+                        endpointControl?.takeUnwrittenInput()
                     }
-                })
+                }
             }
         }
 
         writerJob.invokeOnCompletion { error ->
             runCatching { audioOutput.close() }
-            if (error != null) close(error)
+            if (error != null && endpointControl?.isStopRequested != true) close(error)
+        }
+
+        val endpointJob = endpointControl?.let { endpoint ->
+            launch {
+                endpoint.awaitStop()
+                writerJob.cancel()
+                withContext(Dispatchers.Main.immediate) {
+                    if (!recognizerClosing.get()) {
+                        callbackGeneration.dispatch(activeRecognizer.callbackToken) {
+                            activeRecognizer.recognizer.stopListening()
+                        }
+                    }
+                }
+            }
         }
 
         awaitClose {
             recognizerClosing.set(true)
+            endpointJob?.cancel()
             writerJob.cancel()
             runCatching { audioOutput.close() }
             runCatching { recognitionInput.close() }

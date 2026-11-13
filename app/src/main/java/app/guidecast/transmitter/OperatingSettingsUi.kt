@@ -8,7 +8,7 @@ internal enum class RelaySetupItem(val label: String, val message: String) {
     OUTPUT("기기 재생·웹오디오방송", "기기 재생 또는 웹오디오방송을 켜 주세요."),
     SERVICE("AI 서비스", "통역 중계에 사용할 Live 음성 서비스를 선택해 주세요."),
     MODEL("AI 모델", "통역 중계를 지원하는 모델을 선택해 주세요."),
-    KEY("API 키", "선택한 AI 서비스의 API 키를 입력해 주세요."),
+    KEY("이용 키", "선택한 서비스의 이용 키를 입력해 주세요."),
     VOICE("통역 음성", "다음 중계에서 사용할 음성을 선택합니다."),
     PROFESSIONAL("전문 분야·자료·지침", "전문 분야와 통역에 참고할 자료를 설정합니다."),
     COMPARISON("오프라인 비교·사용량", "기기에서 들을 언어의 비교와 사용량을 확인합니다."),
@@ -60,6 +60,13 @@ internal fun streamingRequiredSetting(api: TranslationApiOptions, translate: Boo
 }
 
 internal data class StreamingPreparationAdvice(val recognition: Boolean, val voices: List<String>, val translators: List<String>)
+
+/** 없는 음성만 한 번 다시 확인한다. 재확인 뒤에도 없는 자원은 기존 준비 안내로 돌려준다. */
+internal suspend fun recheckStreamingVoicesOnce(api: TranslationApiOptions, models: TranslationModelUiState,
+    recheck: suspend () -> TranslationModelUiState): StreamingPreparationAdvice? {
+    val initial = streamingPreparationAdvice(api, models)
+    return if (initial?.voices?.isNotEmpty() == true) streamingPreparationAdvice(api, recheck()) else initial
+}
 
 internal fun streamingPreparationAdvice(api: TranslationApiOptions, models: TranslationModelUiState): StreamingPreparationAdvice? {
     if (!models.broadcastTranslationEnabled) return null

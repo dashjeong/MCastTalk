@@ -219,7 +219,11 @@ internal sealed interface GeminiLiveInputEvent {
 }
 
 /** No pre-connection buffering or replay. A pause barrier follows every accepted frame. */
-internal class GeminiLiveInput(private val lost: (LiveAudioLoss, Int) -> Unit) {
+internal class GeminiLiveInput(
+    private val nowNanos: () -> Long = System::nanoTime,
+    private val onOverflow: () -> Unit = {},
+    private val lost: (LiveAudioLoss, Int) -> Unit,
+) {
     private val channel = Channel<GeminiLiveInputEvent>(5, onUndeliveredElement = {
         when (it) {
             is GeminiLiveInputEvent.Audio -> lost(LiveAudioLoss.INPUT_ABANDONED, it.bytes.size)
@@ -229,6 +233,9 @@ internal class GeminiLiveInput(private val lost: (LiveAudioLoss, Int) -> Unit) {
     private var ready = false
     private var closed = false
     private var pause: GeminiLiveInputEvent.Pause? = null
+    private var overflowStartedAt: Long? = null
+    private var lastOverflowAt: Long? = null
+    private var overflowNotified = false
     val events = channel.receiveAsFlow()
     val frames = events.map { (it as GeminiLiveInputEvent.Audio).bytes }
     val isPaused: Boolean @Synchronized get() = pause != null
@@ -236,13 +243,30 @@ internal class GeminiLiveInput(private val lost: (LiveAudioLoss, Int) -> Unit) {
     @Synchronized fun markReady() { if (!closed) ready = true }
     @Synchronized fun offer(bytes: ByteArray): Boolean {
         if (!ready || closed || pause != null) { lost(if (closed || pause != null) LiveAudioLoss.INPUT_ABANDONED else LiveAudioLoss.BEFORE_READY, bytes.size); return true }
-        if (channel.trySend(GeminiLiveInputEvent.Audio(bytes.copyOf())).isSuccess) return true
-        lost(LiveAudioLoss.INPUT_OVERFLOW, bytes.size)
+        val audio = GeminiLiveInputEvent.Audio(bytes.copyOf())
+        if (channel.trySend(audio).isSuccess) return true
+        // 입장과 중지/일시정지는 같은 잠금으로 직렬화된다. pause가 없으면 제어 신호도 없다.
+        // 소비자가 먼저 꺼냈다면 빈 결과일 수 있다. 이미 소비된 음성은 손실로 세지 않는다.
+        val oldest = channel.tryReceive().getOrNull()
+        check(oldest == null || oldest is GeminiLiveInputEvent.Audio)
+        check(channel.trySend(audio).isSuccess)
+        if (oldest !is GeminiLiveInputEvent.Audio) return true
+        lost(LiveAudioLoss.INPUT_OVERFLOW, oldest.bytes.size)
+        if (!overflowNotified) {
+            overflowNotified = true
+            runCatching { onOverflow() }
+        }
+        val now = nowNanos()
+        // 간헐적인 밀림은 누적하지 않는다. 1초 이상 넘침이 없으면 새 구간이다.
+        if (lastOverflowAt?.let { now - it >= 1_000_000_000L } != false) overflowStartedAt = now
+        lastOverflowAt = now
+        if (now - requireNotNull(overflowStartedAt) < 5_000_000_000L) return true
         close()
         return false
     }
     @Synchronized fun beginPause(): GeminiLiveInputEvent.Pause? {
         if (!ready || closed || pause != null) return null
+        overflowStartedAt = null; lastOverflowAt = null
         return GeminiLiveInputEvent.Pause().also { pause = it }
     }
     suspend fun sendPause(barrier: GeminiLiveInputEvent.Pause) {

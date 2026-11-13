@@ -70,9 +70,12 @@ import app.guidecast.core.translation.TextTranslationEngine
 import app.guidecast.core.translation.TranslationStyle
 import app.guidecast.core.translation.TranslationBroadcastPipeline
 import app.guidecast.core.translation.TranslationEngineProvider
+import app.guidecast.core.translation.SpeechDeadlineAwareTranslationEngineProvider
 import app.guidecast.core.translation.SelectiveRefinementTranslationEngineProvider
 import app.guidecast.core.translation.SelectiveRefinementOutcome
 import app.guidecast.core.translation.TranslationPipelineObserver
+import app.guidecast.core.translation.SynthesisTermination
+import app.guidecast.core.audio.AudioOutputKind
 import app.guidecast.core.translation.TranslationTarget
 import app.guidecast.core.translation.TranslationWorkerState
 import java.util.Locale
@@ -100,6 +103,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.ClosedSendChannelException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -133,6 +137,11 @@ private data class PendingBroadcastStart(
 
 private class LocalMonitorFeedbackBlockedException(message: String) :
     IllegalStateException(message)
+
+private data class LocalInterpretationReservation(
+    val turn: LocalInterpretationTurn,
+    val playback: LocalInterpretationPlaybackCheckpoint,
+)
 
 /** Preparation is informational; subsequent provider and input failures retain their warning fields. */
 internal fun BroadcastSnapshot.withTranslationPreparationSummary(message: String?): BroadcastSnapshot =
@@ -473,12 +482,17 @@ class BroadcastService : Service() {
     private var previewAudioTrack: AudioTrack? = null
     private var localMonitorJob: Job? = null
     private var localMonitorSubscription: LocalAudioMonitorSubscription? = null
-    private var localMonitorAudioTrack: AudioTrack? = null
+    @Volatile private var localMonitorAudioTrack: AudioTrack? = null
     private var localMonitorNativeSessionId: Long? = null
     @Volatile private var localMonitorPlaybackReceipt: NativeLocalPlaybackSnapshot? = null
     private val localMonitorPaused = AtomicBoolean(false)
     private val localMonitorPlaybackEpoch = AtomicLong(0)
     private val localMonitorGeneration = AtomicLong(0)
+    @Volatile private var localInterpretationPolicy = LocalInterpretationPolicy()
+    @Volatile private var localInterpretationMonitorGeneration: Long? = null
+    private val localInterpretationTurns = LocalInterpretationTurnController { phase ->
+        app.broadcastRuntime.update { it.copy(localInterpretationPhase = phase) }
+    }
     @Volatile private var recognitionFrames: Channel<PcmAudioFrame>? = null
     private var runningServer: RunningGuideCastServer? = null
     private var webBroadcastLease: WebBroadcastLease? = null
@@ -504,6 +518,8 @@ class BroadcastService : Service() {
     private var lastRecognitionDiagnosticMillis = 0L
     private var recognitionPartialCount = 0L
     private var recognitionFinalCount = 0L
+    private val megaphoneDiagnostics = if (megaphoneDiagnosticsEnabled(BuildConfig.DEBUG, BuildConfig.BUILD_TYPE))
+        MegaphoneDiagnosticCounters() else null
     private fun recordInputControl(action: ServiceFlowAction, before: InputPhase, after: InputPhase,
         reason: ServiceFlowReason = ServiceFlowReason.REQUEST) {
         RuntimeDiagnosticLog.record("input_control", serviceFlowSnapshot(app.translationApiSettings.state.value,
@@ -517,6 +533,7 @@ class BroadcastService : Service() {
     private val translationSessionCoordinator = TranslationSessionCoordinator(translationResourceLock)
     private val localMonitorLock = Any()
     private val broadcastResourceLock = Any()
+    private var interpreterBridge: BroadcastInterpreterBridge? = null
     /** Ktor stop may block; serialize retries without holding the broader broadcast state lock. */
     private val serverCloseLock = Any()
     @Volatile private var broadcastUsesTranslation = false
@@ -525,9 +542,27 @@ class BroadcastService : Service() {
     override fun onCreate() {
         super.onCreate()
         app = application as GuideCastApplication
+        app.broadcastRuntime.update { it.copy(localInterpretationEnabled = localInterpretationPolicy.enabled) }
         nativePlaybackOwnerId = NativeLocalPlaybackProgress.beginOwner()
         audioManager = getSystemService(AudioManager::class.java)
         createNotificationChannel()
+        megaphoneDiagnostics?.let { counters ->
+            serviceScope.launch(Dispatchers.Default) {
+                runMegaphoneDiagnostics(true, sample = {
+                    val current = app.broadcastRuntime.state.value
+                    val playState = runCatching { localMonitorAudioTrack?.playState }.getOrElse { -1 }
+                    counters.line(MegaphoneDiagnosticState(
+                        nowMillis = SystemClock.elapsedRealtime(), inputGeneration = inputGeneration.get(),
+                        mode = current.runMode, input = current.inputPhase, turn = current.localInterpretationPhase,
+                        capture = app.audioCaptureEngine.diagnostics.value,
+                        audioMode = runCatching { audioManager.mode }.getOrDefault(-1),
+                        output = current.localMonitor.phase,
+                        outputPlaying = when (playState) { -1 -> -1; AudioTrack.PLAYSTATE_PLAYING -> 1; else -> 0 },
+                        outputWrittenBytes = localMonitorPlaybackReceipt?.writtenBytes ?: 0,
+                    ))
+                }, write = { Log.d("MCastDiag", it) })
+            }
+        }
         serviceScope.launch {
             var previous = app.broadcastRuntime.state.value
             while (true) {
@@ -576,6 +611,11 @@ class BroadcastService : Service() {
                 ACTION_RESUME_LOCAL_MONITOR -> resumeLocalMonitor()
                 ACTION_STOP_LOCAL_MONITOR -> stopLocalMonitor()
                 ACTION_SET_LOCAL_MONITOR_VOLUME -> setLocalMonitorVolume(intent)
+                ACTION_SET_LOCAL_INTERPRETATION -> {
+                    if (localInterpretationMonitorGeneration != null) stopLocalMonitor()
+                    localInterpretationPolicy = LocalInterpretationPolicy(intent.getBooleanExtra(EXTRA_LOCAL_INTERPRETATION, false))
+                    app.broadcastRuntime.update { it.copy(localInterpretationEnabled = localInterpretationPolicy.enabled) }
+                }
                 ACTION_STOP_ALL -> stopAll()
                 ACTION_TEST_TONE -> playTestTone()
             }
@@ -896,6 +936,7 @@ class BroadcastService : Service() {
                     preferredDeviceId = input.platformId,
                     config = relayMicrophoneCaptureConfig(app.microphoneNoiseSettings.profileFor(input.kind),
                         app.broadcastRuntime.state.value.isInterpreterRelay, app.interpreterRelaySettings.state.value.localPlayback),
+                    onDiagnosticRead = megaphoneDiagnostics?.let { it::read },
                 )
             },
             playbackFrames = {
@@ -932,6 +973,7 @@ class BroadcastService : Service() {
             error("선택한 마이크 연결이 끊겼습니다. 입력을 안전하게 중지합니다.")
         }
         val stats = frame.bytes.pcmS16LeSignalStats()
+        megaphoneDiagnostics?.processed()
         val signal = signalTracker.observe(
             rms = stats.rms,
             peak = stats.peak,
@@ -974,6 +1016,7 @@ class BroadcastService : Service() {
         val current = app.broadcastRuntime.state.value
         if (testToneActive.get()) return
         val pcm = PcmAudioFrame(frame.bytes, frame.capturedAtElapsedRealtimeNanos)
+        localInterpretationTurns.observe(pcm)
         if (relayInputProcessingEnabled(current)) nativeRelayConnections.forEach { (target, connection) ->
             if (isInputGenerationCurrent(generation) && !inputPaused.get() && nativeRelayLifecycle?.accepts(target) == true) connection.offer(pcm)
         }
@@ -981,7 +1024,7 @@ class BroadcastService : Service() {
             current.translationTestActive || current.phase == BroadcastPhase.LIVE
         }
         // Output congestion never stops this capture frame from reaching speech recognition.
-        if (!publishSourceThenForwardRecognitionFrame(
+        val recognitionForwarded = publishSourceThenForwardRecognitionFrame(
                 frame = pcm,
             publishSource = relayInputProcessingEnabled(current) && current.phase in setOf(BroadcastPhase.LIVE, BroadcastPhase.PAUSED),
                 publication = broadcastAudioPublicationCoordinator,
@@ -992,7 +1035,12 @@ class BroadcastService : Service() {
                     }
                 },
                 recognition = recognitionInput,
-            )) {
+                recognitionCopy = { captured -> localInterpretationTurns.recognitionCopy(captured).also {
+                    megaphoneDiagnostics?.captureCopy(it !== captured)
+                } },
+            )
+        if (recognitionInput != null) megaphoneDiagnostics?.handoff(recognitionForwarded)
+        if (!recognitionForwarded) {
             app.broadcastRuntime.update { latest ->
                 if (!isInputGenerationCurrent(generation)) latest else latest.copy(
                     recognitionDroppedFrameCount = latest.recognitionDroppedFrameCount + 1,
@@ -1002,6 +1050,7 @@ class BroadcastService : Service() {
     }
 
     private fun pauseInput() {
+        if (localInterpretationMonitorGeneration != null) stopLocalMonitor()
         app.broadcastRuntime.invalidateInputRequest()
         val current = app.broadcastRuntime.state.value
         if (!canTurnInputOff(current.inputPhase, current.phase == BroadcastPhase.STARTING ||
@@ -1202,6 +1251,7 @@ class BroadcastService : Service() {
     }
 
     private fun stopInput(invalidateRequest: Boolean = true, gracefulNative: Boolean = false, finishNative: Boolean = false): List<InputCompletionReceipt> {
+        if (localInterpretationMonitorGeneration != null) stopLocalMonitor()
         val existing = synchronized(translationResourceLock) {
             listOfNotNull(nativeInputDrainOwner?.completion, textInputDrainOwner?.completion,
                 nativeInputPauseOwner?.completion?.takeIf { !finishNative })
@@ -1910,14 +1960,21 @@ class BroadcastService : Service() {
             ?: error("선택한 출력 장치가 연결되어 있지 않습니다.")
         val requestedRoute = outputDevice.toLocalMonitorRoute()
         val monitorInput = selectedInput ?: app.audioInputRepository.selectedDevice.value
+        val interpretationAllowed = localInterpretationPolicy.permits(channelId, state.translationChannels.size,
+            app.translationApiSettings.state.value.usesNativeLiveAudio,
+            translationSessionCoordinator.isSessionActive() && recognitionFrames != null &&
+                state.translationChannels.any { it.channelId == channelId })
+        val interpretationMonitor = interpretationAllowed && monitorInput?.kind == AudioInputKind.BUILT_IN &&
+            requestedRoute.kind == AudioOutputKind.BUILT_IN_SPEAKER
         if (monitorInput != null) {
             check(
-                LocalMonitorOutputRoutePlanner.eligible(monitorInput, listOf(requestedRoute)).isNotEmpty(),
+                LocalMonitorOutputRoutePlanner.eligible(monitorInput, listOf(requestedRoute), interpretationAllowed).isNotEmpty(),
             ) { "현재 입력과 함께 사용할 수 없는 출력 장치입니다." }
         }
 
         stopLocalMonitor(updateRuntime = false)
         val generation = localMonitorGeneration.incrementAndGet()
+        if (interpretationMonitor) localMonitorPlaybackReceipt = null
         localMonitorPaused.set(false)
         app.broadcastRuntime.update { current ->
             current.copy(
@@ -1935,7 +1992,7 @@ class BroadcastService : Service() {
         val nativeMonitor = descriptor.sampleRateHz == 24_000 && app.translationApiSettings.state.value.usesNativeLiveAudio
         val nativeMonitorSessionId = if (nativeMonitor) translationSessionCoordinator.currentSessionId() else null
         if (nativeMonitor) check(translationSessionCoordinator.isSessionActive()) { "직접 음성 연결이 종료됐습니다. 다시 시작한 뒤 기기 재생을 선택하세요." }
-        val track = createMonitorAudioTrack(descriptor.sampleRateHz, nativeMonitor)
+        val track = createMonitorAudioTrack(descriptor.sampleRateHz, nativeMonitor || interpretationMonitor)
         track.setVolume(state.localMonitor.volume)
         if (!track.setPreferredDevice(outputDevice)) {
             track.release()
@@ -1954,6 +2011,7 @@ class BroadcastService : Service() {
             var renderedFrames = 0L
             var renderedNonSilentFrames = 0L
             var lastRoute: LocalMonitorRoute? = null
+            val monitorRouteReady = AtomicBoolean(false)
             val headProgress = NativeAudioHeadProgress()
             val writtenBytes = AtomicLong(0)
             val unwrittenBytes = AtomicLong(0)
@@ -1965,7 +2023,7 @@ class BroadcastService : Service() {
             var primingSamples = 0L
             var progressJob: Job? = null
             fun publishProgress(closed: Boolean = false) {
-                if (!nativeMonitor) return
+                if (!nativeMonitor && !interpretationMonitor) return
                 val head = synchronized(localMonitorLock) {
                     val epoch = localMonitorPlaybackEpoch.get()
                     if (epoch != initialEpoch) epochChanged.set(true)
@@ -1996,8 +2054,18 @@ class BroadcastService : Service() {
                 synchronized(localMonitorLock) {
                     if (localMonitorPlaybackEpoch.get() == primingEpoch) playbackBoundary?.recordPriming(primingSamples.toInt())
                 }
-                progressJob = if (nativeMonitor) launch {
-                    while (isActive && localMonitorGeneration.get() == generation) { publishProgress(); delay(100) }
+                progressJob = if (nativeMonitor || interpretationMonitor) launch {
+                    while (isActive && localMonitorGeneration.get() == generation) {
+                        publishProgress()
+                        if (interpretationMonitor && (localInterpretationTurns.expired(generation, SystemClock.elapsedRealtimeNanos()) ||
+                                monitorRouteReady.get() && (runCatching { track.routedDevice?.id }.getOrNull() != requestedOutputDeviceId ||
+                                    selectedInput?.platformId != monitorInput.platformId ||
+                                    app.broadcastRuntime.state.value.inputPhase != InputPhase.ACTIVE))) {
+                            stopLocalMonitor(expectedGeneration = generation)
+                            return@launch
+                        }
+                        delay(50)
+                    }
                 } else null
                 val initialRoute = awaitMonitorRoute(track)
                     ?: throw LocalMonitorFeedbackBlockedException(
@@ -2015,6 +2083,7 @@ class BroadcastService : Service() {
                     )
                 }
                 lastRoute = initialRoute
+                monitorRouteReady.set(true)
                 updateLocalMonitorPlayback(
                     generation = generation,
                     phase = LocalMonitorPhase.PLAYING,
@@ -2026,6 +2095,9 @@ class BroadcastService : Service() {
 
                 while (true) {
                     val frame = subscription.receiveNext() ?: break
+                    if (interpretationMonitor && !localInterpretationTurns.accepts(generation, frame.utteranceSequence)) {
+                        unwrittenBytes.addAndGet(frame.bytes.size.toLong()); publishProgress(); continue
+                    }
                     if (!retiredTurnsFor(channelId).allows(frame.utteranceSequence)) {
                         unwrittenBytes.addAndGet(frame.bytes.size.toLong()); publishProgress(); continue
                     }
@@ -2056,6 +2128,7 @@ class BroadcastService : Service() {
                     fun isCurrentFrame() = localMonitorGeneration.get() == generation &&
                         localMonitorPlaybackEpoch.get() == frameEpoch && !localMonitorPaused.get() &&
                         (nativeMonitorSessionId == null || isTranslationSessionCurrent(nativeMonitorSessionId)) &&
+                        (!interpretationMonitor || localInterpretationTurns.accepts(generation, frame.utteranceSequence)) &&
                         retiredTurnsFor(channelId).allows(frame.utteranceSequence)
                     val complete = writeLocalMonitorPcm(
                         frame.bytes,
@@ -2071,7 +2144,8 @@ class BroadcastService : Service() {
                                     }.also { n ->
                                         if (n > 0 && n % 2 == 0 && n <= count) {
                                             writtenBytes.addAndGet(n.toLong()); inFlight.addAndGet(-n.toLong())
-                                            if (nativeMonitor) headProgress.accepted(bytes, offset, n, frameEpoch)
+                                            if (nativeMonitor || interpretationMonitor) headProgress.accepted(bytes, offset, n, frameEpoch)
+                                            if (interpretationMonitor) localInterpretationTurns.playing(generation, frame.utteranceSequence)
                                         }
                                     }
                             }
@@ -2117,7 +2191,7 @@ class BroadcastService : Service() {
                 progressJob?.cancel()
                 subscription.close()
                 publishProgress(closed = true)
-                synchronized(localMonitorLock) {
+                withLocalMonitorTeardown(localMonitorLock, detach = {
                     if (localMonitorJob === job) {
                         localMonitorJob = null
                         localMonitorSubscription = null
@@ -2125,10 +2199,16 @@ class BroadcastService : Service() {
                         localMonitorNativeSessionId = null
                         localMonitorPlaybackBoundary = null
                     }
-                }
+                }, beforeUnlock = {
+                    if (interpretationMonitor) {
+                        releaseMonitorAudioTrack(track)
+                        localInterpretationTurns.deactivate(generation, SystemClock.elapsedRealtimeNanos())
+                        if (localInterpretationMonitorGeneration == generation) localInterpretationMonitorGeneration = null
+                    }
+                })
                 // The playback coroutine is the sole release owner. A control action may stop
                 // the track to unblock WRITE_BLOCKING, but never releases it concurrently.
-                releaseMonitorAudioTrack(track)
+                if (!interpretationMonitor) releaseMonitorAudioTrack(track)
             }
         }
         try {
@@ -2140,12 +2220,21 @@ class BroadcastService : Service() {
                 localMonitorAudioTrack = track
                 localMonitorNativeSessionId = nativeMonitorSessionId
                 localMonitorPlaybackBoundary = playbackBoundary
+                if (interpretationMonitor) {
+                    localInterpretationMonitorGeneration = generation
+                    localInterpretationTurns.activate(generation, translationSessionCoordinator.currentSessionId(),
+                        channelId, SystemClock.elapsedRealtimeNanos())
+                }
                 job.start()
             }
         } catch (error: Throwable) {
             job.cancel()
             subscription.close()
-            releaseMonitorAudioTrack(track)
+            if (interpretationMonitor) synchronized(localMonitorLock) {
+                releaseMonitorAudioTrack(track)
+                localInterpretationTurns.deactivate(generation, SystemClock.elapsedRealtimeNanos())
+                if (localInterpretationMonitorGeneration == generation) localInterpretationMonitorGeneration = null
+            } else releaseMonitorAudioTrack(track)
             throw error
         }
     }
@@ -2178,6 +2267,12 @@ class BroadcastService : Service() {
             input = selectedInput,
             inputActive = inputActive,
             output = route,
+            interpretationAllowed = localInterpretationMonitorGeneration == localMonitorGeneration.get() &&
+                localInterpretationPolicy.permits(app.broadcastRuntime.state.value.localMonitor.channelId.orEmpty(),
+                    app.broadcastRuntime.state.value.translationChannels.size,
+                    app.translationApiSettings.state.value.usesNativeLiveAudio,
+                    localInterpretationTurns.registeredGeneration(translationSessionCoordinator.currentSessionId(),
+                        app.broadcastRuntime.state.value.localMonitor.channelId.orEmpty()) == localMonitorGeneration.get()),
         )
     }
 
@@ -2209,6 +2304,7 @@ class BroadcastService : Service() {
     }
 
     private fun pauseLocalMonitor() {
+        if (localInterpretationMonitorGeneration != null) { stopLocalMonitor(); return }
         synchronized(localMonitorLock) {
             val track = localMonitorAudioTrack ?: return
             localMonitorPaused.set(true)
@@ -2238,10 +2334,15 @@ class BroadcastService : Service() {
         }
     }
 
-    private fun stopLocalMonitor(updateRuntime: Boolean = true, expectedNativeSessionId: Long? = null) {
+    private fun stopLocalMonitor(updateRuntime: Boolean = true, expectedNativeSessionId: Long? = null,
+        expectedGeneration: Long? = null) {
         var stoppedGeneration = 0L
-        val resources = synchronized(localMonitorLock) {
+        var interpretationGeneration: Long? = null
+        val resources = withLocalMonitorTeardown(localMonitorLock, detach = {
             if (expectedNativeSessionId != null && localMonitorNativeSessionId != expectedNativeSessionId) return
+            if (expectedGeneration != null && localMonitorGeneration.get() != expectedGeneration) return
+            interpretationGeneration = localInterpretationMonitorGeneration
+            localInterpretationMonitorGeneration = null
             stoppedGeneration = localMonitorGeneration.incrementAndGet()
             localMonitorPaused.set(false)
             Triple(localMonitorJob, localMonitorSubscription, localMonitorAudioTrack).also {
@@ -2251,10 +2352,15 @@ class BroadcastService : Service() {
                 localMonitorNativeSessionId = null
                 localMonitorPlaybackBoundary = null
             }
-        }
+        }, beforeUnlock = { resources ->
+            interpretationGeneration?.let {
+                resources.third?.let(::stopMonitorAudioTrack)
+                localInterpretationTurns.deactivate(it, SystemClock.elapsedRealtimeNanos())
+            }
+        })
         resources.first?.cancel()
         resources.second?.close()
-        resources.third?.let(::stopMonitorAudioTrack)
+        if (interpretationGeneration == null) resources.third?.let(::stopMonitorAudioTrack)
         if (updateRuntime) {
             app.broadcastRuntime.update { current ->
                 if (localMonitorGeneration.get() != stoppedGeneration) current else
@@ -2319,6 +2425,7 @@ class BroadcastService : Service() {
     }
 
     private fun doReleaseTranslationTestResources() {
+        if (localInterpretationMonitorGeneration != null) stopLocalMonitor()
         nativeInputPauseOwner?.job?.cancel()
         nativeInputPauseOwner = null
         nativeRelayPreparedOptions = null
@@ -2448,6 +2555,7 @@ class BroadcastService : Service() {
         val publicationCoordinator = ChannelAudioPublicationCoordinator(
             channelDescriptors.map(AudioChannelDescriptor::id),
         )
+        val interpreter = BroadcastInterpreterBridge(app, streamSession, publicationCoordinator)
         val transcriptPublication = BroadcastTranscriptPublication(
             archiveSessionId = archiveSessionId,
             archiveSnapshot = { app.transcriptArchive.snapshot.value },
@@ -2461,6 +2569,7 @@ class BroadcastService : Service() {
                 bindAllInterfacesForDebug = BuildConfig.DEBUG,
                 isLiveAudioBroadcastEnabled = { app.broadcastRuntime.state.value.let { it.phase == BroadcastPhase.LIVE || it.broadcastFinishing } },
                 broadcastStatusProvider = ::listenerBroadcastStatus,
+                interpreterSupport = interpreter.support.takeUnless { app.translationApiSettings.state.value.usesNativeLiveAudio },
                 isSpeakerInputReady = {
                     val state = app.broadcastRuntime.state.value
                     app.audioInputRepository.selectedDevice.value?.kind == AudioInputKind.WEB_SPEAKER &&
@@ -2530,6 +2639,7 @@ class BroadcastService : Service() {
                         selectiveTranslationRefinement, archiveSessionId, generation)
                 runningServer = server
                 broadcastStreamSession = streamSession
+                interpreterBridge = interpreter
                 broadcastAudioPublicationCoordinator = publicationCoordinator
                 acquireWakeLock()
                 app.broadcastRuntime.update { current ->
@@ -2538,6 +2648,8 @@ class BroadcastService : Service() {
                         recordingId = recordingId,
                         listenerUrl = server?.listenerUrl,
                         speakerUrl = server?.speakerUrl,
+                        interpreterInvite = server?.let { running -> { channel: String -> running.interpreterUrlFor(channel) } },
+                        interpreterStates = emptyMap(),
                         caSha256Fingerprint = server?.caSha256Fingerprint,
                         caFingerprintWarning = server?.caFingerprintWarning,
                         listenerCount = 0,
@@ -3921,11 +4033,22 @@ class BroadcastService : Service() {
                 }
             }
         }
+        val deadlineAwareGemma = fairGemma?.let { primary ->
+            SpeechDeadlineAwareTranslationEngineProvider(
+                primary = primary,
+                fast = admittedFallbackTranslationProvider,
+                fastAvailable = { target -> target in readyFallbackTargets && target !in fallbackWarmupFailures },
+                nowNanos = SystemClock::elapsedRealtimeNanos,
+                onFastUsed = { target ->
+                    RuntimeDiagnosticLog.record("translation_fast_substitute", "target=$target session=$sessionId")
+                },
+            )
+        }
         val preferredTranslationProvider = TranslationEngineProvider { targetLanguageTag ->
             if (targetLanguageTag in gemmaTargets &&
-                gemmaPriorityRouteEnabled.get() && fairGemma != null
+                gemmaPriorityRouteEnabled.get() && deadlineAwareGemma != null
             ) {
-                fairGemma.engineFor(targetLanguageTag)
+                deadlineAwareGemma.engineFor(targetLanguageTag)
             } else {
                 admittedFallbackTranslationProvider.engineFor(targetLanguageTag)
             }
@@ -4053,7 +4176,8 @@ class BroadcastService : Service() {
                 else DomainCorpusFormat.MAX_HINTS_LENGTH
             }
             val domainEngine = SentenceRefiningTranslationEngine(
-                app.translationApiService.engine(localDomainEngine), app.cloudTranslationReviewer,
+                app.translationApiService.engine(localDomainEngine,
+                    rejectedOutputFallback = admittedFallbackTranslationProvider.engineFor(targetLanguageTag)), app.cloudTranslationReviewer,
                 allowLocalRefinement = { app.translationApiSettings.state.value.provider == TranslationApiProvider.LOCAL },
             )
             if (targetLanguageTag.equals("zh-TW", ignoreCase = true)) {
@@ -4077,10 +4201,17 @@ class BroadcastService : Service() {
             sequences to sequences.beginRun(if (streamSession != null)
                 app.broadcastRuntime.state.value.transcripts.map { it.sequence } else emptyList())
         }
+        val onStaleRecognitionInput: () -> Unit = {
+            app.broadcastRuntime.update { latest ->
+                if (!isTranslationSessionCurrent(sessionId)) latest else
+                    latest.copy(recognitionDroppedFrameCount = latest.recognitionDroppedFrameCount + 1)
+            }
+        }
         val recognizedUtterances = app.speechRecognitionEngine.recognize(
-            frames = input.receiveAsFlow(),
+            frames = input.receiveAsFlow().freshRecognitionFrames(onSkipped = onStaleRecognitionInput,
+                onDelivered = { megaphoneDiagnostics?.recognizer(it) }),
             config = SpeechRecognitionConfig(sourceLanguageTag = sourceLanguageTag),
-        ).map { utterance ->
+        ).flowOn(LiveRecognitionInputContext(onStaleRecognitionInput, localInterpretationTurns::recognitionCopy)).map { utterance ->
             val now = SystemClock.elapsedRealtime()
             if (utterance.isFinal) recognitionFinalCount++ else recognitionPartialCount++
             if (utterance.isFinal || now - lastRecognitionDiagnosticMillis >= 2_000L) {
@@ -4130,8 +4261,10 @@ class BroadcastService : Service() {
         }
         val pipeline = TranslationBroadcastPipeline(
             streams = streamRegistry,
+            humanInterpretation = interpreterBridge?.takeIf { it.stream === streamSession }?.floor,
             translationEngines = translationProvider,
             glossaryTerms = app.glossary::matching,
+            interpretationBriefing = { app.interpretationBriefingSettings.state.value.referenceText() },
             onGlossaryWarning = { app.glossary.warning.value = it },
             speechEngines = admittedSpeechSynthesisProvider,
             observer = broadcastTranscriptObserver(sessionId, archiveSessionId),
@@ -4659,10 +4792,59 @@ class BroadcastService : Service() {
         }
     }
 
+    private suspend fun finishLocalInterpretation(reservation: LocalInterpretationReservation,
+        result: SynthesisTermination, publishedBytes: Long, hasPendingSpeech: Boolean) {
+        val turn = reservation.turn
+        val finished = finishLocalInterpretationTurn(localInterpretationTurns, turn, result, reservation.playback,
+            publishedBytes, hasPendingSpeech,
+            snapshot = { localMonitorPlaybackReceipt },
+            stillCurrent = { isTranslationSessionCurrent(turn.sessionId) &&
+                localMonitorGeneration.get() == turn.monitorGeneration && !localMonitorPaused.get() },
+            stopAndFlush = { stopLocalMonitor(expectedGeneration = turn.monitorGeneration) },
+            nowNanos = SystemClock::elapsedRealtimeNanos)
+        if (finished && hasPendingSpeech) serviceScope.launch {
+            // 대기 문장이 기한 만료/취소로 사라져도 차단이 남지 않는다.
+            delay(250)
+            localInterpretationTurns.releaseUnusedCarry(turn, SystemClock.elapsedRealtimeNanos())
+        }
+    }
+
     private fun broadcastTranscriptObserver(
         sessionId: Long,
         archiveSessionId: Long? = null,
     ) = object : TranslationPipelineObserver {
+        private val interpretationReservations = java.util.concurrent.ConcurrentHashMap<Pair<String, Long>, LocalInterpretationReservation>()
+
+        override suspend fun awaitSynthesisTurn(utterance: RecognizedUtterance, target: TranslationTarget,
+            deadlineNanos: Long): Boolean {
+            val generation = localInterpretationTurns.registeredGeneration(sessionId, target.channelId) ?: return true
+            while (SystemClock.elapsedRealtimeNanos() < deadlineNanos) {
+                if (!isTranslationSessionCurrent(sessionId) ||
+                    localInterpretationTurns.registeredGeneration(sessionId, target.channelId) != generation) return false
+                val reservation = synchronized(localMonitorLock) {
+                    val progress = localMonitorPlaybackReceipt?.takeIf {
+                        it.generation == generation && !it.closed && !it.epochChanged && it.buffer.pendingBytes == 0L
+                    }
+                    if (progress == null || localMonitorGeneration.get() != generation) null
+                    else localInterpretationTurns.reserve(generation, utterance.sequence, SystemClock.elapsedRealtimeNanos(), deadlineNanos)?.let {
+                        LocalInterpretationReservation(it, LocalInterpretationPlaybackCheckpoint(progress))
+                    }
+                }
+                if (reservation != null) {
+                    interpretationReservations[target.channelId to utterance.sequence] = reservation
+                    return true
+                }
+                delay(20)
+            }
+            return false
+        }
+
+        override suspend fun onSynthesisTerminated(utterance: RecognizedUtterance, target: TranslationTarget,
+            result: SynthesisTermination, publishedBytes: Long, hasPendingSpeech: Boolean) {
+            val reservation = interpretationReservations.remove(target.channelId to utterance.sequence) ?: return
+            finishLocalInterpretation(reservation, result, publishedBytes, hasPendingSpeech)
+        }
+
         override fun onSourceRecognized(utterance: RecognizedUtterance) {
             if (!isTranslationSessionCurrent(sessionId)) return
             if (utterance.isRetracted) {
@@ -4715,9 +4897,27 @@ class BroadcastService : Service() {
             updateTranscript(sessionId, utterance.sequence) { line ->
                 line.copy(
                     translations = line.translations + (target.languageTag to translatedText),
+                    translationErrors = line.translationErrors - target.languageTag,
                     translationLatencyMillis = line.translationLatencyMillis +
                         (target.languageTag to elapsedMillis),
                 )
+            }
+            persistTranscriptIfAvailable(archiveSessionId, utterance.sequence)
+        }
+
+        override fun onSpeechSkipped(utterance: RecognizedUtterance, target: TranslationTarget, reason: String) {
+            if (!isTranslationSessionCurrent(sessionId)) return
+            updateTranscript(sessionId, utterance.sequence) { line ->
+                line.copy(speechNotices = line.speechNotices +
+                    (target.languageTag to "음성 1문장 건너뜀 · 자막을 확인해 주세요."))
+            }
+        }
+
+        override fun onTranslationFailed(utterance: RecognizedUtterance, target: TranslationTarget, reason: String) {
+            if (!isTranslationSessionCurrent(sessionId)) return
+            updateTranscript(sessionId, utterance.sequence) { line ->
+                line.copy(translationErrors = line.translationErrors +
+                    (target.languageTag to "번역 실패 · 원문을 확인해 주세요."))
             }
             persistTranscriptIfAvailable(archiveSessionId, utterance.sequence)
         }
@@ -5209,6 +5409,8 @@ class BroadcastService : Service() {
         private const val ACTION_RESUME_LOCAL_MONITOR = "app.guidecast.action.RESUME_LOCAL_MONITOR"
         private const val ACTION_STOP_LOCAL_MONITOR = "app.guidecast.action.STOP_LOCAL_MONITOR"
         private const val ACTION_SET_LOCAL_MONITOR_VOLUME = "app.guidecast.action.SET_LOCAL_MONITOR_VOLUME"
+        private const val ACTION_SET_LOCAL_INTERPRETATION = "app.guidecast.action.SET_LOCAL_INTERPRETATION"
+        private const val EXTRA_LOCAL_INTERPRETATION = "local_interpretation_enabled"
         private const val EXTRA_ACCESS_MODE = "access_mode"
         private const val EXTRA_RUN_MODE = "run_mode"
         private const val EXTRA_INTERPRETER_RELAY = "interpreter_relay"
@@ -5384,6 +5586,12 @@ class BroadcastService : Service() {
                     .putExtra(EXTRA_MONITOR_CHANNEL, channelId)
                     .putExtra(EXTRA_MONITOR_OUTPUT_DEVICE_ID, outputDeviceId),
             )
+        }
+
+        /** 화면 통합 연결점. 끌 때는 재생을 정리한 뒤 기존 스피커 차단 정책으로 돌아간다. */
+        fun setLocalInterpretationEnabled(context: Context, enabled: Boolean) {
+            context.startService(Intent(context, BroadcastService::class.java)
+                .setAction(ACTION_SET_LOCAL_INTERPRETATION).putExtra(EXTRA_LOCAL_INTERPRETATION, enabled))
         }
 
         fun pauseLocalMonitor(context: Context) =

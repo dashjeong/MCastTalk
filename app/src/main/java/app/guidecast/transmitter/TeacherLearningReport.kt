@@ -5,11 +5,11 @@ import org.json.JSONObject
 
 enum class TeacherReviewOutcome(val label: String) {
     PROPOSED("승인 대기 · 개선안 준비됨"), HELD("사용자가 보류"), APPROVED("승인 후 적용됨"),
-    LEARNED("보정 지식에 반영"), UNCHANGED("변경 불필요 · 학습 생략"),
+    LEARNED("참고 문장 저장됨"), UNCHANGED("변경 없음"),
     REJECTED("보류 · 내용 검사 미통과"), NO_LESSON("보류 · 개선 근거 없음"),
     NOT_SAVED("미반영 · 사용자 확정 또는 저장 제한"), UNAVAILABLE("미반영 · 응답 없음/시간 초과"),
-    UNDONE("사용자가 학습 취소"), IMPORTED("이관된 비교 기록 · 적용 권한 없음"),
-    DISAGREEMENT("검증 보류 · 모델 불일치/내용 검사"),
+    UNDONE("교정 적용 취소"), IMPORTED("옮긴 비교 기록 · 승인 권한 없음"),
+    DISAGREEMENT("확인 필요 · 번역 결과가 다름"),
 }
 
 /** Only selected examples, never the complete transcript. This is user content, not diagnostic logging. */

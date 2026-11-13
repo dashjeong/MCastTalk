@@ -140,6 +140,8 @@ data class BroadcastSnapshot(
     val accessMode: OperatorAccessMode? = null,
     val listenerUrl: String? = null,
     val speakerUrl: String? = null,
+    val interpreterInvite: ((String) -> String?)? = null,
+    val interpreterStates: Map<String, String> = emptyMap(),
     /** Installation-local Root CA digest copied from the exact running server generation. */
     val caSha256Fingerprint: String? = null,
     /** Fail-safe warning when the downloadable DER bytes do not match the advertised digest. */
@@ -171,6 +173,8 @@ data class BroadcastSnapshot(
     val translationTestPassed: Boolean = false,
     val translationTestMessage: String? = null,
     val localMonitor: LocalMonitorSnapshot = LocalMonitorSnapshot(),
+    val localInterpretationEnabled: Boolean = false,
+    val localInterpretationPhase: LocalInterpretationPhase = LocalInterpretationPhase.OFF,
 )
 
 enum class LiveOutputState(val label: String) {
@@ -213,6 +217,8 @@ data class TranslationTranscriptLine(
         TranscriptAudioAlignment.NATIVE_PAIR_UNCONFIRMED else TranscriptAudioAlignment.UTTERANCE_SEQUENCE,
     val liveSourceFailed: Boolean = false,
     val liveSourceExpired: Boolean = false,
+    val translationErrors: Map<String, String> = emptyMap(),
+    val speechNotices: Map<String, String> = emptyMap(),
 ) {
     val sourceStatusLabel: String get() = when {
         liveSourceExpired -> "원문 자막 대기 만료 · 사용량 미확인"

@@ -41,7 +41,9 @@ object GlossaryTerms {
         sourceLanguage: String,
         targetLanguage: String,
         candidates: List<GlossaryTerm>,
+        maximumTerms: Int = MAX_TERMS,
     ): List<GlossaryTerm> {
+        require(maximumTerms in 1..12)
         if (text.isBlank() || candidates.isEmpty()) {
             return emptyList()
         }
@@ -96,7 +98,7 @@ object GlossaryTerms {
         var totalPreferredChars = 0
 
         for (match in matches) {
-            if (selected.size >= MAX_TERMS) break
+            if (selected.size >= maximumTerms) break
 
             val term = match.term
 

@@ -47,6 +47,7 @@ import kotlinx.coroutines.withContext
 internal fun TeacherLearningControls(settings: DeveloperLabSettings, reviewer: CloudTranslationReviewer, onReports: () -> Unit) {
     val options by settings.state.collectAsState()
     val progress by reviewer.learningProgress.collectAsState()
+    val feedback by reviewer.feedback.collectAsState()
     val scope = rememberCoroutineScope()
     var source by remember { mutableStateOf("ko") }
     var target by remember { mutableStateOf("en") }
@@ -56,18 +57,19 @@ internal fun TeacherLearningControls(settings: DeveloperLabSettings, reviewer: C
     var showInput by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
-    Text("번역 품질 진단 · 학습 대기목록", style = MaterialTheme.typography.titleMedium)
-    Text("기기에서 문제 후보 선별 → ChatGPT(OpenAI API)·Gemini와 비교 → 개선안 제안 → 사용자 승인·보류 → 핵심 문장 반영. 모델 가중치를 재학습하는 기능은 아닙니다.", style = MaterialTheme.typography.bodySmall)
+    Text("최근 검토 · ${feedback.message}", style = MaterialTheme.typography.bodySmall)
+    Text("번역 검토 · 승인 대기 목록", style = MaterialTheme.typography.titleMedium)
+    Text("문제를 찾아 두 서비스의 번역과 비교합니다. 확인한 참고 문장은 승인 후 다음 통역에 씁니다.", style = MaterialTheme.typography.bodySmall)
     Text("숫자 불일치, 원문 그대로 출력, 목표 언어·길이 이상, 동일 원문의 번역 변동과 직접 요청한 문장을 검토합니다. 정상·중복 항목은 보내지 않습니다. 선별 신호 자체는 오류 확정이 아닙니다.", style = MaterialTheme.typography.bodySmall)
     Text("최대 분당 2건 · 동시 2건 · 건당 원문 4,000자/번역 8,000자. 실시간 낭독은 기다리지 않으며, 실패 시 원래 번역을 유지합니다. 저장된 보정은 같은 언어·문체·원문에만 적용합니다.", style = MaterialTheme.typography.bodySmall)
     Text("이번 실행: 진단 ${progress.examined} · 전송 대상 ${progress.selected} · 생략 ${progress.skipped} · 개선안 ${progress.proposed} · 변경 없음 ${progress.unchanged} · 미반영 ${progress.rejected} · 재사용 ${progress.reused}", style = MaterialTheme.typography.bodySmall)
-    OutlinedButton(onClick = onReports, modifier = Modifier.fillMaxWidth()) { Text("학습 전후 비교 리포트") }
+    OutlinedButton(onClick = onReports, modifier = Modifier.fillMaxWidth()) { Text("검토 전후 비교 기록") }
     TextButton(onClick = { showInput = !showInput }) { Text(if (showInput) "문장 진단 접기" else "개선할 문장 직접 진단") }
     if (showInput) {
         OutlinedTextField(source, { source = it.take(30) }, label = { Text("원문 언어 코드 · 예: ko, en, ja") }, singleLine = true, enabled = !busy)
         OutlinedTextField(target, { target = it.take(30) }, label = { Text("번역 언어 코드 · 예: en, ko, zh") }, singleLine = true, enabled = !busy)
         OutlinedTextField(original, { original = it.take(4_000) }, label = { Text("진단할 원문") }, enabled = !busy, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(draft, { draft = it.take(8_000) }, label = { Text("앱 번역 · 학습 전") }, enabled = !busy, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(draft, { draft = it.take(8_000) }, label = { Text("검토 전 번역") }, enabled = !busy, modifier = Modifier.fillMaxWidth())
         if (options.comparisonEnabled) OutlinedTextField(contextBefore, { contextBefore = it.takeLast(1_000) },
             label = { Text("직전 문맥 · 최대 1,000자") }, enabled = !busy, modifier = Modifier.fillMaxWidth())
         Button(enabled = !busy && options.teacherLearningEnabled && options.cloudReviewEnabled && options.hasApiKey &&
@@ -79,19 +81,15 @@ internal fun TeacherLearningControls(settings: DeveloperLabSettings, reviewer: C
                 busy = true; message = "선택한 한 문장을 진단하고 있습니다."
                 scope.launch {
                     try {
-                        withContext(TranslationStyleContext(TranslationStyle.valueOf(register.name))) {
-                            reviewer.refine(from, to, text, translation, requestTeacherReview = true, contextBefore = contextBefore)
+                        val result = withContext(TranslationStyleContext(TranslationStyle.valueOf(register.name))) {
+                            reviewer.refineWithFeedback(from, to, text, translation, requestTeacherReview = true, contextBefore = contextBefore)
                         }
-                        message = when (reviewer.status.value) {
-                            CloudReviewStatus.BUSY -> "다른 검토가 진행 중입니다. 잠시 뒤 다시 진단하세요. 이번 요청은 전송하지 않았습니다."
-                            CloudReviewStatus.FALLBACK -> "검토가 완료되지 않았습니다. 원래 번역을 유지했습니다. API 설정·연결을 확인하세요."
-                            else -> "진단 처리를 마쳤습니다. 리포트에서 개선안을 승인·보류하세요. 중복·횟수 제한·확정 문장은 새 검토를 생략합니다."
-                        }
+                        message = result.feedback.message
                     } catch (cancelled: CancellationException) { throw cancelled }
                     catch (_: Exception) { message = "진단하지 못했습니다. 설정을 확인하고 다시 시도하세요." }
                     finally { busy = false }
                 }
-            }) { Text(if (busy) "진단 중" else "이 문장 진단·학습") }
+            }) { Text(if (busy) "진단 중" else "이 문장 검토") }
         message?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
     }
 }
@@ -131,7 +129,7 @@ internal fun TeacherLearningReportScreen(memory: SentenceTranslationMemory, onBa
         LazyColumn(contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
                 TextButton(onClick = onBack) { Text("실험실로") }
-                Text("학습 전후 비교 리포트", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
+                Text("검토 전후 비교 기록", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
                 Text("최근 선별 기록 200건과 승인된 교차 검증 교정 최대 500건을 기기에 보관합니다. 교차 검증 교정은 이 화면에서 관리하며, 승인한 원문·언어·문체·문맥·상황이 모두 일치할 때 적용합니다.")
                 Text("숫자·문자·내용 검사는 의미 정확도나 자연스러움의 실측 점수가 아닙니다. ‘핵심 개선’은 스승 모델이 제안한 분류이며, 원문과 함께 확인하세요.", style = MaterialTheme.typography.bodySmall)
                 Text("표시 ${reports.size}건 · 승인 대기 ${reports.count { it.outcome == TeacherReviewOutcome.PROPOSED }} · 승인 적용 ${reports.count { it.outcome == TeacherReviewOutcome.APPROVED }} · 보류 ${reports.count { it.outcome == TeacherReviewOutcome.HELD }}")
@@ -148,8 +146,8 @@ internal fun TeacherLearningReportScreen(memory: SentenceTranslationMemory, onBa
                         Text("${DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(report.createdAtEpochMillis))} · ${report.sourceLanguageTag} → ${report.targetLanguageTag}", style = MaterialTheme.typography.labelMedium)
                         Text("선별 이유: ${report.signals.joinToString { it.label }}")
                         Text("원문: ${report.original}")
-                        Text("학습 전 · 앱 번역: ${report.before}")
-                        Text("학습 후 후보 · 스승 보정: ${report.after ?: "결과 없음"}", color = MaterialTheme.colorScheme.primary)
+                        Text("검토 전 · 앱 번역: ${report.before}")
+                        Text("검토 후 후보: ${report.after ?: "결과 없음"}", color = MaterialTheme.colorScheme.primary)
                         Text("핵심 개선: ${report.lessons.joinToString { it.label }.ifEmpty { "확인된 보정 분류 없음" }}")
                         report.comparison?.let { evidence ->
                             Text("상황: ${evidence.situation.ifBlank { "지정 없음" }} · 직전 문맥: ${evidence.contextBefore.ifBlank { "없음" }}")
@@ -188,7 +186,7 @@ internal fun TeacherLearningReportScreen(memory: SentenceTranslationMemory, onBa
                                 catch (_: Exception) { message = "학습을 취소하지 못했습니다. 다시 시도하세요." }
                                 finally { busy = false }
                             }
-                        }) { Text("이 학습 취소") }
+                        }) { Text("이 교정 취소") }
                         if (report.comparison != null && report.outcome == TeacherReviewOutcome.APPROVED) {
                             TextButton(enabled = !busy, onClick = { deactivateRequested = report }) { Text("이 문맥 교정 사용 해제") }
                         }

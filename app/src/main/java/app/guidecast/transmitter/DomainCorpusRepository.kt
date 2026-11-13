@@ -48,7 +48,7 @@ data class DomainCorpusMatch(
 )
 
 sealed interface DomainImportResult {
-    data class Success(val profile: DomainCorpusProfile) : DomainImportResult
+    data class Success(val profile: DomainCorpusProfile, val indexReady: Boolean = true) : DomainImportResult
     data class Failure(val lineNumber: Int?, val reason: String) : DomainImportResult
 }
 
@@ -228,6 +228,10 @@ open class DomainCorpusRepository internal constructor(
         })
     }
     @Volatile private var publishedIndex = PublishedIndex(emptyMap(), 0)
+    internal fun indexedStyles(profileId: Long): Set<TranslationStyle>? =
+        publishedIndex.profiles.values.firstOrNull { it.profile.id == profileId }?.let { active ->
+            active.pairs.map { it.reviewedStyle ?: active.profile.style }.toSet()
+        }
     internal fun automaticExampleDomain(): Pair<Long, String> = publishedIndex.let { it.revision to it.identity }
     init {
         if (dbHelper != null) indexScope.launch {
@@ -345,8 +349,9 @@ open class DomainCorpusRepository internal constructor(
             } finally {
                 db.endTransaction()
             }
-            publishActiveIndexLocked()
-            imported
+            completeDomainImport(imported) { publishActiveIndexLocked() }.also {
+                if (!it.indexReady) _revision.value++
+            }
         }
     }
 

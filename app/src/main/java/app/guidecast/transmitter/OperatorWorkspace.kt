@@ -37,7 +37,7 @@ internal fun MicrophoneNoiseOptions(
                 FilterChip(
                     selected = mode == choice, onClick = { onSelect(choice) }, enabled = enabled,
                     modifier = Modifier.weight(1f).heightIn(min = 48.dp),
-                    label = { Text(choice.label) },
+                    label = { Text(if (choice == MicrophoneNoiseMode.AI) "소음 더 줄이기" else choice.label) },
                 )
             }
         }
@@ -46,7 +46,7 @@ internal fun MicrophoneNoiseOptions(
             else when (mode) {
                 MicrophoneNoiseMode.OFF -> "앱의 소음 억제·자동 증폭을 끕니다. 음악이나 원본 비교에 사용하세요. 단말 자체 처리는 장치에 따라 남을 수 있습니다."
                 MicrophoneNoiseMode.DEVICE -> "단말의 잡음 억제를 사용하며 주변음까지 키우는 자동 증폭은 요청하지 않습니다. 지원 여부는 입력 상태에 표시됩니다."
-                MicrophoneNoiseMode.AI -> "오프라인 RNNoise로 음성 중심의 소음 감소를 적용합니다. 단말 잡음 억제·자동 증폭은 겹치지 않습니다. 시험에서 원음과 전사를 비교하세요. 환경에 따라 말소리도 변할 수 있습니다."
+                MicrophoneNoiseMode.AI -> "휴대폰에서 말소리 주변의 소음을 줄여요. 환경에 따라 말소리도 달라질 수 있으니 방송 전에 확인해 주세요."
             } + " 앱 재생음은 소음 감소 없이 전달합니다.",
             style = MaterialTheme.typography.bodySmall,
         )

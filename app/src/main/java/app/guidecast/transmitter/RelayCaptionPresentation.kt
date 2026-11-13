@@ -71,7 +71,7 @@ internal fun relayCaptionPresentation(
         }
         start = blockEnd
     }
-    return result.sortedByDescending { it.capturedAtElapsedRealtimeNanos }
+    return result.sortedWith(compareByDescending<RelayCaptionGroup> { it.capturedAtElapsedRealtimeNanos }.thenByDescending { it.segments.maxOfOrNull { s -> s.sequence } ?: 0L })
 }
 
 private data class NativeCaptionMatchKey(val session: Long, val sourceLanguage: String, val source: String)

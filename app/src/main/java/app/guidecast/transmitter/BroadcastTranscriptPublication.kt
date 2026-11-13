@@ -75,6 +75,8 @@ internal class BroadcastTranscriptPublication(
                 liveSegmentLanguage = line.liveSegmentLanguage,
                 liveOutputState = line.liveOutputState?.name,
                 displayGroupSequence = displayGroups[line.sequence],
+                translationErrors = line.translationErrors.toMap(),
+                speechNotices = line.speechNotices.toMap(),
             )
         }.let { lines -> Collections.unmodifiableList(ArrayList(lines)) }
 

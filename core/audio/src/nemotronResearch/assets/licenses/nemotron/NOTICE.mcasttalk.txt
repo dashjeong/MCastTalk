@@ -1,0 +1,20 @@
+MCastTalk NemotronLabs mobile evaluation adapter, 2026-11-09.
+
+The NVIDIA model, converted graph and original copyrights/terms are recorded in
+provenance.json and licenses/LICENSE, NOTICE and LICENSE.mamba_ssm.txt. No weights
+are included. This is separate from the earlier Real-time_RE-USE NSCL research port.
+
+android/com/reuse/Spectral.kt is an unmodified copy of Daisuke Majima's
+john-rocky/LiteRT-Models at f9f73d14abc4a58990aaa3e599d0b48a5982bb37.
+The repository's MIT LICENSE is retained as licenses/LICENSE.android-MIT.
+
+MCastTalk's independent wrapper changes model placement to checked app-private
+files, validates the full size/SHA and tensor contract, reuses fixed-shape buffers,
+records GPU completion rather than enqueue time, constrains worker ownership and
+closes partially constructed resources. The separate synthetic probe checks heat,
+power and memory, saves measured results, and enforces terminal cancellation.
+
+RealtimeEnhancementAdmission is an evaluation policy. It has no production caller.
+The normal MCastTalk capture path continues to use original/device/RNNoise audio.
+No live Nemotron mode, measured transcription improvement or general realtime
+support is claimed by this adapter.

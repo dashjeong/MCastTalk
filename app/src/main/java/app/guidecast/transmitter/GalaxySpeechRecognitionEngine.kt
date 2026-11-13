@@ -13,6 +13,7 @@ import app.guidecast.core.translation.RealtimeInterpretationPolicy
 import app.guidecast.core.translation.RecognizedUtterance
 import app.guidecast.core.translation.SpeechRecognitionConfig
 import app.guidecast.core.translation.SpeechRecognitionEngine
+import app.guidecast.core.translation.SpeechRecognitionEndpointControl
 import app.guidecast.core.translation.sentenceCompletionInterpretationPolicy
 import app.guidecast.provider.android.stt.AndroidOnDeviceSpeechRecognitionEngine
 import app.guidecast.provider.android.stt.AndroidSpeechRecognitionException
@@ -30,6 +31,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
@@ -262,7 +264,12 @@ class GalaxySpeechRecognitionEngine(
             error("Moonshine STT live-restart native admission is not configured")
         },
     private val recognitionEngineOverride: SpeechRecognitionEngine? = null,
+    private val correctRecognizedText: (String, String) -> String = { text, _ -> text },
 ) : SpeechRecognitionEngine, Closeable {
+    private fun corrected(unit: RecognizedUtterance): RecognizedUtterance = unit.copy(
+        text = correctRecognizedText(unit.text, unit.sourceLanguageTag),
+        contextBefore = unit.contextBefore?.let { correctRecognizedText(it, unit.sourceLanguageTag) },
+    )
     private val operatorRestartSink = AtomicReference<Channel<Unit>?>(null)
     private val usableSourceWatchdog = RecognitionUsableSourceWatchdog()
 
@@ -505,6 +512,7 @@ class GalaxySpeechRecognitionEngine(
     ): Flow<RecognizedUtterance> = channelFlow {
         val normalizedSourceLanguage = requireSupportedSourceLanguage(config.sourceLanguageTag)
         val captureGeneration = usableSourceWatchdog.beginCapture(SystemClock.elapsedRealtime())
+        val liveInput = currentCoroutineContext()[LiveRecognitionInputContext]
         var recognitionStatus = mutableStatus.value
         fun updateRecognitionStatus(status: GalaxySpeechLanguageStatus) {
             usableSourceWatchdog.ifCurrent(captureGeneration) {
@@ -540,16 +548,18 @@ class GalaxySpeechRecognitionEngine(
         val recognitionStallRequests = Channel<Long>(capacity = Channel.CONFLATED)
         val progressWatchdog = RecognitionProgressWatchdog()
         val inputCompletion = RecognitionInputCompletion()
+        val endpointReplayWindow = AtomicReference<LongRange?>(null)
+        val recoveredEndpointPcm = java.util.concurrent.ConcurrentLinkedQueue<PcmAudioFrame>()
 
         suspend fun emitSegmenterOutput(block: () -> List<RecognizedUtterance>) {
             segmenterMutex.withLock {
-                block().forEach { interpretedUnit -> send(interpretedUnit) }
+                block().forEach { interpretedUnit -> send(corrected(interpretedUnit)) }
             }
         }
 
         suspend fun advanceSegmenter(nowNanos: Long): Boolean = segmenterMutex.withLock {
             interpretationSegmenter.tick(nowNanos).forEach { interpretedUnit ->
-                send(interpretedUnit)
+                send(corrected(interpretedUnit))
             }
             interpretationSegmenter.isRecognizerEndpointDue(nowNanos)
         }
@@ -558,7 +568,7 @@ class GalaxySpeechRecognitionEngine(
             // Roughly sub-second on typical Galaxy AudioRecord frame sizes. Backpressure reaches
             // the short capture hand-off instead of silently deleting the beginning of a phrase
             // or accumulating a multi-second interpretation delay.
-            capacity = inputProfile.pcmBufferCapacity,
+            capacity = maxOf(inputProfile.pcmBufferCapacity, 64),
         )
         val feeder = launch(Dispatchers.Default) {
             try {
@@ -652,6 +662,7 @@ class GalaxySpeechRecognitionEngine(
                 val providerSequenceMap = RecognitionSequenceMapper(nextSourceSequence)
                 val finalGate = ProviderFinalGate()
                 val attemptInput = inputCompletion.newAttempt()
+                val endpointControl = SpeechRecognitionEndpointControl()
                 val attemptId = nextRecognitionAttempt.getAndIncrement()
                 var attemptHadUsableSource = false
                 activeRecognitionAttempt.set(attemptId)
@@ -705,7 +716,48 @@ class GalaxySpeechRecognitionEngine(
                             progressWatchdog.beginAttempt(attemptId, SystemClock.elapsedRealtime())
                             RuntimeDiagnosticLog.record("recognition_attempt", "attempt=$attemptId backend=$attemptBackend")
                             var previousHypothesis: Triple<Long, String, Boolean>? = null
-                            engine.recognize(attemptInput.track(pcm.receiveAsFlow()), attemptConfig).collect { utterance ->
+                            // Recheck at the final provider dequeue: frames may have aged inside
+                            // this queue or the feeder's suspended send after passing the service gate.
+                            // File/finite inputs have no live admission stamp and remain lossless.
+                            val providerFrames = kotlinx.coroutines.flow.flow<PcmAudioFrame> {
+                                while (true) {
+                                    val recovered = recoveredEndpointPcm.poll()
+                                    if (recovered != null) {
+                                        val window = endpointReplayWindow.get()
+                                        if (window?.last == Long.MAX_VALUE) {
+                                            endpointReplayWindow.compareAndSet(window, window.first..System.nanoTime())
+                                        }
+                                        endpointControl.preserveUnwrittenInput(recovered)
+                                        emit(recovered)
+                                        endpointControl.takeUnwrittenInput()
+                                        continue
+                                    }
+                                    val next = select<kotlinx.coroutines.channels.ChannelResult<PcmAudioFrame>?> {
+                                        endpointControl.stopRequested.onAwait { null }
+                                        pcm.onReceiveCatching { it }
+                                    } ?: break
+                                    if (next.isClosed) {
+                                        next.exceptionOrNull()?.let { throw it }
+                                        break
+                                    }
+                                    val frame = next.getOrThrow()
+                                    val window = endpointReplayWindow.get()
+                                    if (window?.last == Long.MAX_VALUE) {
+                                        endpointReplayWindow.compareAndSet(window, window.first..System.nanoTime())
+                                    }
+                                    val enqueued = frame.localEnqueuedAtNanos
+                                    val preserved = enqueued != null &&
+                                        endpointReplayWindow.get()?.contains(enqueued) == true
+                                    val admittedFrame = if (preserved) frame.copy(localEnqueuedAtNanos = null) else frame
+                                    endpointControl.preserveUnwrittenInput(admittedFrame)
+                                    emit(admittedFrame)
+                                    endpointControl.takeUnwrittenInput()
+                                }
+                            }.freshRecognitionFrames(
+                                onSkipped = { liveInput?.onSkipped?.invoke() },
+                            )
+                            withContext(endpointControl) {
+                            engine.recognize(attemptInput.track(providerFrames), attemptConfig).collect { utterance ->
                                 val hypothesis = Triple(utterance.sequence, utterance.text, utterance.isFinal)
                                 val hypothesisChanged = hypothesis != previousHypothesis
                                 if (hypothesisChanged) {
@@ -728,13 +780,14 @@ class GalaxySpeechRecognitionEngine(
                                         val sequence = providerSequenceMap.map(utterance.sequence)
                                         interpretationSegmenter.accept(
                                             utterance.copy(sequence = sequence),
-                                        ).forEach { interpretedUnit -> send(interpretedUnit) }
+                                        ).forEach { interpretedUnit -> send(corrected(interpretedUnit)) }
                                         consecutiveFailures = 0
                                         if (utterance.isFinal) {
                                             providerSequenceMap.complete(utterance.sequence)
                                         }
                                     }
                                 }
+                            }
                             }
                             completion.complete(RecognitionAttemptOutcome.Completed)
                         } catch (cancelled: CancellationException) {
@@ -772,7 +825,6 @@ class GalaxySpeechRecognitionEngine(
                                     interpretationSegmenter.shouldRequestRecognizerEndpoint(
                                         SystemClock.elapsedRealtimeNanos(),
                                     )) {
-                                    collector.cancel()
                                     true
                                 } else false
                             })) ||
@@ -780,6 +832,11 @@ class GalaxySpeechRecognitionEngine(
                                 (selected.attemptId != attemptId || !inputCompletion.permitsAutomaticRestart()))
                     )
 
+                    if (selected is RecognitionAttemptOutcome.EndpointRestart) {
+                        val preserveFrom = System.nanoTime() - 160_000_000L
+                        endpointReplayWindow.set(preserveFrom..Long.MAX_VALUE)
+                        endpointControl.requestStopAndAwait(collector)
+                    }
                     if (selected == RecognitionAttemptOutcome.OperatorRestart ||
                         selected is RecognitionAttemptOutcome.EndpointRestart ||
                         selected is RecognitionAttemptOutcome.Unresponsive ||
@@ -790,6 +847,10 @@ class GalaxySpeechRecognitionEngine(
                         segmenterMutex.withLock { collector.cancel() }
                     }
                     collector.join()
+                    val unwritten = endpointControl.takeUnwrittenInput()
+                    if (selected is RecognitionAttemptOutcome.EndpointRestart && unwritten != null) {
+                        recoveredEndpointPcm.add(unwritten.copy(localEnqueuedAtNanos = null))
+                    }
                     captureWatcher?.cancel()
                     selected
                 }

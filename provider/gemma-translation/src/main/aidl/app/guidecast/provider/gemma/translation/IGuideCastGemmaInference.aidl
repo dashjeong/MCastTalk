@@ -16,6 +16,7 @@ interface IGuideCastGemmaInference {
         String sessionMemory,
         String domainHints,
         boolean jsonResponseFormat,
+        String interpretationBriefing,
         IGuideCastGemmaInferenceCallback callback
     );
     oneway void cancel(long requestId);

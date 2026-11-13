@@ -11,29 +11,69 @@
   <main>
     <header>
       <span class="brand">MCastTalk</span>
-      <h1>실시간 다국어 통역방송</h1>
-      <p id="page-description">가이드가 송출 중인 언어를 고르고 재생을 누르세요. (feat. DMZ peace walk)</p>
     </header>
 
     <section class="card" aria-labelledby="channel-label">
-      <div id="pinned-channel" class="pinned-channel" role="status" hidden>
-        <div>
-          <span class="pinned-channel-label">현재 통역 채널</span>
-          <strong id="pinned-channel-name"></strong>
+      <section id="panel-player" class="tab-panel" aria-labelledby="channel-label">
+        <label id="channel-label" for="channel">음성 언어</label>
+        <select id="channel" disabled></select>
+        <div class="status-row" role="status" aria-live="polite">
+          <span id="status-dot" class="dot" aria-hidden="true"></span>
+          <span id="status">연결 준비 중</span>
         </div>
-        <a href="/">다른 언어 보기</a>
+        <div id="current-caption" aria-label="현재 통역 자막" aria-live="polite" aria-atomic="true" dir="auto"></div>
+        <p id="ai-notice" class="hint">AI가 통역한 내용입니다. 원문과 다를 수 있어요.</p>
+        <button id="play" class="primary" type="button">듣기 시작</button>
+        <button id="pause-main" type="button" hidden>일시정지</button>
+      </section>
+
+      <section id="panel-transcript" class="tab-panel" aria-label="지난 내용 보기" hidden>
+        <div class="transcript-toolbar">
+          <label for="transcript-scope">스크립트 범위</label>
+          <select id="transcript-scope"><option value="live">최근 실시간</option><option value="archive">방송 처음부터</option></select>
+          <button id="archive-first" type="button">처음 문장</button>
+          <button id="archive-prev" type="button">이전 문장</button>
+          <button id="archive-next" type="button">다음 문장</button>
+          <label for="transcript-language">자막 언어</label>
+          <select id="transcript-language"></select>
+          <button id="transcript-refresh" type="button">새로고침</button>
+          <label class="follow-latest" for="transcript-follow">
+            <input id="transcript-follow" type="checkbox" checked>
+            최신 내용 자동 따라가기
+          </label>
+        </div>
+        <p id="transcript-status" class="transcript-status" role="status" aria-live="polite" hidden></p>
+        <div id="transcript-list" class="transcript-scroll" aria-live="polite" aria-label="통역 스크립트"></div>
+        <p class="hint">최근 실시간은 최신 100개, 방송 처음부터는 100개씩 표시합니다. 이전 내용을 읽을 때 자동 따라가기를 끄면 스크롤 위치가 유지됩니다.</p>
+      </section>
+
+      <div class="listener-actions">
+        <button id="caption-size" type="button" aria-controls="current-caption" aria-label="글자 크게 · 1/3">글자 크게</button>
+        <button id="tab-transcript" class="tab" type="button" aria-expanded="false"
+                aria-controls="panel-transcript">지난 내용 보기</button>
+        <button id="tab-player" class="tab active" type="button" aria-controls="panel-player" hidden>방송 듣기</button>
+      </div>
+      <div class="listener-footer">
+        <span id="no-sign-in">로그인 없이 들을 수 있어요.</span>
+        <button id="more-options-toggle" type="button" aria-controls="more-options" aria-expanded="false">더 보기</button>
       </div>
 
-      <div class="tabs" role="tablist" aria-label="재생/스크립트 탭">
-        <button id="tab-player" class="tab active" type="button" role="tab" aria-selected="true"
-                aria-controls="panel-player">방송 듣기</button>
-        <button id="tab-transcript" class="tab" type="button" role="tab" aria-selected="false"
-                aria-controls="panel-transcript" tabindex="-1">통역 스크립트</button>
-      </div>
-      <button id="hud-open" class="hud-open" type="button" aria-haspopup="dialog"
-              aria-controls="listener-hud" aria-expanded="false">HUD 보기</button>
-
-      <section id="panel-player" class="tab-panel" role="tabpanel" aria-labelledby="tab-player" tabindex="0">
+      <section id="more-options" aria-label="더 보기" hidden>
+        <h1>실시간 다국어 통역방송</h1>
+        <p id="page-description">언어를 고르고 듣기 시작을 누르세요.</p>
+        <div id="pinned-channel" class="pinned-channel" role="status" hidden>
+          <div>
+            <span class="pinned-channel-label">현재 통역 채널</span>
+            <strong id="pinned-channel-name"></strong>
+          </div>
+          <a href="/">다른 언어 보기</a>
+        </div>
+        <div class="controls">
+          <button id="pause" type="button" disabled>일시정지</button>
+          <button id="stop" type="button" disabled>중지</button>
+        </div>
+        <button id="hud-open" class="hud-open" type="button" aria-haspopup="dialog"
+                aria-controls="listener-hud" aria-expanded="false">큰 자막</button>
         <label for="listening-mode">듣기 방식</label>
         <select id="listening-mode"><option value="live">실시간 듣기</option><option value="replay">돌려보기 · 저장 음성 재생</option></select>
         <div id="replay-controls" hidden>
@@ -42,13 +82,6 @@
           <p id="replay-clock">0:00 / 0:00</p>
           <p id="replay-warning" role="status"></p>
           <p class="hint">재생 위치는 저장된 음성 길이 기준입니다. 무음·방송 일시정지 시간은 제외됩니다. 방송이 계속되면 새로 저장된 구간도 재생할 수 있습니다.</p>
-        </div>
-        <div id="current-caption" aria-label="현재 통역 자막"></div>
-        <label id="channel-label" for="channel">음성 언어</label>
-        <select id="channel" disabled></select>
-        <div class="status-row" role="status" aria-live="polite">
-          <span id="status-dot" class="dot"></span>
-          <span id="status">연결 준비 중</span>
         </div>
 
         <label class="meter-label" for="audio-level">수신 음량</label>
@@ -67,46 +100,21 @@
           </select>
           <button id="live-edge" type="button" disabled>실시간 복귀</button>
         </div>
-
-        <div class="controls">
-          <button id="play" class="primary" type="button">듣기 시작</button>
-          <button id="pause" type="button" disabled>일시정지</button>
-          <button id="stop" type="button" disabled>중지</button>
-        </div>
         <p id="listen-help" class="hint">음성은 ‘듣기 시작’을 눌러 재생하세요. 자막 언어는 별도로 선택할 수 있습니다.</p>
         <p class="hint">실시간 듣기는 1배속 이상으로 재생합니다. 느리게 듣기는 ‘돌려보기’를 선택하세요. ‘실시간 복귀’는 대기 중인 음성을 건너뜁니다. 수신량이 너무 많으면 안내 후 새 수신을 멈추며, 누락 구간은 저장 상태에 따라 돌려보기에서 확인할 수 있습니다.</p>
-      </section>
-
-      <section id="panel-transcript" class="tab-panel" role="tabpanel" aria-labelledby="tab-transcript" tabindex="0" hidden>
-        <div class="transcript-toolbar">
-          <label for="transcript-scope">스크립트 범위</label>
-          <select id="transcript-scope"><option value="live">최근 실시간</option><option value="archive">방송 처음부터</option></select>
-          <button id="archive-first" type="button">처음 문장</button>
-          <button id="archive-prev" type="button">이전 문장</button>
-          <button id="archive-next" type="button">다음 문장</button>
-          <label for="transcript-language">자막 언어</label>
-          <select id="transcript-language">
-            <option value="source">원문</option>
-          </select>
-          <button id="transcript-refresh" type="button">새로고침</button>
-          <label class="follow-latest" for="transcript-follow">
-            <input id="transcript-follow" type="checkbox" checked>
-            최신 내용 자동 따라가기
-          </label>
-        </div>
-        <p id="transcript-status" class="transcript-status" role="status" aria-live="polite" hidden></p>
-        <div id="transcript-list" class="transcript-scroll" aria-live="polite" aria-label="통역 스크립트"></div>
-        <p class="hint">최근 실시간은 최신 100개, 방송 처음부터는 100개씩 표시합니다. 이전 내용을 읽을 때 자동 따라가기를 끄면 스크롤 위치가 유지됩니다.</p>
-      </section>
-
       <label class="follow-latest developer-information-toggle" for="developer-information">
         <input id="developer-information" type="checkbox">
         개발자 정보 표시
       </label>
+        <footer class="legal-notice">
+          <strong>Powered by Codex, Gemini with dash.jeong</strong>
+          <span> · <strong>Powered by Moonshine AI</strong><span> · 소프트웨어와 모델의 라이선스 및 이용조건이 적용됩니다.</span></span>
+        </footer>
+      </section>
 
       <dialog id="pin-dialog">
         <form id="pin-form" method="dialog">
-          <h2>방송 PIN 입력</h2>
+          <h2>입장 번호</h2>
           <p>가이드가 안내한 숫자를 입력하세요.</p>
           <input id="pin" inputmode="numeric" autocomplete="one-time-code"
                  pattern="[0-9]{4,8}" minlength="4" maxlength="8" required>
@@ -115,16 +123,12 @@
         </form>
       </dialog>
     </section>
-    <footer class="legal-notice">
-      <strong>Powered by Codex, Gemini with dash.jeong</strong>
-      <span> · <strong>Powered by Moonshine AI</strong><span> · 소프트웨어와 모델의 라이선스 및 이용조건이 적용됩니다.</span></span>
-    </footer>
   </main>
   <section id="listener-hud" class="listener-hud" role="dialog" aria-modal="true"
            aria-labelledby="hud-title" aria-describedby="hud-hint" hidden>
     <div class="hud-toolbar">
       <h2 id="hud-title">큰 자막</h2>
-      <button id="hud-close" type="button">HUD 닫기</button>
+      <button id="hud-close" type="button">큰 자막 닫기</button>
       <div class="hud-choice">
         <label for="hud-language">자막 언어</label>
         <select id="hud-language" disabled></select>

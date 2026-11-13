@@ -26,8 +26,8 @@ internal fun StandaloneSessionCard(
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(if (paused) "단독 사용 일시정지" else "단독 사용 중", style = MaterialTheme.typography.titleMedium)
-            Text("이 기기에서만 처리합니다. 외부 접속 주소나 방송 서버를 열지 않습니다.")
-            Text("입력을 시작해 원문·번역을 확인하세요. 아래 '기기 출력'에서 언어와 출력 장치를 선택하면 음성을 들을 수 있습니다.")
+            Text("이 기기에서 들으며 사용해요. 다른 기기의 청취 접속은 열지 않아요.")
+            Text("말한 내용과 통역문을 확인해 주세요. 스피커로 들으려면 방송 탭에서 청취 방법과 스피커로 낼 소리를 골라 주세요.")
             broadcast.translationWarning?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onPauseOrResume, modifier = Modifier.weight(1f)) {

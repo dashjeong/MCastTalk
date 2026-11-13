@@ -38,7 +38,14 @@ import java.util.Date
 internal const val RECORDING_SELECTION_HOLD_MILLIS = 3_000L
 
 internal fun recordingDisplayTitle(recording: RecordedBroadcast): String = recording.title.ifBlank {
-    "방송 · ${DateFormat.getDateTimeInstance().format(Date(recording.startedAtMillis))}"
+    val channels = recording.segments.map { it.channel }.distinctBy { it.id }
+    val translated = channels.filter { it.id != "source" }
+    val languages = (translated.ifEmpty { channels }).map { channel ->
+        if (channel.languageTag == "und") "원음"
+        else relayCaptionLanguageLabel(channel.languageTag).takeUnless { it == channel.languageTag }
+            ?: channel.languageTag.sourceLanguageDisplayName()
+    }.distinct()
+    if (languages.isEmpty()) "방송 기록" else "${languages.joinToString(" · ")} 방송"
 }
 
 internal fun recordingCanBeDeleted(recording: RecordedBroadcast, activeId: String?): Boolean =
@@ -99,7 +106,7 @@ internal class RecordingSelectionHold(private val startedAtMillis: Long) {
         modifier = Modifier.fillMaxWidth().semantics {
             role = Role.Button
             stateDescription = if (selecting) { if (selected) "선택됨" else if (canDelete) "선택 안 됨" else "방송 운영 중 · 삭제할 수 없음" } else stateLabel
-            onClick(if (selecting) "방송 선택" else "음성과 스크립트 열기") { if (enabled && (!selecting || canDelete)) { click(); true } else false }
+            onClick(if (selecting) "방송 선택" else "음성과 글 열기") { if (enabled && (!selecting || canDelete)) { click(); true } else false }
             customActions = listOf(
                 CustomAccessibilityAction("이름 변경") { if (enabled) { onRename(); true } else false },
                 CustomAccessibilityAction("선택 모드로 전환") { if (holdAllowed) { select(); true } else false },
@@ -139,8 +146,8 @@ internal class RecordingSelectionHold(private val startedAtMillis: Long) {
                 Text(recordingDisplayTitle(recording), style = MaterialTheme.typography.titleMedium)
                 Text(DateFormat.getDateTimeInstance().format(Date(recording.startedAtMillis)), style = MaterialTheme.typography.bodySmall)
                 Text(stateLabel)
-                Text(if (selecting && !canDelete) "방송을 종료한 뒤 삭제할 수 있습니다." else "음성과 스크립트 확인 · 다시 듣기")
-                if (recording.failure != null || recording.droppedRecordingFrames > 0) Text("녹음에 공백이 있습니다", color = MaterialTheme.colorScheme.error)
+                Text(if (selecting && !canDelete) "방송을 끝낸 뒤 지울 수 있어요." else "음성과 글 확인 · 다시 듣기")
+                if (recording.failure != null || recording.droppedRecordingFrames > 0) Text("녹음되지 않은 부분이 있어요", color = MaterialTheme.colorScheme.error)
             }
             if (!selecting) Box {
                 TextButton(onClick = { menu = true }, enabled = !busy) { Text("관리") }

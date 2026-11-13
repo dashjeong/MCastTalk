@@ -47,7 +47,13 @@ internal data class AutomaticExampleStatus(
     val enabled: Boolean = false, val ready: Boolean = false, val stored: Int = 0,
     val accepted: Long = 0, val reused: Long = 0, val rejected: Long = 0,
     val deferred: Long = 0, val message: String? = null, val reviewPending: Int = 0,
+    val feedback: LearningFeedback? = null,
 )
+
+private fun AutomaticExampleStatus.withFeedback(stage: LearningStage, reason: String): AutomaticExampleStatus {
+    val detail = LearningFeedback(stage, reason)
+    return copy(feedback = detail, message = detail.message)
+}
 
 internal interface AutomaticExamplePersistence {
     suspend fun load(): List<AutomaticTranslationExample>
@@ -151,10 +157,13 @@ internal class AutomaticTranslationExamples(
                     // An opt-in toggle cannot delete retained candidates; an explicit clear owns deletion.
                     if (!clearing && startupClearEpoch == clearEpoch.get()) publishArchive(loaded.associateBy { it.storageKey })
                 }
-                update { it.copy(ready = true, stored = index.size, message =
-                    if (it.reviewPending > 0) "기존 기준 또는 내용이 달라진 예문은 직접 검수 대기입니다. 자동 적용하지 않습니다." else it.message) }
+                update {
+                    val ready = it.copy(ready = true, stored = index.size)
+                    if (it.reviewPending > 0) ready.withFeedback(LearningStage.APPROVAL_PENDING, "저장된 참고 문장을 확인한 뒤 승인해 주세요.")
+                    else ready
+                }
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (_: Exception) { update { it.copy(ready = true, message = "저장 예문을 읽지 못했습니다. 기본 번역을 사용합니다.") } }
+            catch (_: Exception) { update { it.copy(ready = true).withFeedback(LearningStage.FAILED, "저장된 참고 문장을 읽지 못했습니다.") } }
             for (item in pending) {
                 fun allowed() = !clearing && state.value.enabled && generation.get() == item.generation && item.allowed() &&
                     currentDomain() == (item.example.comparison.corpusRevision to item.example.domainIdentity)
@@ -181,20 +190,23 @@ internal class AutomaticTranslationExamples(
                                 admissionLock.withAdmissionLock { if (allowed() && idle()) commit() else false }
                             } && allowed() && idle()) {
                             publishArchive(next.toMap())
-                            update { if (autoAccepted) it.copy(accepted = it.accepted + 1,
-                                message = "표현 보존 검사 예문 저장됨 · 같은 원문·문맥에서 사용합니다.")
-                                else it.copy(rejected = it.rejected + 1,
-                                    message = "자동 적용하지 않고 직접 검수 대기로 보관했습니다.") }
-                        } else reject("방송 또는 설정이 바뀌어 예문 저장을 보류했습니다.")
+                            update { if (autoAccepted) it.copy(accepted = it.accepted + 1)
+                                .withFeedback(LearningStage.DEFERRED, "저장했습니다. 다음에 같은 원문과 상황이 나오면 적용합니다.")
+                                else it.copy(rejected = it.rejected + 1)
+                                    .withFeedback(LearningStage.APPROVAL_PENDING, "참고 문장을 저장했습니다. 확인 후 승인해 주세요.") }
+                        } else reject("저장 조건이 바뀌었거나 저장이 완료되지 않았습니다.", LearningStage.FAILED)
                     }
                 } catch (cancelled: CancellationException) { throw cancelled }
-                catch (_: Exception) { reject("예문 저장 실패 · 기본 번역을 유지합니다.") }
+                catch (_: Exception) { reject("참고 문장을 저장하지 못했습니다.", LearningStage.FAILED) }
             }
         }
     }
     fun setEnabled(enabled: Boolean): Boolean {
         val changed = admissionLock.withAdmissionLock {
-            if (!persistEnabled(enabled)) false else {
+            if (!persistEnabled(enabled)) {
+                update { it.withFeedback(LearningStage.FAILED, "참고 문장 사용 설정을 저장하지 못했습니다.") }
+                false
+            } else {
                 generation.incrementAndGet()
                 update { it.copy(enabled = enabled, message = if (enabled) "자동 검사 예문 사용 켜짐" else "자동 검사 예문 사용 꺼짐") }
                 true
@@ -206,18 +218,32 @@ internal class AutomaticTranslationExamples(
     /** The caller must provide a directly matched successful text request and its live admission. */
     fun offer(comparison: ShadowComparison, domainIdentity: String, instructionsIdentity: String, allowed: () -> Boolean): Boolean {
         val admittedGeneration = generation.get()
-        if (clearing || !storageReadSafe || !state.value.enabled || !state.value.ready || !allowed()) return false
+        val block = when {
+            clearing -> "참고 문장을 정리하고 있습니다."
+            !state.value.enabled -> "자동 참고 문장 저장이 꺼져 있습니다."
+            !state.value.ready -> "참고 문장을 준비하고 있습니다."
+            !storageReadSafe -> "저장된 참고 문장을 읽지 못했습니다."
+            !allowed() -> "전송 동의나 자료 선택이 바뀌었습니다."
+            else -> null
+        }
+        if (block != null) {
+            update { it.withFeedback(if (state.value.ready && !storageReadSafe) LearningStage.FAILED else LearningStage.NOT_SAVED, block) }
+            return false
+        }
         val item = Pending(AutomaticTranslationExample(comparison, domainIdentity, instructionsIdentity), admittedGeneration, allowed)
         if (!admissionLock.tryLock()) {
-            update { it.copy(rejected = it.rejected + 1, message = "예문 저장 중 · 방송은 계속됩니다.") }
+            update { it.copy(rejected = it.rejected + 1).withFeedback(LearningStage.NOT_SAVED, "다른 참고 문장을 저장하고 있습니다.") }
             return false
         }
         val accepted = try {
-            if (clearing || generation.get() != admittedGeneration || !state.value.enabled) return false
+            if (clearing || generation.get() != admittedGeneration || !state.value.enabled) {
+                update { it.withFeedback(LearningStage.NOT_SAVED, "참고 문장 저장 설정이 바뀌었습니다.") }
+                return false
+            }
             pending.trySend(item).isSuccess
         } finally { admissionLock.unlock() }
-        update { if (accepted) it.copy(deferred = it.deferred + 1, message = "방송이 끝나면 예문을 검사·저장합니다.")
-            else it.copy(rejected = it.rejected + 1, message = "예문 대기열이 가득 찼습니다. 방송은 계속됩니다.") }
+        update { if (accepted) it.copy(deferred = it.deferred + 1).withFeedback(LearningStage.DEFERRED, "방송이 끝나면 참고 문장을 확인하고 저장합니다.")
+            else it.copy(rejected = it.rejected + 1).withFeedback(LearningStage.NOT_SAVED, "기다리는 참고 문장이 너무 많습니다.") }
         return accepted
     }
     fun lookup(original: String, context: String?, source: String, target: String, style: TranslationStyle,
@@ -271,6 +297,7 @@ internal class AutomaticTranslationExamples(
             } }
         }
     }
-    private fun reject(message: String) = update { it.copy(rejected = it.rejected + 1, message = message) }
+    private fun reject(message: String, stage: LearningStage = LearningStage.NOT_SAVED) =
+        update { it.copy(rejected = it.rejected + 1).withFeedback(stage, message) }
     companion object { const val MAX_EXAMPLES = 512 }
 }

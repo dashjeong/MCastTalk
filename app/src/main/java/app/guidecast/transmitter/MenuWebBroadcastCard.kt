@@ -30,8 +30,8 @@ internal fun MenuWebBroadcastCard(app: GuideCastApplication, origin: MenuBroadca
         onDismissRequest = { if (!checkingVoices) showVoiceSetup = false },
         title = { Text("통역 음성 준비") },
         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("이 콘텐츠의 통역 언어를 준비합니다. 설치된 음성만 확인하며 새 모델을 자동으로 내려받지 않습니다.")
-            if (state.isActive) Text("웹오디오방송을 중지한 뒤 준비하세요. 이미 지나간 문장은 방송을 다시 시작하면 들을 수 있습니다.")
+            Text("통역할 언어의 음성을 준비해요. 설치된 음성을 확인하고, 새 음성은 자동으로 내려받지 않아요.")
+            if (state.isActive) Text("청취자에게 보내기를 끈 뒤 준비해 주세요. 방송을 다시 시작하면 지나간 문장도 들을 수 있어요.")
             state.voiceSetupLanguageTags.forEach { tag ->
                 SystemVoiceSetupActions(
                     languageLabel = java.util.Locale.forLanguageTag(tag).getDisplayLanguage(java.util.Locale.KOREAN).ifBlank { tag },
@@ -40,10 +40,10 @@ internal fun MenuWebBroadcastCard(app: GuideCastApplication, origin: MenuBroadca
                     onRecheck = {
                         if (!checkingVoices) scope.launch {
                             checkingVoices = true
-                            voiceMessage = "설치된 음성을 확인하고 있습니다."
+                            voiceMessage = "설치된 음성을 확인하고 있어요."
                             try { voiceMessage = app.menuBroadcast.recheckInstalledVoices(setOf(tag)) }
                             catch (cancelled: CancellationException) { throw cancelled }
-                            catch (_: Exception) { voiceMessage = "음성을 준비하지 못했습니다. 설치·설정을 확인한 뒤 다시 시도하세요." }
+                            catch (_: Exception) { voiceMessage = "음성을 준비하지 못했어요. 설치와 설정을 확인한 뒤 다시 시도해 주세요." }
                             finally { checkingVoices = false }
                         }
                     },
@@ -56,21 +56,21 @@ internal fun MenuWebBroadcastCard(app: GuideCastApplication, origin: MenuBroadca
     val cardLimit = (LocalConfiguration.current.screenHeightDp * 0.42f).coerceIn(160f, 340f).dp
     OutlinedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.heightIn(max = cardLimit).padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("웹오디오방송", style = MaterialTheme.typography.titleMedium)
-            Text(if (own && state.serverCloseRetryAvailable) "웹 서버 종료 실패 · 다시 시도해 주세요."
-                else if (own && state.isStopping) "웹오디오방송 종료 중 · 잠시 기다려 주세요." else if (own) when (state.phase) {
-                MenuBroadcastPhase.STARTING -> "청취 주소와 음성을 준비하고 있습니다."
+            Text("청취자에게 보내기", style = MaterialTheme.typography.titleMedium)
+            Text(if (own && state.serverCloseRetryAvailable) "방송을 끝내지 못했어요. 다시 시도해 주세요."
+                else if (own && state.isStopping) "방송을 끝내고 있어요. 잠시 기다려 주세요." else if (own) when (state.phase) {
+                MenuBroadcastPhase.STARTING -> "들을 주소와 음성을 준비하고 있어요."
                 MenuBroadcastPhase.LIVE -> "방송 중"
                 MenuBroadcastPhase.PAUSED -> "방송 일시정지 · 주소 유지"
                 MenuBroadcastPhase.COMPLETED -> "재생 완료 · 웹에서 다시 듣기 가능"
-                MenuBroadcastPhase.FAILED -> "방송 준비 또는 송출 실패"
+                MenuBroadcastPhase.FAILED -> "방송을 준비하거나 보내지 못했어요"
                 MenuBroadcastPhase.IDLE -> "방송 종료됨"
-            } else "선택한 음원과 스크립트를 같은 Wi-Fi로 방송합니다.",
+            } else "같은 와이파이에 연결한 사람에게 고른 음성과 글을 보내요.",
                 modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (!active) Button(onClick = onStart,
                     enabled = canStart && !state.isActive && !app.webBroadcastOwnership.isOwned,
-                    modifier = Modifier.testTag("service-broadcast-start")) { Text("웹오디오방송 시작") }
+                    modifier = Modifier.testTag("service-broadcast-start")) { Text("보내기 시작") }
                 else {
                     Button(onClick = {
                         if (app.menuBroadcast.state.value.generation != state.generation || !app.menuBroadcast.owns(origin))
@@ -80,20 +80,20 @@ internal fun MenuWebBroadcastCard(app: GuideCastApplication, origin: MenuBroadca
                             app.menuBroadcast.stop(state.generation)
                     }, enabled = state.canRequestStop,
                         modifier = Modifier.testTag("service-broadcast-stop")) {
-                        Text(if (state.serverCloseRetryAvailable) "방송 종료 다시 시도" else "웹오디오방송 중지")
+                        Text(if (state.serverCloseRetryAvailable) "끝내기 재시도" else "보내기 끝내기")
                     }
                     if (state.phase == MenuBroadcastPhase.LIVE) OutlinedButton(enabled = !state.isStopping, onClick = {
                         app.menuBroadcast.pause(state.generation)
-                    }) { Text("웹오디오방송 일시정지") }
+                    }) { Text("잠시 멈추기") }
                     if (state.phase == MenuBroadcastPhase.PAUSED) OutlinedButton(enabled = !state.isStopping, onClick = {
                         app.menuBroadcast.resume(state.generation)
-                    }) { Text("웹오디오방송 다시 시작") }
+                    }) { Text("다시 보내기") }
                 }
             }
             Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (!canStart && !active) Text(startUnavailableReason ?: "음원을 선택하거나 마이크 녹음 준비를 마친 뒤 시작하세요.", style = MaterialTheme.typography.bodySmall)
-            if (state.isActive && !own) Text("다른 메뉴에서 방송 중입니다. 해당 방송을 종료한 뒤 시작하세요.")
+            if (!canStart && !active) Text(startUnavailableReason ?: "음성을 고르거나 마이크 녹음을 준비한 뒤 시작해 주세요.", style = MaterialTheme.typography.bodySmall)
+            if (state.isActive && !own) Text("다른 메뉴에서 방송하고 있어요. 그 방송을 끝낸 뒤 시작해 주세요.")
             if (own) {
                 state.listenerUrl?.let { url ->
                     RelayListenerAccessCard(url, active, compact = true)

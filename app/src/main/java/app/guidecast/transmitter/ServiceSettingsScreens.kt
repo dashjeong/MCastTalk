@@ -10,12 +10,18 @@ import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
+@Composable
+internal fun ServiceSettingsHomeScreen(native: Boolean, onOpen: (String) -> Unit) {
+    SettingsHomeScreen(native, onOpen)
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun CommonServiceSettingsScreen(app: GuideCastApplication, onBack: () -> Unit,
     onOpenGlossary: (() -> Unit)? = null, onOpenDomainCorpus: (() -> Unit)? = null,
     onRecheckSpeechVoices: () -> Unit = {}) {
     val defaults by app.serviceDefaults.state.collectAsStateWithLifecycle()
+    val developerInfo = LocalDeveloperInfo.current
     val runtime by app.broadcastRuntime.state.collectAsStateWithLifecycle()
     val menuBroadcast by app.menuBroadcast.state.collectAsStateWithLifecycle()
     val fileWork by app.localFileWorkActive.collectAsStateWithLifecycle()
@@ -25,13 +31,13 @@ internal fun CommonServiceSettingsScreen(app: GuideCastApplication, onBack: () -
         runtime.phase == BroadcastPhase.IDLE && runtime.inputPhase == InputPhase.IDLE && !runtime.inputStopping &&
         !fileWork && !noteWork && !modelWork
     BackHandler(onBack = onBack)
-    LazyColumn(Modifier.fillMaxSize().imePadding().semantics { paneTitle = "공통 설정" },
+    LazyColumn(Modifier.fillMaxSize().imePadding().semantics { paneTitle = "녹음 · 파일에 쓸 기본 언어" },
         contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             TextButton(onClick = onBack) { Text("돌아가기") }
-            Text("공통 설정", style = MaterialTheme.typography.headlineMedium)
-            Text("음성 노트·파일 변환의 새 작업에 사용할 언어·모델 기본값과 API 계정을 관리합니다. 언어·모델 기본값은 진행 중인 작업에 적용하지 않습니다.")
-            Text("통번역 스트리밍·통역 중계의 언어·모델은 해당 메뉴에서 따로 설정합니다.")
+            Text("녹음 · 파일에 쓸 기본 언어", style = MaterialTheme.typography.headlineMedium)
+            Text("새 녹음과 파일 변환에 쓸 기본 언어와 번역 방식을 골라요. 진행 중인 작업에는 적용하지 않아요.")
+            Text("방송에 쓸 언어와 통역 방식은 방송 탭에서 골라 주세요.")
         }
         item {
             Text("기본 원문 언어", style = MaterialTheme.typography.titleMedium)
@@ -51,18 +57,17 @@ internal fun CommonServiceSettingsScreen(app: GuideCastApplication, onBack: () -
             }
         }
         item {
-            Text("기본 기기 내 번역", style = MaterialTheme.typography.titleMedium)
+            Text("기본 번역 방식", style = MaterialTheme.typography.titleMedium)
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(FileTranslationEngine.GEMMA, FileTranslationEngine.MLKIT).forEach { engine ->
                     FilterChip(defaults.localEngine == engine, onClick = { app.serviceDefaults.setLocalEngine(engine) },
-                        label = { Text(if (engine == FileTranslationEngine.GEMMA) "Gemma" else "기기 내 번역") })
+                        label = { Text(if (engine == FileTranslationEngine.GEMMA) "정밀 번역(느림)" else "기본 번역") })
                 }
             }
-            Text("각 메뉴에서 지원하는 언어와 준비된 모델을 사용합니다. 자료·모델 설치와 사용 동의는 해당 메뉴에서 확인합니다.")
+            Text("각 작업에서 지원하는 언어와 준비된 번역 자료를 사용해요. 필요한 자료와 사용 동의는 작업을 시작할 때 확인해 주세요.")
         }
         item {
-            Text("API 계정·기본 문장 번역 서비스", style = MaterialTheme.typography.titleMedium)
-            Text("Google·OpenAI 키는 같은 제공자의 메뉴에서 사용합니다. 키를 변경하거나 삭제하면 같은 제공자의 전송 동의가 즉시 해제되어 진행 중인 온라인 통역이 중단될 수 있습니다. 다시 이용하려면 해당 메뉴에서 전송 동의를 확인하세요. 키 등록만으로 방송을 시작하거나 음성·문장 전송에 동의하지는 않습니다.")
+            Text("이용할 서비스 · 이용 키", style = MaterialTheme.typography.titleMedium)
             TranslationApiPanel(app.commonServiceApiSettings, app.commonServiceApiService, enabled = true, textOnly = true)
         }
         item {
@@ -77,11 +82,11 @@ internal fun CommonServiceSettingsScreen(app: GuideCastApplication, onBack: () -
                     Text("전문 용어·참고 문장 · 검수 예문")
                 }
             }
-            Text("중계의 강의 대본·참고 글·통역 지침은 ‘통역 중계 → 서비스 설정 → 전문 분야·자료·지침’에서 관리합니다.",
+            Text("온라인 음성 통역의 강의 대본·참고 글·통역 지침은 방송 탭의 설정에서 관리해요.",
                 style = MaterialTheme.typography.bodySmall)
         }
         item { DiagnosticsAndVoiceSettings(onRecheckSpeechVoices) }
-        item { AutomaticExampleControls(app.automaticTranslationExamples, exampleChangesEnabled, reviewRepository = app.domainCorpus) }
+        if (developerInfo) item { AutomaticExampleControls(app.automaticTranslationExamples, exampleChangesEnabled, reviewRepository = app.domainCorpus) }
     }
 }
 
@@ -134,13 +139,13 @@ internal fun MenuServiceSettingsScreen(app: GuideCastApplication, profile: Servi
             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(FileTranslationEngine.GEMMA, FileTranslationEngine.MLKIT).forEach { engine ->
                     FilterChip(options.localEngine == engine, enabled = enabled, onClick = { app.serviceMenuProfiles.setLocalEngine(profile, engine) },
-                        label = { Text(if (engine == FileTranslationEngine.GEMMA) "Gemma" else "기기 내 번역") })
+                        label = { Text(if (engine == FileTranslationEngine.GEMMA) "정밀 번역(느림)" else "기본 번역") })
                 }
             }
         }
         item {
             Text("이 메뉴의 AI 서비스·말투·전송 동의", style = MaterialTheme.typography.titleMedium)
-            if (options.usesCommonDefaults) Text("서비스·모델·말투·분야는 공통 기본값을 사용합니다. API 키·전송 동의·연결 확인은 이 메뉴에서 관리합니다. 내용을 바꾸려면 ‘이 메뉴만 따로 설정’을 선택하세요.")
+            if (options.usesCommonDefaults) Text("서비스·모델·말투·분야는 공통 기본값을 사용합니다. 이용 키·전송 동의·연결 확인은 이 메뉴에서 관리합니다. 내용을 바꾸려면 ‘이 메뉴만 따로 설정’을 선택하세요.")
             TranslationApiPanel(app.serviceMenuProfiles.settings(profile), app.serviceMenuProfiles.service(profile),
                 enabled = enabled, contentOptionsEnabled = !options.usesCommonDefaults, textOnly = true)
         }

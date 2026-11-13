@@ -9,29 +9,30 @@ import kotlin.coroutines.CoroutineContext
 data class SessionMemoryPair(
     val sourceText: String,
     val translatedText: String,
+    val sequence: Long? = null,
 )
 
 /**
  * Request-local context providing bounded recent translation memory for this broadcast session.
- * Used exclusively by local E4B to maintain terminology and context consistency across sentences.
- * Never transmitted across external network APIs.
+ * 온라인과 기기 내 번역이 같은 언어 채널의 확정 번역만 참고한다.
  */
 class TranslationSessionMemoryContext(
     /** Formatted JSON array string representing recent pairs, bounded to [MAX_IPC_CHARS]. */
     val memory: String,
     /** Structured pairs represented by [memory], at most [MAX_PAIRS] entries. */
     val pairs: List<SessionMemoryPair> = emptyList(),
+    val previousByTarget: Map<String, List<SessionMemoryPair>> = emptyMap(),
 ) : AbstractCoroutineContextElement(Key) {
 
     companion object Key : CoroutineContext.Key<TranslationSessionMemoryContext> {
         /** Maximum number of recent pairs retained per language channel. */
-        const val MAX_PAIRS = 2
+        const val MAX_PAIRS = 4
         /** Maximum aggregate raw character length of source and translation text. */
-        const val MAX_TOTAL_RAW_CHARS = 400
+        const val MAX_TOTAL_RAW_CHARS = 800
         /** Maximum raw character length for a single sentence; overlong sentences are omitted whole. */
-        const val MAX_SINGLE_RAW_CHARS = 200
+        const val MAX_SINGLE_RAW_CHARS = 400
         /** Hard ceiling for formatted JSON string passed across IPC. */
-        const val MAX_IPC_CHARS = 600
+        const val MAX_IPC_CHARS = 1_200
     }
 }
 
@@ -64,6 +65,7 @@ class BroadcastSessionBilingualMemory(
         targetLanguageTag: String,
         sourceText: String,
         translatedText: String,
+        sequence: Long? = null,
     ) {
         if (isClosed) return
         val trimmedSource = sourceText.trim()
@@ -76,7 +78,7 @@ class BroadcastSessionBilingualMemory(
         synchronized(lock) {
             if (isClosed) return
             val deque = channelPairs.getOrPut(key) { ArrayDeque(maxPairs) }
-            deque.addLast(SessionMemoryPair(trimmedSource, trimmedTarget))
+            deque.addLast(SessionMemoryPair(trimmedSource, trimmedTarget, sequence))
             while (deque.size > maxPairs) {
                 deque.removeFirst()
             }
@@ -93,11 +95,14 @@ class BroadcastSessionBilingualMemory(
     fun buildContext(
         sourceLanguageTag: String,
         targetLanguageTag: String,
+        beforeSequence: Long? = null,
     ): TranslationSessionMemoryContext {
         if (isClosed) return TranslationSessionMemoryContext(memory = "", pairs = emptyList())
         val key = channelKey(sourceLanguageTag, targetLanguageTag)
         val snapshot = synchronized(lock) {
-            if (isClosed) emptyList() else channelPairs[key]?.toList().orEmpty()
+            if (isClosed) emptyList() else channelPairs[key]?.filter {
+                beforeSequence == null || it.sequence == null || it.sequence < beforeSequence
+            }.orEmpty()
         }
         if (snapshot.isEmpty()) {
             return TranslationSessionMemoryContext(memory = "", pairs = emptyList())

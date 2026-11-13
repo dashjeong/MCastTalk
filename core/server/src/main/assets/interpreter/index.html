@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>통역사 연결 · MCastTalk</title>
+  <link rel="stylesheet" href="/speaker.css">
+  <link rel="stylesheet" href="/interpreter/interpreter.css">
+  <script defer src="/interpreter/interpreter.js"></script>
+</head>
+<body>
+<main class="speaker-container">
+  <header><p class="brand-title">MCastTalk · 통역사</p><h1 id="language">통역사 연결</h1></header>
+  <section class="interpreter-card" aria-labelledby="original-heading">
+    <h2 id="original-heading">원래 목소리 듣기</h2>
+    <p class="hint">이어폰을 끼고 들어 주세요. 맡은 언어로 말하면 청취자에게 전달됩니다.</p>
+    <button id="listen" type="button" disabled>원래 목소리 듣기</button>
+    <p id="listen-status" role="status">연결을 준비하고 있어요</p>
+  </section>
+  <div class="reference-area" aria-label="통역 참고 자료">
+  <section class="interpreter-card" aria-labelledby="source-heading">
+    <h2 id="source-heading">원문 자막</h2>
+    <p id="source" class="caption">말씀을 기다리고 있어요</p>
+    <p id="preview" class="hint" aria-label="받는 중인 원문"></p>
+    <h2>AI 통역 초안</h2>
+    <p class="hint">말할 때 참고해 주세요. 통역사의 말과 다를 수 있어요.</p>
+    <p id="draft" class="caption">초안을 기다리고 있어요</p>
+  </section>
+  <details class="interpreter-card">
+    <summary>행사 정보 · 용어집</summary>
+    <h2>행사 정보</h2><p id="briefing">등록된 행사 정보가 없어요</p>
+    <h2>지금 문장의 용어</h2><ul id="glossary"><li>해당하는 용어가 없어요</li></ul>
+  </details>
+  </div>
+  <footer class="interpreter-card">
+    <p id="connection" role="status" aria-live="polite">연결을 준비하고 있어요</p>
+    <p id="floor" role="status">대기</p>
+    <label for="input-level">입력 음량</label>
+    <meter id="input-level" min="0" max="1" value="0">0</meter>
+    <button id="microphone" type="button" disabled aria-pressed="false">통역 시작</button>
+    <p class="hint">8초 넘게 조용하거나 연결이 끊기면 AI가 이어받아요. 다시 말하면 읽던 문장이 끝난 뒤 통역사 목소리로 이어져요.</p>
+  </footer>
+</main>
+</body>
+</html>

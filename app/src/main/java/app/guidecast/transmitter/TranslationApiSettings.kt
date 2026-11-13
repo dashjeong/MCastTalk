@@ -245,6 +245,9 @@ class TranslationApiSettings(context: Context,
         store(options.copy(allowLiveAudio = false, allowOnline = false, alwaysLearnOnline = state.value.alwaysLearnOnline, allowDomainReferences = false, localFallback = false, hasKey = resolvedKey(options) != null, revision = state.value.revision + 1))
         return true
     }
+    /** 즐겨찾기에는 자격을 담지 않고 기존 보관소에 있는지만 확인한다. */
+    internal fun favoriteServiceAvailable(options: TranslationApiOptions): Boolean =
+        validTranslationApiOptions(options) && (options.provider == TranslationApiProvider.LOCAL || resolvedKey(options) != null)
     /** Retain consent for the same data categories; newly reachable stored context requires consent. */
     @Synchronized internal fun selectModel(model: String): Boolean {
         val current = state.value

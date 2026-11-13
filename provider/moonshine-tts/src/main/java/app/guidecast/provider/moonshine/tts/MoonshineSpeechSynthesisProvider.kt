@@ -9,6 +9,7 @@ import ai.moonshine.voice.ModelCache
 import ai.moonshine.voice.ModelSpec
 import app.guidecast.core.stream.PcmAudioFrame
 import app.guidecast.core.translation.SpeechSynthesisEngine
+import app.guidecast.core.translation.SpeechExpressionContext
 import app.guidecast.core.translation.SpeechSynthesisEngineProvider
 import app.guidecast.core.stream.MAX_SIMULTANEOUS_TRANSLATED_CHANNELS
 import app.guidecast.core.translation.currentNativeColdLoadTicket
@@ -584,7 +585,9 @@ class MoonshineSpeechSynthesisProvider(
             try {
                 nativeSubmissionPlanned.set(true)
                 nativeTicket?.transferToNative()
-                worker.synthesizeStreaming(clientId, expectedRequestId, text, languageTag, callback)
+                val rate = currentCoroutineContext()[SpeechExpressionContext]?.profile?.rate ?: 1f
+                if (rate == 1f) worker.synthesizeStreaming(clientId, expectedRequestId, text, languageTag, callback)
+                else worker.synthesizeStreamingAtRate(clientId, expectedRequestId, text, languageTag, rate, callback)
             } catch (error: Throwable) {
                 finishNativeAdmission()
                 throw error

@@ -15,12 +15,13 @@ class CaptureSignalAccumulator {
     private var squares = 0.0
     private var peak: Float? = null
     private var energyFrames = 0L
-    @Synchronized fun add(pcm: ByteArray) {
+    @Synchronized fun add(pcm: ByteArray): Float {
         val signal = pcm.pcmS16LeSignalStats()
         frames++; bytes += pcm.size; samples += signal.sampleCount
         squares += signal.rms.toDouble() * signal.rms * signal.sampleCount
         peak = maxOf(peak ?: 0f, signal.peak)
         if (signal.rms >= 0.002f || signal.peak >= 0.01f) energyFrames++
+        return signal.peak
     }
     @Synchronized fun snapshot() = CaptureSignalSnapshot(frames, bytes, samples,
         if (samples == 0L) null else sqrt(squares / samples), peak, energyFrames)
@@ -58,13 +59,20 @@ data class AudioCaptureDiagnosticSnapshot(
     val raw: CaptureSignalSnapshot = CaptureSignalSnapshot(),
     val output: CaptureSignalSnapshot = CaptureSignalSnapshot(),
     val discardedPartialSampleBytes: Int = 0, val denoiserPendingInputBytes: Int = 0,
+    val recorderState: Int? = null, val audioSource: Int? = null,
+    val recorderCreations: Long = 0, val routeChanges: Long = 0,
 )
 
 internal class AudioCaptureDiagnosticTracker(private var value: AudioCaptureDiagnosticSnapshot) {
     private val raw = CaptureSignalAccumulator()
     private val rawAssembler = Pcm16ReadAssembler()
     private val output = CaptureSignalAccumulator()
-    @Synchronized fun route(type: Int?) { if (value.state == "RECORDING") value = value.copy(routedDeviceType = type) }
+    @Synchronized fun route(type: Int?) {
+        if (value.state == "RECORDING") value = value.copy(routedDeviceType = type, routeChanges = value.routeChanges + 1)
+    }
+    @Synchronized fun recorder(state: Int?, recordingState: Int?) {
+        if (value.state == "RECORDING") value = value.copy(recorderState = state, recordingState = recordingState)
+    }
     @Synchronized fun policy(muted: Boolean?, silenced: Boolean?) {
         if (value.state == "RECORDING") value = value.copy(systemMicrophoneMuted = muted, clientSilenced = silenced)
     }
@@ -73,15 +81,17 @@ internal class AudioCaptureDiagnosticTracker(private var value: AudioCaptureDiag
         value = value.copy(readCalls = value.readCalls + 1, lastReadAttemptElapsedNanos = now,
             noProgressSinceElapsedNanos = value.noProgressSinceElapsedNanos ?: if (value.lastReadElapsedNanos == null) now else null)
     }
-    @Synchronized fun read(pcm: ByteArray, requestedBytes: Int, now: Long) {
-        if (value.state != "RECORDING") return
+    @Synchronized fun read(pcm: ByteArray, requestedBytes: Int, now: Long): Float {
+        if (value.state != "RECORDING") return -1f
         val aligned = rawAssembler.accept(pcm, pcm.size)
-        if (aligned.isNotEmpty()) raw.add(aligned)
+        // 아직 한 샘플이 완성되지 않은 읽기를 실제 무음과 구분한다.
+        val peak = if (aligned.isNotEmpty()) raw.add(aligned) else -1f
         value = value.copy(
             shortReads = value.shortReads + if (pcm.size < requestedBytes) 1 else 0,
             oddReads = value.oddReads + pcm.size % 2, lastReadElapsedNanos = now,
             lastReadResultElapsedNanos = now, noProgressSinceElapsedNanos = null,
             consecutiveEmptyReads = 0, lastReadResult = "PCM_READ")
+        return peak
     }
     @Synchronized fun emptyRead(error: Boolean, now: Long) {
         if (value.state != "RECORDING") return

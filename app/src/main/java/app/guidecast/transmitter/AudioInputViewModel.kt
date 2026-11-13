@@ -644,7 +644,8 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
             sourceLanguageTag = selectedSourceLanguageTag.value,
         )
         selectedLanguageTags.value = selection.selectedLanguageTags
-        // Language preparation is independent from the operator's source/translation preference.
+        // 새 언어 선택은 통역 사용 요청이다. 준비 확인은 방송 시작 전에 따로 거친다.
+        selection.translationEnabled?.let { translationBroadcastEnabled.value = it }
         modelMessage.value = selection.message
     }
 
@@ -653,14 +654,16 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
         selectedLanguageTags.value = recommendedTranslationLanguageSelection(
             sourceLanguageTag = selectedSourceLanguageTag.value,
         )
+        translationBroadcastEnabled.value = selectedLanguageTags.value.isNotEmpty()
         modelMessage.value =
             "${selectedLanguageTags.value.size}개 언어를 선택했습니다. " +
-                "선택한 송출 모드는 유지됩니다. 필요한 모델을 준비하세요."
+                "선택한 언어로 통역합니다. 필요한 언어 자료를 준비해 주세요."
     }
 
     fun clearTranslationLanguages() {
         if (modelBusy.value) return
         selectedLanguageTags.value = emptySet()
+        translationBroadcastEnabled.value = false
         modelMessage.value = "통역 언어 선택을 해제했습니다. 통역에는 언어를 하나 이상 선택하세요. 원음 방송도 선택할 수 있습니다."
     }
 
@@ -861,6 +864,11 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     /** Recheck only voice resources after returning from a vendor's installer. */
+    suspend fun recheckInstalledSpeechVoicesBeforeStart() {
+        recheckInstalledSpeechVoices()
+        modelJob?.join()
+    }
+
     fun recheckInstalledSpeechVoices() {
         val selected = selectedLanguageTags.value.toSet()
         if (selected.isEmpty()) return
@@ -874,7 +882,7 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
                 guideCastApplication.withTranslationBackendUse(retainSettingsStandbyFor = owner) {
                     if (!guideCastApplication.isPreparationCurrent(owner)) return@withTranslationBackendUse
                     guideCastApplication.speechSynthesisProvider.refreshInstalledVoices(selected)
-                    val report = prepareSpeechSynthesisWithProcessAdmission(selected, owner)
+                    val report = prepareSpeechSynthesisWithProcessAdmission(selected, owner, allowAssetDownloads = false)
                     modelMessage.value = if (report.unavailableLanguageReasons.isEmpty()) {
                         "선택한 언어의 음성 준비 상태를 확인했습니다. 시험 메뉴에서 실제 음성을 들어보세요."
                     } else {
@@ -1176,6 +1184,7 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
     private suspend fun prepareSpeechSynthesisWithProcessAdmission(
         languageTags: Collection<String>,
         settingsOwner: TranslationPreparationOwnerToken? = null,
+        allowAssetDownloads: Boolean = true,
     ): GalaxySpeechPreparationReport {
         val provider = guideCastApplication.speechSynthesisProvider
         val serializeWithAllColdLoads = languageTags.distinct().size > 1
@@ -1206,6 +1215,7 @@ class AudioInputViewModel(application: Application) : AndroidViewModel(applicati
                 languageTags = languageTags,
                 warmMoonshineWithNativeAdmission = warmWithAdmission,
                 isAppPreparationCurrent = isSettingsPreparationCurrent,
+                allowAssetDownloads = allowAssetDownloads,
             )
         } else {
             provider.prepare(
@@ -1453,6 +1463,8 @@ const val MAX_SIMULTANEOUS_TRANSLATION_LANGUAGES = MAX_SIMULTANEOUS_TRANSLATED_C
 internal data class TranslationLanguageSelectionResult(
     val selectedLanguageTags: Set<String>,
     val message: String? = null,
+    /** null이면 언어 수와 무관하게 사용자가 직접 고른 현재 방식을 유지한다. */
+    val translationEnabled: Boolean? = null,
 )
 
 /**
@@ -1474,7 +1486,7 @@ internal fun toggleTranslationLanguageSelection(
     }
     val ordered = current.toCollection(linkedSetOf())
     if (ordered.remove(languageTag)) {
-        return TranslationLanguageSelectionResult(ordered)
+        return TranslationLanguageSelectionResult(ordered, translationEnabled = false.takeIf { ordered.isEmpty() })
     }
     if (ordered.size >= maximum) {
         return TranslationLanguageSelectionResult(
@@ -1483,7 +1495,7 @@ internal fun toggleTranslationLanguageSelection(
         )
     }
     ordered.add(languageTag)
-    return TranslationLanguageSelectionResult(ordered)
+    return TranslationLanguageSelectionResult(ordered, translationEnabled = true)
 }
 
 internal fun recommendedTranslationLanguageSelection(

@@ -12,17 +12,20 @@ import java.io.Closeable
 import java.util.TreeSet
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
 import kotlin.math.sqrt
 import kotlin.time.TimeSource
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -90,11 +93,9 @@ class TranslationBroadcastPipeline(
     // Sixteen finalized meaning units absorb normal guide-speech bursts without allowing one
     // stalled language to replay minutes of obsolete directions after it recovers.
     private val sourceDispatchCapacityPerLanguage: Int = 16,
-    // Bounded live TTS FIFO: keeps a balanced reserve (8 utterances) to absorb natural
-    // conversational bursts without premature drops, while preserving strict per-language isolation
-    // and bounded live-edge latency. Overflows drop the oldest pending phrase and are explicitly
-    // recorded in health metrics (droppedUtterances, synthesisFailures).
-    private val speechQueueCapacityPerLanguage: Int = 8,
+    // Time-bounded language FIFOs keep captions independent from speech. The item limit is a
+    // final memory bound; predicted waiting time controls normal live-edge admission.
+    private val speechQueueCapacityPerLanguage: Int = 32,
     private val observer: TranslationPipelineObserver = TranslationPipelineObserver.NONE,
     private val shouldPublishAudio: () -> Boolean = { true },
     private val translationTimeoutMillis: Long = 4_000L,
@@ -108,6 +109,10 @@ class TranslationBroadcastPipeline(
     private val audioPublicationCoordinator: ChannelAudioPublicationCoordinator? = null,
     private val glossaryTerms: suspend (String, String, String) -> List<GlossaryTerm> = { _, _, _ -> emptyList() },
     private val onGlossaryWarning: (String) -> Unit = {},
+    private val maximumSpeechStartDelayMillis: Long = 10_000L,
+    private val estimateSpeechMillis: (String, String) -> Long = ::estimatedSpeechDurationMillis,
+    private val interpretationBriefing: () -> String = { "" },
+    private val humanInterpretation: HumanInterpretationFloor? = null,
 ) {
     init {
         require(queueCapacityPerLanguage in 1..8)
@@ -122,6 +127,7 @@ class TranslationBroadcastPipeline(
         require(firstAudioTimeoutMillis in 500..120_000)
         require(synthesisFrameIdleTimeoutMillis in 500..15_000)
         require(synthesisTotalTimeoutMillis in firstAudioTimeoutMillis..180_000L)
+        require(maximumSpeechStartDelayMillis in 500..10_000)
     }
 
     fun start(
@@ -219,25 +225,36 @@ class TranslationBroadcastPipeline(
                 },
             )
         }
+        val pendingSpeech = targets.associateWith { linkedMapOf<TranslationDeliveryTickets.Ticket, Long>() }
+        val activeSpeechUntil = targets.associateWith { AtomicLong(0L) }
+
+        fun reportSpeechDrop(target: TranslationTarget, dropped: TranslatedSpeechWork) {
+            synchronized(requireNotNull(pendingSpeech[target])) {
+                requireNotNull(pendingSpeech[target]).remove(dropped.ticket)
+            }
+            deliveryTickets.finish(dropped.ticket, TranslationDeliveryStage.DROPPED)
+            if (isolationJob.isActive && activeStreamSession.isActive()) {
+                mutableHealth.updateChannel(target.channelId) { health ->
+                    health.copy(
+                        droppedUtterances = health.droppedUtterances + 1,
+                        lastDroppedSequence = dropped.utterance.sequence,
+                        speechBacklogDrops = health.speechBacklogDrops + 1,
+                        synthesisFailures = health.synthesisFailures + 1,
+                        synthesisState = TranslationWorkerState.DEGRADED,
+                        lastSynthesisError = SPEECH_BACKLOG_DROP_MESSAGE,
+                        lastError = SPEECH_BACKLOG_DROP_MESSAGE,
+                    )
+                }
+                observer.onSpeechSkipped(dropped.utterance, target, SPEECH_BACKLOG_DROP_MESSAGE)
+            }
+        }
+
         val speechQueues = targets.associateWith { target ->
             Channel<TranslatedSpeechWork>(
                 capacity = speechQueueCapacityPerLanguage,
                 onBufferOverflow = BufferOverflow.DROP_OLDEST,
                 onUndeliveredElement = { dropped ->
-                    deliveryTickets.finish(dropped.ticket, TranslationDeliveryStage.DROPPED)
-                    if (acceptingSource.get()) {
-                        mutableHealth.updateChannel(target.channelId) { health ->
-                            health.copy(
-                                droppedUtterances = health.droppedUtterances + 1,
-                                lastDroppedSequence = dropped.utterance.sequence,
-                                speechBacklogDrops = health.speechBacklogDrops + 1,
-                                synthesisFailures = health.synthesisFailures + 1,
-                                synthesisState = TranslationWorkerState.DEGRADED,
-                                lastSynthesisError = SPEECH_BACKLOG_DROP_MESSAGE,
-                                lastError = SPEECH_BACKLOG_DROP_MESSAGE,
-                            )
-                        }
-                    }
+                    reportSpeechDrop(target, dropped)
                 },
             )
         }
@@ -292,13 +309,20 @@ class TranslationBroadcastPipeline(
                             val terms = boundedGlossaryLookup(
                                 utterance.text, utterance.sourceLanguageTag, target.languageTag, glossaryTerms, onGlossaryWarning,
                             )
-                            val sessionMemoryContext = activeSessionMemory.buildContext(utterance.sourceLanguageTag, target.languageTag)
+                            val memories = targets.associate { it.languageTag to activeSessionMemory.buildContext(
+                                utterance.sourceLanguageTag, it.languageTag, utterance.sequence).pairs }
+                            val memory = activeSessionMemory.buildContext(utterance.sourceLanguageTag, target.languageTag, utterance.sequence)
+                            val sessionMemoryContext = TranslationSessionMemoryContext(memory.memory, memory.pairs, memories)
                             val translationContext = sharedBatch + TranslationRequestIdentity(requestScope, utterance.sequence) +
-                                TranslationDeliveryContext(deliveryTickets, ticket) + TranslationGlossaryContext(GlossaryTerms.hints(terms)) +
+                                TranslationDeliveryContext(deliveryTickets, ticket) + TranslationGlossaryContext(GlossaryTerms.hints(terms), terms) +
+                                InterpretationBriefingContext(interpretationBriefing()) +
                                 (utterance.translationStyle?.let(::TranslationStyleContext) ?: kotlin.coroutines.EmptyCoroutineContext) +
-                                sessionMemoryContext
-                            val rawTranslation = withContext(translationContext) {
-                              withTimeout(targetTimeoutMillis) {
+                                sessionMemoryContext + TranslationSpeechDeadlineContext(
+                                    minOf(utterance.recognizedAtElapsedRealtimeNanos +
+                                        maximumSpeechStartDelayMillis * 1_000_000L,
+                                        utterance.firstAudioDeadlineElapsedRealtimeNanos ?: Long.MAX_VALUE),
+                                )
+                            suspend fun translateOnce(): String =
                                 if (translator is ContextualTextTranslationEngine) {
                                     translator.translateWithContext(
                                         text = utterance.text,
@@ -313,7 +337,16 @@ class TranslationBroadcastPipeline(
                                         target.languageTag,
                                     )
                                 }
-                              }
+                            val rawTranslation = withContext(translationContext) {
+                                withTimeoutOrNull(targetTimeoutMillis) { translateOnce() }
+                                    ?: run {
+                                        currentCoroutineContext().ensureActive()
+                                        val remainingMillis = utterance.firstAudioDeadlineElapsedRealtimeNanos
+                                            ?.let { (it - currentElapsedRealtimeNanos()) / 1_000_000L }
+                                            ?: targetTimeoutMillis
+                                        check(remainingMillis > 0L) { TRANSLATION_TIMEOUT_MESSAGE }
+                                        withTimeout(minOf(targetTimeoutMillis, remainingMillis)) { translateOnce() }
+                                    }
                             }
                             val translated = try {
                                 GlossaryTerms.correct(rawTranslation, terms)
@@ -334,6 +367,7 @@ class TranslationBroadcastPipeline(
                                     targetLanguageTag = target.languageTag,
                                     sourceText = utterance.text,
                                     translatedText = translated,
+                                    sequence = utterance.sequence,
                                 )
                             }
                             val translationElapsedMillis =
@@ -356,13 +390,59 @@ class TranslationBroadcastPipeline(
                                     lastError = it.lastSynthesisError,
                                 )
                             }
+                            if (humanInterpretation?.skipAi(target.channelId, utterance.sequence) == true) {
+                                deliveryTickets.finish(ticket, TranslationDeliveryStage.CANCELLED)
+                                continue
+                            }
                             // A published translation is a committed transcript. Queue its speech
                             // separately so PCM pacing never blocks later subtitles; if this one
                             // language falls farther behind than its small reserve, its oldest
                             // unspoken item is dropped explicitly to preserve live guidance.
-                            requireNotNull(speechQueues[target]).send(
-                                TranslatedSpeechWork(utterance, translated, ticket),
-                            )
+                            val pending = requireNotNull(pendingSpeech[target])
+                            val queue = requireNotNull(speechQueues[target])
+                            synchronized(pending) {
+                                val deadline = utterance.recognizedAtElapsedRealtimeNanos +
+                                    maximumSpeechStartDelayMillis * 1_000_000L
+                                // The active sentence still occupies this language's speech
+                                // backlog. Select the waiting phrase's speed before it reaches
+                                // the front, while the queued depth still includes that sentence.
+                                val activeUntil = requireNotNull(activeSpeechUntil[target]).get()
+                                val activeCount = if (activeUntil != 0L) 1 else 0
+                                val baseDeadline = minOf(deadline, utterance.firstAudioDeadlineElapsedRealtimeNanos ?: deadline)
+                                // 앞에 재생 중인 한 문장만 있고 다른 대기가 없으면, 그 문장이 끝날 때까지는 기다린다.
+                                // 긴 문장 바로 뒤의 짧은 문장이 앞 문장 재생 때문에 버려지던 것(S21 일본어 → 한국어 10문장 중 3).
+                                // 앞 문장의 재생 길이 예상은 실제보다 짧을 수 있어 쓰지 않는다. 확정 뒤 16초가 상한이고,
+                                // 이 문장 뒤에 오는 문장은 대기가 생기므로 기존 마감을 그대로 받아 지연이 쌓이지 않는다.
+                                val speechDeadline = if (pending.isEmpty() && activeUntil != 0L) maxOf(baseDeadline,
+                                    utterance.recognizedAtElapsedRealtimeNanos + MAXIMUM_WAIT_BEHIND_ONE_SENTENCE_NANOS)
+                                    else baseDeadline
+                                val work = TranslatedSpeechWork(
+                                    utterance = utterance,
+                                    translatedText = translated,
+                                    ticket = ticket,
+                                    estimatedDurationMillis = estimateSpeechMillis(translated, target.languageTag).coerceAtLeast(1L),
+                                    speechStartDeadlineNanos = speechDeadline,
+                                    queuedSpeechRate = adaptiveSpeechRate(pending.size + activeCount + 1),
+                                )
+                                pending[ticket] = work.estimatedDurationMillis
+                                val sent = queue.trySend(work)
+                                if (sent.isFailure) {
+                                    pending.remove(ticket)
+                                    sent.getOrThrow()
+                                }
+                                // Bound the newest phrase's predicted start by the current voice's
+                                // remaining duration plus the older pending voices. A count cap is
+                                // retained only as a final memory bound.
+                                while (pending.isNotEmpty()) {
+                                    val activeMillis = ((requireNotNull(activeSpeechUntil[target]).get() -
+                                        currentElapsedRealtimeNanos()) / 1_000_000L).coerceAtLeast(0L)
+                                    val pendingMillis = pending.values.toList().dropLast(1).sum() / adaptiveSpeechRate(pending.size)
+                                    val remainingMillis = (work.speechStartDeadlineNanos - currentElapsedRealtimeNanos()) / 1_000_000L
+                                    if (activeMillis + pendingMillis <= remainingMillis) break
+                                    val dropped = queue.tryReceive().getOrNull() ?: break
+                                    reportSpeechDrop(target, dropped)
+                                }
+                            }
                         } catch (timeout: TimeoutCancellationException) {
                             deliveryTickets.finish(ticket, TranslationDeliveryStage.TRANSLATION_FAILED)
                             mutableHealth.updateChannel(target.channelId) {
@@ -375,6 +455,7 @@ class TranslationBroadcastPipeline(
                                     lastError = TRANSLATION_TIMEOUT_MESSAGE,
                                 )
                             }
+                            observer.onTranslationFailed(utterance, target, TRANSLATION_TIMEOUT_MESSAGE)
                         } catch (cancelled: CancellationException) {
                             deliveryTickets.finish(ticket, TranslationDeliveryStage.CANCELLED)
                             // Google Task and isolated provider workers can report their own
@@ -394,6 +475,7 @@ class TranslationBroadcastPipeline(
                                     lastError = message,
                                 )
                             }
+                            observer.onTranslationFailed(utterance, target, message)
                         } catch (error: Throwable) {
                             deliveryTickets.finish(ticket, TranslationDeliveryStage.TRANSLATION_FAILED)
                             val message = protectedTranslationReviewMessage(error.message) ?: error.message ?: error::class.simpleName
@@ -407,6 +489,7 @@ class TranslationBroadcastPipeline(
                                     lastError = message,
                                 )
                             }
+                            observer.onTranslationFailed(utterance, target, message ?: TRANSLATION_TIMEOUT_MESSAGE)
                         }
                     }
                 } finally {
@@ -417,13 +500,41 @@ class TranslationBroadcastPipeline(
         val speechWorkers = targets.map { target ->
             isolatedScope.launch {
                 for (work in requireNotNull(speechQueues[target])) {
+                    val pending = requireNotNull(pendingSpeech[target])
+                    val speechRate = synchronized(pending) {
+                        // Retain the speed chosen when the phrase joined a deeper backlog.
+                        // Removing older work must not slow this waiting phrase again.
+                        maxOf(work.queuedSpeechRate, adaptiveSpeechRate(pending.size.coerceAtLeast(1)))
+                            .also { pending.remove(work.ticket) }
+                    }
+                    if (work.speechStartDeadlineNanos - currentElapsedRealtimeNanos() <= 0L) {
+                        reportSpeechDrop(target, work)
+                        continue
+                    }
                     if (!deliveryTickets.beginSpeech(work.ticket)) {
+                        deliveryTickets.finish(work.ticket, TranslationDeliveryStage.CANCELLED)
+                        continue
+                    }
+                    if (humanInterpretation?.beginAiSentence(target.channelId, work.utterance.sequence) == false) {
                         deliveryTickets.finish(work.ticket, TranslationDeliveryStage.CANCELLED)
                         continue
                     }
                     val utterance = work.utterance
                     var publicationLease: Closeable? = null
+                    var termination = SynthesisTermination.FAILED
+                    var publishedBytesForWork = 0L
                     try {
+                        // 끊긴 통역사가 마지막으로 보낸 짧은 음성도 재생을 마친 뒤 이어받는다.
+                        humanInterpretation?.humanDrainMillis(target.channelId)?.takeIf { it > 0 }?.let { delay(it) }
+                        // 실제 쉼 대기는 합성기와 게시 슬롯을 점유하기 전에 끝낸다.
+                        val remainingMillis = (work.speechStartDeadlineNanos - currentElapsedRealtimeNanos()) / 1_000_000L
+                        if (remainingMillis <= 0 || withTimeoutOrNull(remainingMillis) {
+                                observer.awaitSynthesisTurn(utterance, target, work.speechStartDeadlineNanos)
+                            } != true) throw SpeechStartDeadlineExceededException()
+                        val startupMillis = mutableHealth.value.first { it.channelId == target.channelId }
+                            .lastFirstAudioElapsedMillis ?: 250L
+                        requireNotNull(activeSpeechUntil[target]).set(currentElapsedRealtimeNanos() +
+                            (startupMillis + (work.estimatedDurationMillis / speechRate).toLong()) * 1_000_000L)
                         publicationLease = audioPublicationCoordinator?.acquireChannel(target.channelId)
                         mutableHealth.updateChannel(target.channelId) {
                             it.copy(synthesisState = TranslationWorkerState.ACTIVE)
@@ -437,9 +548,8 @@ class TranslationBroadcastPipeline(
                         val pcmAccumulator = PcmS16LeAccumulator()
                         var firstAudibleFrameReported = false
                         var publishedFramesForWork = 0L
-                        // Once translated text is visible it becomes a committed speech work item.
-                        // Do not cancel that TTS because the original capture-time SLA has passed;
-                        // the synthesis provider has its own bounded primary-to-fallback recovery.
+                        // Captions remain committed even when this voice cannot start in budget.
+                        // Once audible playback begins, let the sentence finish uninterrupted.
                         collectSpeechPcmWithTimeout(
                             speech = speech,
                             text = work.translatedText,
@@ -448,7 +558,10 @@ class TranslationBroadcastPipeline(
                             frameIdleTimeoutMillis = synthesisFrameIdleTimeoutMillis,
                             totalTimeoutMillis = synthesisTotalTimeoutMillis,
                             currentElapsedRealtimeNanos = currentElapsedRealtimeNanos,
-                            expression = utterance.speechExpression,
+                            expression = SpeechExpressionProfile(
+                                rate = maxOf(utterance.speechExpression?.rate ?: 1f, speechRate).coerceAtMost(1.2f),
+                                pitch = utterance.speechExpression?.pitch ?: 1f,
+                            ),
                         ) { frame ->
                             currentCoroutineContext().ensureActive()
                             if (!deliveryTickets.accepts(work.ticket)) throw StreamSessionSupersededException()
@@ -457,6 +570,9 @@ class TranslationBroadcastPipeline(
                             }
                             val frameIsAudible = pcmAccumulator.add(frame)
                             if (!firstAudibleFrameReported && frameIsAudible) {
+                                if (work.speechStartDeadlineNanos - currentElapsedRealtimeNanos() <= 0L) {
+                                    throw SpeechStartDeadlineExceededException()
+                                }
                                 firstAudibleFrameReported = true
                                 val firstAudioElapsedMillis =
                                     synthesisMark.elapsedNow().inWholeMilliseconds
@@ -482,7 +598,9 @@ class TranslationBroadcastPipeline(
                                     } ?: throw StreamSessionSupersededException()).status
                                 ) {
                                     StreamPublishStatus.PUBLISHED -> {
+                                        humanInterpretation?.aiFrame(target.channelId, correlatedFrame.bytes.size, target.speechSampleRateHz)
                                         publishedFramesForWork += 1
+                                        publishedBytesForWork += correlatedFrame.bytes.size
                                     }
                                     StreamPublishStatus.STALE_SESSION ->
                                         throw StreamSessionSupersededException()
@@ -537,7 +655,12 @@ class TranslationBroadcastPipeline(
                             )
                         }
                         deliveryTickets.finish(work.ticket, TranslationDeliveryStage.SYNTHESIZED)
+                        termination = SynthesisTermination.SUCCEEDED
+                    } catch (_: SpeechStartDeadlineExceededException) {
+                        termination = SynthesisTermination.SKIPPED
+                        reportSpeechDrop(target, work)
                     } catch (timeout: TimeoutCancellationException) {
+                        termination = SynthesisTermination.TIMED_OUT
                         deliveryTickets.finish(work.ticket, TranslationDeliveryStage.SYNTHESIS_FAILED)
                         mutableHealth.updateChannel(target.channelId) {
                             it.copy(
@@ -550,6 +673,7 @@ class TranslationBroadcastPipeline(
                             )
                         }
                     } catch (cancelled: CancellationException) {
+                        termination = SynthesisTermination.CANCELLED
                         deliveryTickets.finish(work.ticket, TranslationDeliveryStage.CANCELLED)
                         // A synthesis provider may cancel only its current request (for example
                         // after an isolated worker reconnect). Keep this language FIFO alive for
@@ -580,7 +704,15 @@ class TranslationBroadcastPipeline(
                             )
                         }
                     } finally {
-                        publicationLease?.close()
+                        humanInterpretation?.endAiSentence(target.channelId)
+                        requireNotNull(activeSpeechUntil[target]).set(0L)
+                        try { publicationLease?.close() } finally {
+                            // 부모 취소에서도 예약 소유자가 스피커를 비우고 듣기를 재개한다.
+                            withContext(NonCancellable) {
+                                observer.onSynthesisTerminated(utterance, target, termination, publishedBytesForWork,
+                                    synchronized(pending) { pending.isNotEmpty() })
+                            }
+                        }
                     }
                 }
             }
@@ -616,6 +748,7 @@ class TranslationBroadcastPipeline(
                     // blocking this source or any healthy channel. The reserve preserves normal
                     // bursts; only a genuinely stalled language reaches its explicit drop policy.
                     targets.forEach { target ->
+                        humanInterpretation?.finalized(target.channelId, utterance.sequence)
                         if (sameLanguage(utterance.sourceLanguageTag, target.languageTag)) {
                             mutableHealth.updateChannel(target.channelId) {
                                 it.copy(
@@ -694,7 +827,28 @@ private data class TranslatedSpeechWork(
     val utterance: RecognizedUtterance,
     val translatedText: String,
     val ticket: TranslationDeliveryTickets.Ticket,
+    val estimatedDurationMillis: Long,
+    val speechStartDeadlineNanos: Long,
+    val queuedSpeechRate: Float,
 )
+
+private fun adaptiveSpeechRate(pendingCount: Int): Float = when {
+    pendingCount >= 3 -> 1.2f
+    pendingCount == 2 -> 1.15f
+    else -> 1f
+}
+
+private class SpeechStartDeadlineExceededException : IllegalStateException()
+
+private const val MAXIMUM_WAIT_BEHIND_ONE_SENTENCE_NANOS = 16_000_000_000L
+
+/** Conservative text-duration estimate used before a language's PCM is available. */
+private fun estimatedSpeechDurationMillis(text: String, languageTag: String): Long {
+    val characterLanguage = languageTag.substringBefore('-').lowercase() in setOf("ko", "ja", "zh")
+    val units = if (characterLanguage) text.count { !it.isWhitespace() }
+        else text.trim().split(Regex("\\s+")).size
+    return (units * if (characterLanguage) 160L else 350L).coerceIn(200L, 60_000L)
+}
 
 private const val LATE_UTTERANCE_RECOVERY_MESSAGE =
     "설정된 첫 통역 음성 목표를 넘었지만 확정 문장을 유지해 복구 처리 중입니다."

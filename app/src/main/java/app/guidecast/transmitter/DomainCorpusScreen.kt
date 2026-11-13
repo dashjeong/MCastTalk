@@ -60,6 +60,12 @@ fun DomainCorpusScreen(
 ) {
     BackHandler(onBack = onBack)
     val context = LocalContext.current
+    val app = context.applicationContext as GuideCastApplication
+    val api by app.translationApiSettings.state.collectAsStateWithLifecycle()
+    val local by app.operatorSettings.state.collectAsStateWithLifecycle()
+    val lab by app.developerLabSettings.state.collectAsStateWithLifecycle()
+    val developer by app.uiDisplaySettings.developerInfo.collectAsStateWithLifecycle()
+    val currentTone = if (developer && lab.paraphraseEnabled) TranslationStyle.valueOf(lab.translationRegister.name) else api.tone
     val scope = rememberCoroutineScope()
     val revision by repository.revision.collectAsStateWithLifecycle()
 
@@ -69,7 +75,8 @@ fun DomainCorpusScreen(
     var importName by remember { mutableStateOf("") }
     var importDesc by remember { mutableStateOf("") }
     var importTargetLang by remember { mutableStateOf("en") }
-    var importStyle by remember { mutableStateOf(TranslationStyle.AUTO) }
+    var importStyle by remember { mutableStateOf(currentTone) }
+    var importMessage by remember { mutableStateOf<String?>(null) }
 
     var importErrorLine by remember { mutableStateOf<Int?>(null) }
     var importErrorMessage by remember { mutableStateOf<String?>(null) }
@@ -148,6 +155,7 @@ fun DomainCorpusScreen(
     ) { uri ->
         if (uri != null) {
             selectedImportUri = uri
+            importStyle = currentTone
             showImportDialog = true
         }
     }
@@ -199,7 +207,7 @@ fun DomainCorpusScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text("통번역 스트리밍의 문장 번역에 적용됩니다. 통역 중계에는 이 자료가 자동 적용되지 않습니다. 중계 설정의 분야 안내는 별도로 입력하세요.",
+                    Text("오프라인과 온라인 문장 통역에 적용돼요. 온라인 음성 통역에는 이 자료가 자동으로 적용되지 않아요. 온라인 음성 통역의 분야 안내는 통역 설정에서 따로 입력해 주세요.",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
@@ -224,6 +232,7 @@ fun DomainCorpusScreen(
             )
         }
 
+        importMessage?.let { message -> item { Text(message, style = MaterialTheme.typography.bodySmall) } }
         if (dbError != null) {
             item {
                 Card(
@@ -309,6 +318,8 @@ fun DomainCorpusScreen(
                                 },
                             )
                         }
+                        Text(domainCorpusApplicability(profile, api, local, currentTone,
+                            repository.indexedStyles(profile.id)).message, style = MaterialTheme.typography.bodySmall)
                         if (profile.description.isNotBlank()) {
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
@@ -371,7 +382,7 @@ fun DomainCorpusScreen(
                             )
                         }
                     }
-                    Text("어체(Style) 선택:", style = MaterialTheme.typography.bodyMedium)
+                    Text("말투", style = MaterialTheme.typography.bodyMedium)
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         TranslationStyle.entries.forEach { style ->
                             FilterChip(
@@ -411,7 +422,9 @@ fun DomainCorpusScreen(
                                 }
                                 when (result) {
                                     is DomainImportResult.Success -> {
-                                        Toast.makeText(context, "코퍼스를 성공적으로 가져왔습니다 (${result.profile.pairCount}쌍).", Toast.LENGTH_SHORT).show()
+                                        importMessage = if (result.indexReady)
+                                            "저장됨 · " + domainCorpusApplicability(result.profile, api, local, currentTone).message
+                                        else "저장됨 · 안 쓰임 · 적용 준비에 실패했습니다. 다시 가져오지 말고 자료 목록을 확인해 주세요."
                                         importName = ""
                                         importDesc = ""
                                         selectedImportUri = null
@@ -513,7 +526,7 @@ fun DomainCorpusScreen(
 }
 
 fun TranslationStyle.koreanLabel(): String = when (this) {
-    TranslationStyle.FORMAL -> "문어체·격식 (FORMAL)"
-    TranslationStyle.CONVERSATIONAL -> "구어체·대화 (CONVERSATIONAL)"
-    TranslationStyle.AUTO -> "자동 (AUTO)"
+    TranslationStyle.FORMAL -> "격식 있게"
+    TranslationStyle.CONVERSATIONAL -> "편하게(대화하듯)"
+    TranslationStyle.AUTO -> "자동"
 }

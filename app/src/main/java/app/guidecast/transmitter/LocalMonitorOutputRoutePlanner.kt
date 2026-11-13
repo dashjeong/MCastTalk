@@ -14,15 +14,18 @@ internal object LocalMonitorOutputRoutePlanner {
     fun eligible(
         input: AudioInputDevice,
         availableOutputs: List<LocalMonitorRoute>,
+        interpretationAllowed: Boolean = false,
     ): List<LocalMonitorRoute> = availableOutputs
         .asSequence()
         .filter { route -> route.kind != AudioOutputKind.UNKNOWN }
-        .filter { route -> allowedCombination(input.kind, route.kind) }
+        .filter { route -> allowedCombination(input.kind, route.kind) ||
+            interpretationAllowed && input.kind == AudioInputKind.BUILT_IN && route.kind == AudioOutputKind.BUILT_IN_SPEAKER }
         .filter { route ->
             LocalMonitorFeedbackPolicy.evaluate(
                 input = input,
                 inputActive = true,
                 output = route,
+                interpretationAllowed = interpretationAllowed,
             ).mayRender
         }
         .sortedWith(routeComparator(input.kind))
@@ -31,7 +34,8 @@ internal object LocalMonitorOutputRoutePlanner {
     fun select(
         input: AudioInputDevice,
         availableOutputs: List<LocalMonitorRoute>,
-    ): LocalMonitorRoute? = eligible(input, availableOutputs).firstOrNull()
+        interpretationAllowed: Boolean = false,
+    ): LocalMonitorRoute? = eligible(input, availableOutputs, interpretationAllowed).firstOrNull()
 
     private fun allowedCombination(
         inputKind: AudioInputKind,

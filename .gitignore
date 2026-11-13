@@ -37,6 +37,9 @@ diagnostics/
 *.hprof
 *.dmp
 *.litertlm
+*.safetensors
+third_party/reuse/native/target/
+core/audio/src/reuseResearch/jniLibs/
 guidecast-diagnostics-*.zip
 docs/INCIDENT_*
 docs/HANDOFF_*
@@ -56,3 +59,6 @@ docs/*REVIEW*
 AGENTS.md
 SKILL.md
 !app/src/main/assets/glossary/public-20260905.db.gz
+
+# 제출용 실행 파일(Git LFS로 등록)
+!release/*.apk

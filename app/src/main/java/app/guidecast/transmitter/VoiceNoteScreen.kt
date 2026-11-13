@@ -57,7 +57,8 @@ internal fun VoiceNoteLifecycle(model: VoiceNoteViewModel) {
 
 @OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
 @Composable
-internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
+internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit,
+    registerNavigationLeaveGuard: (NavigationLeaveGuard?) -> Unit = {}) {
     val state by model.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
     val app = context.applicationContext as GuideCastApplication
@@ -70,7 +71,8 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
     var title by rememberSaveable { mutableStateOf("") }
     var source by rememberSaveable { mutableStateOf<String?>(defaultSourceTag) }
     var target by rememberSaveable { mutableStateOf(effectiveMenuTargetTags(ServiceMenuProfile.NOTES, profile.targetTags).first()) }
-    var transcribePermission by rememberSaveable { mutableStateOf(false) }
+    var pendingPermissionAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+    var pendingWebPermissionAction by remember { mutableStateOf<(() -> Unit)?>(null) }
     var liveTranscription by rememberSaveable { mutableStateOf(!profile.automaticSource) }
     var showDetailedView by rememberSaveable { mutableStateOf(false) }
     var showTools by rememberSaveable { mutableStateOf(false) }
@@ -84,6 +86,7 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
     var speakerIndex by model.editorDraft.speakerIndex
     var speaker by model.editorDraft.speaker
     var leaveDialog by remember { mutableStateOf(false) }
+    var pendingNavigation by remember { mutableStateOf<(() -> Unit)?>(null) }
     var replaceDialog by remember { mutableStateOf(false) }
     var translateDialog by remember { mutableStateOf(false) }
     var showLibrary by rememberSaveable { mutableStateOf(false) }
@@ -172,12 +175,24 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
         if (note != null) { source = note.sourceLanguage; target = note.targetLanguage }
     }
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (!granted) model.permissionDenied()
-        else if (transcribePermission) model.transcribe(source, target) else model.record(title, source, target, liveTranscription)
+        val action = pendingPermissionAction
+        pendingPermissionAction = null
+        if (action != null) { if (granted) action() else model.permissionDenied() }
     }
     val webMicrophonePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) model.startLiveWebBroadcast(title, source ?: "ko-KR", target, liveTranscription)
-        else model.permissionDenied()
+        val action = pendingWebPermissionAction
+        pendingWebPermissionAction = null
+        if (action != null) { if (granted) action() else model.permissionDenied() }
+    }
+    DisposableEffect(Unit) {
+        onDispose { pendingPermissionAction = null; pendingWebPermissionAction = null }
+    }
+    fun permissionAction(action: () -> Unit): () -> Unit {
+        val requestedNoteId = note?.id
+        return {
+            val current = model.state.value
+            if (current.selected?.id == requestedNoteId && !current.recording && !current.busy && !current.unavailable) action()
+        }
     }
     val txt = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { model.exportPrepared(it, "txt") }
     val srt = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/x-subrip")) { model.exportPrepared(it, "srt") }
@@ -191,12 +206,25 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
         }
     }
     val request: (Boolean) -> Unit = { transcribe ->
-        transcribePermission = transcribe
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             if (transcribe) model.transcribe(source, target) else model.record(title, source, target, liveTranscription)
-        } else permission.launch(Manifest.permission.RECORD_AUDIO)
+        } else {
+            val requestedSource = source; val requestedTarget = target
+            val requestedTitle = title; val requestedLive = liveTranscription
+            pendingPermissionAction = permissionAction {
+                if (transcribe) model.transcribe(requestedSource, requestedTarget)
+                else model.record(requestedTitle, requestedSource, requestedTarget, requestedLive)
+            }
+            permission.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
+    RegisterNavigationLeaveGuard(registerNavigationLeaveGuard) { leave ->
+        pendingPermissionAction = null; pendingWebPermissionAction = null
+        if (state.recording || state.busy) { pendingNavigation = leave; leaveDialog = true }
+        else leave()
     }
     val back = {
+        pendingNavigation = null
         if (showTools) showTools = false
         else if (showLibrary) showLibrary = false
         else if (state.recording || state.busy) leaveDialog = true
@@ -338,7 +366,14 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
                 onStart = { if (note != null) model.startWebBroadcast()
                     else if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED)
                         model.startLiveWebBroadcast(title, source ?: "ko-KR", target, liveTranscription)
-                    else webMicrophonePermission.launch(Manifest.permission.RECORD_AUDIO) }, onStop = model::stopWebBroadcast)
+                    else {
+                        val requestedTitle = title; val requestedSource = source ?: "ko-KR"
+                        val requestedTarget = target; val requestedLive = liveTranscription
+                        pendingWebPermissionAction = permissionAction {
+                            model.startLiveWebBroadcast(requestedTitle, requestedSource, requestedTarget, requestedLive)
+                        }
+                        webMicrophonePermission.launch(Manifest.permission.RECORD_AUDIO)
+                    } }, onStop = model::stopWebBroadcast)
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 LazyColumn(
                     state = if (showTools) toolsListState else listState,
@@ -675,10 +710,13 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit) {
         text = { Text("새 원문이 완성되면 기존 스크립트·번역·직접 지정한 화자 이름을 대체합니다. 원음은 유지됩니다.") },
         confirmButton = { TextButton(onClick = { replaceDialog = false; request(true) }) { Text("다시 받아쓰기") } },
         dismissButton = { TextButton(onClick = { replaceDialog = false }) { Text("취소") } })
-    if (leaveDialog) AlertDialog(onDismissRequest = { leaveDialog = false }, title = { Text("진행 중인 작업을 중지할까요?") },
+    if (leaveDialog) AlertDialog(onDismissRequest = { leaveDialog = false; pendingNavigation = null }, title = { Text("진행 중인 작업을 중지할까요?") },
         text = { Text("녹음은 종료·저장하고, 변환은 중지합니다. 저장된 내용은 보관함에 남습니다.") },
-        confirmButton = { TextButton(onClick = { model.leave(); leaveDialog = false; onBack() }) { Text("중지하고 홈으로") } },
-        dismissButton = { TextButton(onClick = { leaveDialog = false }) { Text("계속하기") } })
+        confirmButton = { TextButton(onClick = {
+            val leave = pendingNavigation ?: onBack
+            pendingNavigation = null; model.leave(); leaveDialog = false; leave()
+        }) { Text("중지하고 홈으로") } },
+        dismissButton = { TextButton(onClick = { leaveDialog = false; pendingNavigation = null }) { Text("계속하기") } })
 }
 
 @Composable

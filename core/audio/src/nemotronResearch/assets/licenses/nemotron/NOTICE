@@ -1,0 +1,28 @@
+NVIDIA NemotronLabs RE-USE for LiteRT - notice
+
+The .tflite files of this repository (reuse_16k_2s_fp32.tflite, reuse_16k_2s_fastload_fp32.tflite) are a conversion of
+nvidia/NVIDIA-NemotronLabs-RE-USE (https://huggingface.co/nvidia/NVIDIA-NemotronLabs-RE-USE), revision
+31f82f2efad1095034492f236e8dac9239ba713b, made from its model.safetensors (sha256 06badaf4029b297f97f7fe48d62990b48d5482608210df577354e0d4e0ed70e1).
+They are distributed under the OpenMDW License Agreement, version 1.1. LICENSE is the original repository's LICENSE
+file, unchanged; it carries this notice:
+
+  Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+
+What the conversion changed. The weights are the original's, in float32. The forward pass was written again in
+PyTorch for one fixed chunk of 16 kHz audio (2 s in both files) and exported with litert-torch
+0.9.4 (torch 2.11.0). It computes the original's function in float32, rearranged for a GPU:
+- the STFT, the inverse STFT and the joining of the chunks run outside the graphs, on the host;
+- the graphs return the phase as the two arguments of the original's final atan2;
+- the Mamba layers run on 4D tensors without flips: the backward direction is a reverse scan with an anti-causal
+  convolution; the time scan steps through the frames one at a time in reuse_16k_2s_fp32.tflite and in blocks of
+  8 frames in reuse_16k_2s_fastload_fp32.tflite; the frequency scan works in blocks of 8 positions;
+- InstanceNorm and LayerNorm compute in a scaled-down range, and the Mamba output path is scaled before its gate, so
+  that float16 arithmetic on a GPU stays in range; softplus, PReLU and the sub-pixel transposed convolution are
+  written in equivalent forms that the LiteRT GPU accepts;
+- 2 dilated convolutions of the encoder run in 2 tiles each along time, so that no im2col
+  buffer reaches the 1 GiB that LiteRT's convolution allows for dilated convolutions on Android.
+
+The scans follow the reference scan of mamba_ssm, selective_scan_ref (state-spaces/mamba, commit
+a14b1dff0454a3bc27d9eb31355dc01e4b2490ec, Apache License 2.0, Copyright 2023 Tri Dao, Albert Gu).
+LICENSE.mamba_ssm.txt is that repository's license file at that commit. No mamba_ssm source file is in this
+repository.

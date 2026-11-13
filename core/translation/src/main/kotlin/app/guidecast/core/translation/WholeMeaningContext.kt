@@ -1,8 +1,8 @@
 package app.guidecast.core.translation
 
 /** Keeps a contiguous suffix of whole committed units; never cuts away a qualifier or negation. */
-internal fun wholeMeaningContext(prior: Iterable<String>, maxCharacters: Int = 400): String? {
-    require(maxCharacters in 1..400)
+internal fun wholeMeaningContext(prior: Iterable<String>, maxCharacters: Int = 900): String? {
+    require(maxCharacters in 1..900)
     val selected = ArrayDeque<String>()
     var length = 0
     for (unit in prior.toList().asReversed()) {

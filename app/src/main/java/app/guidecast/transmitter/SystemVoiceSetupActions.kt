@@ -51,7 +51,7 @@ internal fun SystemVoiceSetupActions(
     }
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
-            "$languageLabel 음성팩은 Google·Samsung의 설치 화면에서 내려받습니다. 완료하거나 취소한 뒤 돌아오면 다시 확인합니다.",
+            "$languageLabel 음성은 설치된 음성 서비스의 설정 화면에서 내려받아요. 돌아오면 준비 상태를 다시 확인해요.",
             style = MaterialTheme.typography.bodySmall,
         )
         engines.forEach { engine ->
@@ -70,9 +70,9 @@ internal fun SystemVoiceSetupActions(
                         runCatching { launcher.launch(intent); true }.getOrDefault(false)
                     }
                     message = if (opened) "$label 설정에서 $languageLabel 음성 데이터를 선택해 설치하세요."
-                    else "음성 설치 화면을 열 수 없습니다. 휴대폰 설정의 글자 읽어주기(TTS)에서 음성 데이터를 설치한 뒤 다시 확인하세요."
+                    else "음성 설치 화면을 열 수 없어요. 휴대폰 설정의 글자 읽어주기에서 음성을 설치한 뒤 다시 확인해 주세요."
                 },
-            ) { Text("$label 음성팩 설치 · 설정") }
+            ) { Text("$label 음성 설치 · 설정") }
         }
         if (GOOGLE_TTS_PACKAGE !in engines) {
             OutlinedButton(
@@ -82,12 +82,12 @@ internal fun SystemVoiceSetupActions(
                         launcher.launch(Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=$GOOGLE_TTS_PACKAGE")))
                         true
                     }.getOrDefault(false)
-                    message = if (opened) "Google 음성 엔진을 설치한 뒤 이 화면에서 사용할 언어팩을 준비하세요."
-                    else "Google 음성 엔진 설치 페이지를 열 수 없습니다. Play 스토어에서 Google 음성 서비스를 확인하세요."
+                    message = if (opened) "Google 음성 서비스를 설치한 뒤 사용할 언어의 음성을 준비해 주세요."
+                    else "음성 서비스 설치 화면을 열 수 없어요. Play 스토어에서 Google 음성 서비스를 확인해 주세요."
                 },
-            ) { Text("Google 음성 엔진 설치") }
+            ) { Text("Google 음성 서비스 설치") }
         }
-        if (engines.isEmpty()) Text("설치된 기기 음성 엔진이 없습니다. 먼저 음성 엔진을 설치하세요.", style = MaterialTheme.typography.bodySmall)
+        if (engines.isEmpty()) Text("설치된 음성 서비스가 없어요. 먼저 음성 서비스를 설치해 주세요.", style = MaterialTheme.typography.bodySmall)
         OutlinedButton(enabled = enabled, onClick = onRecheck, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
             Text("설치한 음성 다시 확인")
         }

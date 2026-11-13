@@ -141,7 +141,9 @@ internal class MoonshineTtsInferenceRuntime(
         languageTag: String,
         onProgress: (String, Int, Int, Long, Long) -> Unit,
         onPcm: (ByteArray) -> Unit,
+        rate: Float = 1f,
     ) = languageMutex(languageTag).withLock {
+        require(rate.isFinite() && rate in 0.9f..1.2f)
         require(languageTag == isolatedLanguageTag) { "Moonshine TTS process language mismatch" }
         require(text.isNotBlank() && text.length <= MAX_TEXT_CHARACTERS) {
             "TTS text is empty or too long"
@@ -149,6 +151,26 @@ internal class MoonshineTtsInferenceRuntime(
         val spec = MoonshineTtsVoiceCatalog.requireVoice(languageTag)
         val startedAt = SystemClock.elapsedRealtime()
         val engine = loadEngine(languageTag, spec, onProgress)
+        if (rate != 1f) {
+            // The pinned API accepts per-call speed for synthesis. Its pushText stream has no
+            // per-call options, so accelerated phrases use that API in the same isolated worker.
+            val result = withContext(Dispatchers.Default) {
+                engine.synthesize(text, listOf(TranscriberOption("speed", rate.toString())))
+            }
+            emitFloatSamplesAsPcm16LeFrames(
+                samples = result.samples,
+                sourceRateHz = result.sampleRateHz,
+                targetRateHz = OUTPUT_SAMPLE_RATE_HZ,
+                emittedBytes = 0L,
+                maxOutputBytes = MAX_PCM_BYTES,
+                onFrame = { pcm ->
+                    currentCoroutineContext().ensureActive()
+                    onPcm(pcm)
+                    delay((pcm.size.toLong() * 1_000L / (OUTPUT_SAMPLE_RATE_HZ * Short.SIZE_BYTES)).coerceAtLeast(1L))
+                },
+            )
+            return@withLock
+        }
         Log.i(LOG_TAG, "TTS native streaming started: target=$languageTag")
 
         try {

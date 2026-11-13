@@ -30,7 +30,7 @@ data class RecognizedUtterance(
         require(text.isNotBlank() || isRetracted)
         require(text.length <= 2_000)
         require(LANGUAGE_TAG.matches(sourceLanguageTag))
-        require(contextBefore == null || contextBefore.length <= 400)
+        require(contextBefore == null || contextBefore.length <= 900)
         require(!isRetracted || !isFinal) { "A retraction cannot be a final utterance" }
         require(
             firstAudioDeadlineElapsedRealtimeNanos == null ||
@@ -272,8 +272,29 @@ interface ExecutionAwareSpeechSynthesisEngine : SpeechSynthesisEngine {
         synthesize(text, languageTag) {}
 }
 
+enum class SynthesisTermination { SUCCEEDED, FAILED, CANCELLED, TIMED_OUT, SKIPPED }
+
 interface TranslationPipelineObserver {
+    /** 음성 공급자/게시 슬롯을 잡기 전에 실제 쉼을 기다릴 수 있다. */
+    suspend fun awaitSynthesisTurn(
+        utterance: RecognizedUtterance, target: TranslationTarget, deadlineNanos: Long,
+    ): Boolean = true
+
+    /** 예약한 작업의 모든 종료 경로. 성공은 실제 기기 재생이 끝날 때까지 기다릴 수 있다. */
+    suspend fun onSynthesisTerminated(
+        utterance: RecognizedUtterance, target: TranslationTarget, result: SynthesisTermination,
+        publishedBytes: Long, hasPendingSpeech: Boolean,
+    ) = Unit
+
     fun onSourceRecognized(utterance: RecognizedUtterance) = Unit
+
+    fun onTranslationFailed(
+        utterance: RecognizedUtterance,
+        target: TranslationTarget,
+        reason: String,
+    ) = Unit
+
+    fun onSpeechSkipped(utterance: RecognizedUtterance, target: TranslationTarget, reason: String) = Unit
 
     fun onTranslationCompleted(
         utterance: RecognizedUtterance,

@@ -207,7 +207,7 @@ internal class MenuBroadcastController(private val app: GuideCastApplication) {
             synchronized(gate) {
                 if (!state.value.isActive) mutableState.value = MenuBroadcastState(phase = MenuBroadcastPhase.FAILED,
                     origin = MenuBroadcastOrigin.NOTES,
-                    errorMessage = "이 메뉴 설정에서 문장 번역 서비스·API 키·온라인 문장 전송 동의를 확인한 뒤 웹오디오방송을 시작하세요.")
+                    errorMessage = "이용할 서비스·이용 키·전송 동의를 확인한 뒤 웹방송을 시작해 주세요.")
             }
             return false
         }

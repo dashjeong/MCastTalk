@@ -105,6 +105,8 @@ data class GuideCastTranscriptLine(
     val liveSegmentLanguage: String? = null,
     val liveOutputState: String? = null,
     val displayGroupSequence: Long? = null,
+    val translationErrors: Map<String, String> = emptyMap(),
+    val speechNotices: Map<String, String> = emptyMap(),
 )
 
 /**
@@ -150,6 +152,7 @@ class GuideCastLocalServer(
     private val isLiveAudioBroadcastEnabled: () -> Boolean = { true },
     private val replayCaptionSnapshotProvider: (() -> ReplayCaptionSnapshot)? = null,
     private val broadcastStatusProvider: (() -> GuideCastBroadcastStatus)? = null,
+    private val interpreterSupport: InterpreterSupport? = null,
 ) {
     private val appContext = context.applicationContext
     private val started = AtomicBoolean(false)
@@ -171,6 +174,7 @@ class GuideCastLocalServer(
         )
         val assets = ListenerAssets.load(appContext)
         val speakerAssets = runCatching { SpeakerAssets.load(appContext) }.getOrNull()
+        val interpreterAssets = runCatching { InterpreterAssets.load(appContext) }.getOrNull()
         val ca = runCatching {
             GuideCastCertificateAuthority.getOrCreate(File(appContext.filesDir, "ca"))
         }.getOrNull()
@@ -220,6 +224,7 @@ class GuideCastLocalServer(
                         isLiveAudioBroadcastEnabled = isLiveAudioBroadcastEnabled,
                         replayCaptionSnapshotProvider = replayCaptionSnapshotProvider,
                         broadcastStatusProvider = broadcastStatusProvider,
+                        interpreterSupport = interpreterSupport, interpreterAssets = interpreterAssets,
                     )
                 }.start(wait = false)
                 stopSecureBackend = {
@@ -271,6 +276,7 @@ class GuideCastLocalServer(
                     isLiveAudioBroadcastEnabled = isLiveAudioBroadcastEnabled,
                     replayCaptionSnapshotProvider = replayCaptionSnapshotProvider,
                     broadcastStatusProvider = broadcastStatusProvider,
+                    interpreterSupport = interpreterSupport, interpreterAssets = interpreterAssets,
                 )
             }.start(wait = false)
         } catch (error: Throwable) {
@@ -296,6 +302,11 @@ class GuideCastLocalServer(
             streamSession = streamSession,
             caSha256Fingerprint = caFingerprintVerification?.expectedFingerprint,
             caFingerprintWarning = caFingerprintVerification?.warning,
+            interpreterUrlFactory = if (tlsProxy != null && interpreterSupport != null) ({ channel ->
+                interpreterSupport.sessions.invite(channel)?.let { invite ->
+                    "https://$host:${config.httpsPort}/interpreter#lang=$channel&invite=$invite"
+                }
+            }) else null,
             channelUrlFactory = { channelId ->
                 buildString {
                     append(baseUrl).append(channelId)
@@ -329,6 +340,7 @@ class RunningGuideCastServer internal constructor(
     /** Non-null only when the exact downloadable DER bytes do not match the advertised digest. */
     val caFingerprintWarning: String? = null,
     private val channelUrlFactory: (String) -> String,
+    private val interpreterUrlFactory: ((String) -> String?)? = null,
     private val stopServer: () -> Unit,
 ) : Closeable {
     internal constructor(
@@ -382,6 +394,8 @@ class RunningGuideCastServer internal constructor(
         channel.id to channelUrlFactory(channel.id)
     }
 
+    fun interpreterUrlFor(channelId: String): String? = interpreterUrlFactory?.invoke(channelId)
+
     fun listenerUrlFor(channelId: String): String? =
         streamSession.channels
             .firstOrNull { it.id == channelId }
@@ -415,6 +429,8 @@ internal fun Application.guideCastModule(
     isLiveAudioBroadcastEnabled: () -> Boolean = { true },
     replayCaptionSnapshotProvider: (() -> ReplayCaptionSnapshot)? = null,
     broadcastStatusProvider: (() -> GuideCastBroadcastStatus)? = null,
+    interpreterSupport: InterpreterSupport? = null,
+    interpreterAssets: InterpreterAssets? = null,
 ) = guideCastModule(
     expectedHost = expectedHost,
     authenticator = authenticator,
@@ -429,6 +445,7 @@ internal fun Application.guideCastModule(
     isLiveAudioBroadcastEnabled = isLiveAudioBroadcastEnabled,
     replayCaptionSnapshotProvider = replayCaptionSnapshotProvider,
     broadcastStatusProvider = broadcastStatusProvider,
+    interpreterSupport = interpreterSupport, interpreterAssets = interpreterAssets,
 )
 
 internal fun Application.guideCastModule(
@@ -455,6 +472,8 @@ internal fun Application.guideCastModule(
     isLiveAudioBroadcastEnabled: () -> Boolean = { true },
     replayCaptionSnapshotProvider: (() -> ReplayCaptionSnapshot)? = null,
     broadcastStatusProvider: (() -> GuideCastBroadcastStatus)? = null,
+    interpreterSupport: InterpreterSupport? = null,
+    interpreterAssets: InterpreterAssets? = null,
 ) {
     install(WebSockets) {
         pingPeriodMillis = 15_000
@@ -498,6 +517,9 @@ internal fun Application.guideCastModule(
     }
 
     routing {
+        interpreterRoutes(expectedHost, streamSession, interpreterSupport, interpreterAssets,
+            { publishedSnapshots.transcripts().lines }, admissionController,
+            transportSecurity, httpsPort, requireTlsSpeakerTransport, { liveAudioGate.observe().enabled })
         get("/ca.crt") {
             val admission = call.acquireAdmission(
                 admissionController,
@@ -1004,6 +1026,7 @@ internal fun Application.guideCastModule(
                         requestedChannel,
                         readBroadcastStatus(broadcastStatusProvider),
                         liveAudioGate.observe(),
+                        interpreterSupport?.state,
                     ),
                     ContentType.Application.Json,
                 )
@@ -1127,7 +1150,9 @@ internal fun Application.guideCastModule(
                     close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "Invalid origin"))
                     return@webSocket
                 }
-                if (!authenticator.authorize(call.request.queryParameters["token"])) {
+                val interpreterSource = call.parameters["channel"] == "source" &&
+                    interpreterSupport?.sessions?.language(call.request.cookies[INTERPRETER_SESSION_COOKIE]) != null
+                if (!authenticator.authorize(call.request.queryParameters["token"]) && !interpreterSource) {
                     close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "Unauthorized"))
                     return@webSocket
                 }
@@ -1377,7 +1402,7 @@ private class PublishedBroadcastSnapshots(
     }
 }
 
-private suspend fun ApplicationCall.acquireAdmission(
+internal suspend fun ApplicationCall.acquireAdmission(
     controller: LocalRequestAdmissionController,
     kind: LocalRequestKind,
 ): Closeable? = when (val decision = controller.tryAcquire(
@@ -1394,7 +1419,7 @@ private suspend fun ApplicationCall.acquireAdmission(
 }
 
 /** Uses the proxy-attested socket peer on TLS and the accepted socket peer on plain HTTP. */
-private fun ApplicationCall.guideCastRemoteAddress(): String =
+internal fun ApplicationCall.guideCastRemoteAddress(): String =
     attributes.getOrNull(VERIFIED_TLS_PEER_ADDRESS) ?: request.local.remoteAddress
 
 private fun String.isLoopbackSocketPeer(): Boolean {
@@ -1402,14 +1427,14 @@ private fun String.isLoopbackSocketPeer(): Boolean {
     return runCatching { InetAddress.getByName(this).isLoopbackAddress }.getOrDefault(false)
 }
 
-private suspend fun ApplicationCall.requireValidHost(expectedHost: String): Boolean {
+internal suspend fun ApplicationCall.requireValidHost(expectedHost: String): Boolean {
     if (hasValidHost(expectedHost)) return true
     secureApiResponse()
     respondText("Invalid Host", status = HttpStatusCode(421, "Misdirected Request"))
     return false
 }
 
-private fun ApplicationCall.hasValidHost(expectedHost: String): Boolean {
+internal fun ApplicationCall.hasValidHost(expectedHost: String): Boolean {
     val supplied = request.host()
     return supplied.equals(expectedHost, ignoreCase = true) ||
         supplied == "127.0.0.1" ||
@@ -1426,7 +1451,7 @@ private suspend fun ApplicationCall.requireValidOrigin(
     return false
 }
 
-private suspend fun ApplicationCall.requireHttpsMicRequest(
+internal suspend fun ApplicationCall.requireHttpsMicRequest(
     transportSecurity: GuideCastTransportSecurity,
 ): Boolean {
     if (isHttpsMicRequest(transportSecurity)) return true
@@ -1438,7 +1463,7 @@ private suspend fun ApplicationCall.requireHttpsMicRequest(
     return false
 }
 
-private fun ApplicationCall.isHttpsMicRequest(
+internal fun ApplicationCall.isHttpsMicRequest(
     transportSecurity: GuideCastTransportSecurity,
 ): Boolean = transportSecurity == GuideCastTransportSecurity.TLS_TERMINATED
 
@@ -1446,7 +1471,7 @@ private fun ApplicationCall.isHttpsMicRequest(
  * Browser requests must come from the same serialized origin as the accepted Host. A missing
  * Origin is intentionally accepted for navigation and non-browser clients on the local network.
  */
-private fun ApplicationCall.hasValidOrigin(
+internal fun ApplicationCall.hasValidOrigin(
     transportSecurity: GuideCastTransportSecurity,
     httpsPort: Int?,
 ): Boolean {
@@ -1486,7 +1511,7 @@ private fun ApplicationCall.hasValidOrigin(
  * Browser WebSocket requests MUST include an Origin header that matches the request's host/port.
  * Missing Origin is strictly rejected on the browser speaker endpoint.
  */
-private fun ApplicationCall.hasValidBrowserOrigin(
+internal fun ApplicationCall.hasValidBrowserOrigin(
     transportSecurity: GuideCastTransportSecurity,
     httpsPort: Int?,
 ): Boolean {
@@ -1506,7 +1531,7 @@ private suspend fun ApplicationCall.requireAuthorized(
     return false
 }
 
-private fun ApplicationCall.secureBrowserResponse(
+internal fun ApplicationCall.secureBrowserResponse(
     transportSecurity: GuideCastTransportSecurity,
     httpsPort: Int?,
     allowMicrophone: Boolean = false,
@@ -1532,7 +1557,7 @@ private fun ApplicationCall.secureBrowserResponse(
     response.header("Permissions-Policy", "camera=(), $microphonePolicy, geolocation=()")
 }
 
-private fun ApplicationCall.secureApiResponse() {
+internal fun ApplicationCall.secureApiResponse() {
     response.header(HttpHeaders.CacheControl, "no-store, max-age=0")
     response.header(HttpHeaders.Pragma, "no-cache")
     response.header("X-Content-Type-Options", "nosniff")
@@ -1546,6 +1571,7 @@ internal fun StreamSession.toStatusJson(
     requestedChannel: String? = null,
     broadcastStatus: GuideCastBroadcastStatus? = null,
     liveAudioAdmission: LiveAudioBroadcastGate.Admission? = null,
+    interpreterState: ((String) -> String)? = null,
 ): String = buildString {
     val snapshot = observabilitySnapshot()
     // A language URL scopes translated content, but always offers the live original input too.
@@ -1596,7 +1622,10 @@ internal fun StreamSession.toStatusJson(
         append(channel.displayName.jsonEscaped())
         append("\",\"languageTag\":\"")
         append(channel.languageTag.jsonEscaped())
-        append("\",\"sampleRate\":")
+        append('"')
+        val humanState = interpreterState?.invoke(channel.id)
+        humanState?.let { append(",\"interpreterState\":\"").append(it.jsonEscaped()).append('"') }
+        append(",\"sampleRate\":")
         append(channel.sampleRateHz)
         append(",\"listenerCount\":")
         append(snapshot.listenersByChannel[channel.id] ?: 0)
@@ -1610,7 +1639,12 @@ internal fun StreamSession.toStatusJson(
         append(channel.id.jsonEscaped())
         append('"')
         if (broadcastStatus != null) {
-            val readiness = broadcastStatus.channelStatus(channel.id)
+            val originalReadiness = broadcastStatus.channelStatus(channel.id)
+            val readiness = if (humanState == "HUMAN" && snapshot.isActive &&
+                broadcastStatus.phase == GuideCastBroadcastPhase.LIVE && liveAudioAdmission?.enabled != false)
+                originalReadiness.copy(audioReadiness = GuideCastChannelReadiness.READY,
+                    nextAction = GuideCastListenerNextAction.NONE)
+            else originalReadiness
             append(",\"audioReadiness\":\"").append(readiness.audioReadiness.name)
             append("\",\"transcriptReadiness\":\"").append(readiness.transcriptReadiness.name)
             append("\",\"nextAction\":\"").append(readiness.nextAction.name).append('"')
@@ -1647,6 +1681,8 @@ private fun GuideCastTranscriptLine.forChannel(channelId: String): GuideCastTran
     translationLatencyMillis = translationLatencyMillis.filterKeys { it.equals(channelId, ignoreCase = true) },
     firstAudioLatencyMillis = firstAudioLatencyMillis.filterKeys { it.equals(channelId, ignoreCase = true) },
     synthesisLatencyMillis = synthesisLatencyMillis.filterKeys { it.equals(channelId, ignoreCase = true) },
+    translationErrors = translationErrors.filterKeys { it.equals(channelId, ignoreCase = true) },
+    speechNotices = speechNotices.filterKeys { it.equals(channelId, ignoreCase = true) },
 )
 
 private fun toTranscriptJson(line: GuideCastTranscriptLine): String = buildString {
@@ -1656,6 +1692,8 @@ private fun toTranscriptJson(line: GuideCastTranscriptLine): String = buildStrin
     append("\"isFinal\":").append(line.isFinal).append(',')
     append("\"capturedAtElapsedRealtimeNanos\":").append(line.capturedAtElapsedRealtimeNanos).append(',')
     append("\"translations\":").append(line.translations.toJsonObject()).append(',')
+    append("\"translationErrors\":").append(line.translationErrors.toJsonObject()).append(',')
+    append("\"speechNotices\":").append(line.speechNotices.toJsonObject()).append(',')
     append("\"translationLatencyMillis\":").append(line.translationLatencyMillis.toJsonLongMap()).append(',')
     append("\"firstAudioLatencyMillis\":").append(line.firstAudioLatencyMillis.toJsonLongMap()).append(',')
     append("\"synthesisLatencyMillis\":").append(line.synthesisLatencyMillis.toJsonLongMap())
@@ -1690,7 +1728,7 @@ private fun AudioChannelDescriptor.toConfigJson(generation: Long): String =
     "{\"type\":\"config\",\"format\":\"pcm_s16le\",\"channels\":1," +
         "\"sampleRate\":$sampleRateHz,\"generation\":$generation}"
 
-private fun String.jsonEscaped(): String = buildString(length) {
+internal fun String.jsonEscaped(): String = buildString(length) {
     for (character in this@jsonEscaped) {
         when (character) {
             '\\' -> append("\\\\")

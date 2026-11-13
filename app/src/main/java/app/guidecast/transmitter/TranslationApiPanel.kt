@@ -48,7 +48,7 @@ internal fun AdvancedTranslationApiPanel(settings: TranslationApiSettings, servi
                     FilterChip(selected = options.provider == provider, enabled = enabled, onClick = {
                         val next = when (provider) {
                             TranslationApiProvider.OPENAI_REALTIME -> options.copy(provider = provider, model = "gpt-realtime-2.1-mini", baseUrl = "https://api.openai.com/v1", protocol = TranslationApiProtocol.RESPONSES, realtimeAudio = false)
-                            TranslationApiProvider.GEMINI_LIVE -> options.copy(provider = provider, model = if (options.interpretationMode == OnlineInterpretationMode.PROFESSIONAL) GEMINI_LIVE_AGENT else GEMINI_LIVE_TRANSLATE, baseUrl = "https://generativelanguage.googleapis.com/v1beta")
+                            TranslationApiProvider.GEMINI_LIVE -> onlineServiceChoice(options, true)
                             TranslationApiProvider.GEMINI -> options.copy(provider = provider, model = "gemini-3.5-flash-lite", baseUrl = "https://generativelanguage.googleapis.com/v1beta")
                             TranslationApiProvider.COMPATIBLE -> options.copy(provider = provider, model = "your-model", baseUrl = "https://your-provider.example/v1", protocol = TranslationApiProtocol.CHAT_COMPLETIONS)
                             else -> options.copy(provider = provider, model = "gpt-5.4-mini", baseUrl = "https://api.openai.com/v1", protocol = TranslationApiProtocol.RESPONSES)
@@ -77,13 +77,7 @@ internal fun AdvancedTranslationApiPanel(settings: TranslationApiSettings, servi
                     Text("이 지시는 선택 API로 전송됩니다. 분야 지정은 정확도 보증이나 모델 학습이 아닙니다. 통역 중계의 전문 자료·지침에서 지원 모델과 전달할 발췌를 확인하세요.")
                 }
             }
-            if (options.provider != TranslationApiProvider.GEMINI_LIVE) Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TranslationStyle.entries.forEach { style ->
-                    FilterChip(selected = options.tone == style, enabled = enabled, onClick = { settings.setTone(style) },
-                        label = { Text(when (style) { TranslationStyle.AUTO -> "문맥에 맞게"; TranslationStyle.FORMAL -> "공식·문어체"; TranslationStyle.CONVERSATIONAL -> "대화·구어체" }) })
-                }
-            }
-            Text("문체 지시는 Gemma·API 경로에서 적용합니다. ML Kit 기본 번역은 문체 지시를 지원하지 않습니다. 의역하더라도 숫자·이름·부정·조건을 유지하도록 요청합니다.", style = MaterialTheme.typography.bodySmall)
+            InterpretationToneSettings(settings, options, enabled)
             if (options.provider != TranslationApiProvider.LOCAL) {
                 if (options.provider == TranslationApiProvider.GEMINI_LIVE) {
                     Row {
@@ -115,7 +109,7 @@ internal fun AdvancedTranslationApiPanel(settings: TranslationApiSettings, servi
                     }
 
                     Text("마이크 → Gemini Live → 통역 음성. 음성 전송에 동의하면 원음이 Google로 전달됩니다. 직접 음성 중계는 최대 5개 출력 언어를 지원합니다. 언어별로 API 연결을 사용하며 같은 언어의 청취자는 연결을 공유합니다.")
-                    Text("gemini-3.5-live-translate-preview: 연속 통역, RAG·텍스트·문체 지시 미지원. gemini-3.8-live: 일반 음성 모델, 통역 지시 사용. 두 모델의 실기기 품질 비교 전 자동 기본 경로로 사용하지 않습니다.")
+                    Text("처음 음성 통역을 고르면 말투와 참고 자료를 반영할 방식을 선택합니다. 이전에 저장한 선택은 그대로 둡니다.")
                     Text(if (options.allowLiveAudio) "선택한 서비스로 음성을 전송하는 데 동의했습니다." else "음성 전송 동의는 연결 확인에서 진행합니다.")
                     Text("BYOK 개인 기기 시험용입니다. 배포 앱에 공용 장기 키를 넣지 마세요. 공용 서비스는 사용자 인증·한도·단기 토큰 발급 서버가 필요하며 아직 배포하지 않았습니다. 무료/유료 데이터 정책과 계정 한도를 확인하세요.")
                     Text("중지할 때까지 중계합니다. 연결 끊김이나 과부하로 중단되면 다시 시작하세요. 이전 음성을 자동 재전송하지 않습니다. Gemini Live는 원문·통역의 대응 ID를 확인할 수 없어 비교를 보류합니다. 파일 입력은 지원하지 않으며, 참고 자료는 Gemini 3.8 Live에서 허용한 발췌만 전달합니다.")

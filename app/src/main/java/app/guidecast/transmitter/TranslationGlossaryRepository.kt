@@ -29,6 +29,7 @@ class TranslationGlossaryRepository(private val context: Context) {
     private val lock = Mutex()
     private var database: SQLiteDatabase? = null
     val warning = MutableStateFlow<String?>(null)
+    val revision = MutableStateFlow(0L)
 
     private fun database(checkCancellation: () -> Unit = {}): SQLiteDatabase {
         checkCancellation()
@@ -131,7 +132,7 @@ class TranslationGlossaryRepository(private val context: Context) {
                         .filter { PublicGlossaryHintPolicy.permits(normalized, it.term, it.edited) }.map { it.term }
                 }
                 currentCoroutineContext().ensureActive()
-                GlossaryTerms.select(normalized, language(source), language(target), terms)
+                GlossaryTerms.select(normalized, language(source), language(target), terms, maximumTerms = 12)
             }
         } catch (e: CancellationException) { throw e }
         catch (e: Exception) {
@@ -171,6 +172,22 @@ class TranslationGlossaryRepository(private val context: Context) {
             .use { it.moveToFirst(); it.getInt(0) }
     }
 
+    /** 인식 중에는 호출하지 않는다. 준비 단계에서 언어쌍별로 작은 원문 용어 목록만 읽는다. */
+    suspend fun recognitionHints(source: String, target: String): List<String> = io {
+        database().rawQuery(
+            "SELECT term FROM effective WHERE src=? AND lang=? AND enabled=1 ORDER BY edited DESC,term LIMIT 64",
+            arrayOf(language(source), language(target)),
+        ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+    }
+
+    /** 인식 교정은 내 용어집만 사용한다. 인식 힌트 조회는 조용히 상한을 적용하고 번역 경고를 건드리지 않는다. */
+    suspend fun userRecognitionTerms(source: String, target: String): List<String> = io {
+        database().rawQuery(
+            "SELECT term FROM overrides WHERE src=? AND lang=? AND enabled=1 ORDER BY term LIMIT 64",
+            arrayOf(language(source), language(target)),
+        ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+    }
+
     suspend fun save(terms: List<GlossaryTerm>) = io {
         val valid = GlossaryCsv.validate(terms)
         val db = database()
@@ -188,10 +205,12 @@ class TranslationGlossaryRepository(private val context: Context) {
             }
             db.setTransactionSuccessful()
         } finally { db.endTransaction() }
+        revision.value = revision.value + 1
     }
 
     suspend fun restore(term: GlossaryTerm) = io {
         database().delete("overrides", "src=? AND lang=? AND term=?", arrayOf(term.sourceLanguage, term.targetLanguage, term.sourceTerm))
+        revision.value = revision.value + 1
     }
 
     /** The packaged reference ships with the APK; portable backups contain every user override. */
@@ -218,6 +237,7 @@ class TranslationGlossaryRepository(private val context: Context) {
             }
             db.setTransactionSuccessful()
         } finally { db.endTransaction() }
+        if (inserted > 0) revision.value++
         inserted
     }
 

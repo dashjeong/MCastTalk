@@ -1,6 +1,18 @@
 "use strict";
 
 const listenerUi = globalThis.GuideCastI18n?.create(location.pathname);
+function humanReferenceCaption(channel) {
+  return channelReadiness.get(channel)?.interpreterState === "HUMAN" &&
+    document.querySelector("#listening-mode")?.value !== "replay" &&
+    document.querySelector("#transcript-scope")?.value !== "archive";
+}
+
+function updateInterpreterNotice() {
+  const notice = document.querySelector("#ai-notice");
+  if (notice) notice.textContent = humanReferenceCaption(channelSelect.value) ?
+    uiText("사람 통역 · 글자는 AI가 만든 참고 자막입니다.") : uiText("AI가 통역한 내용입니다. 원문과 다를 수 있어요.");
+}
+
 const uiText = (text) => listenerUi ? listenerUi.text(text) : text;
 if (listenerUi) globalThis.GuideCastI18n.apply(document, listenerUi);
 
@@ -32,6 +44,20 @@ const tabPlayer = document.querySelector("#tab-player");
 const tabTranscript = document.querySelector("#tab-transcript");
 const panelPlayer = document.querySelector("#panel-player");
 const panelTranscript = document.querySelector("#panel-transcript");
+const captionSizeButton = document.querySelector("#caption-size");
+let captionSize = 0;
+captionSizeButton?.addEventListener("click", () => {
+  captionSize = (captionSize + 1) % 3;
+  document.querySelector("#current-caption").dataset.size = String(captionSize);
+  captionSizeButton.setAttribute("aria-label", uiText("글자 크게") + " · " + (captionSize + 1) + "/3");
+});
+const moreOptionsToggle = document.querySelector("#more-options-toggle");
+moreOptionsToggle?.addEventListener("click", () => {
+  const options = document.querySelector("#more-options");
+  options.hidden = !options.hidden;
+  moreOptionsToggle.setAttribute("aria-expanded", String(!options.hidden));
+  moreOptionsToggle.textContent = uiText(options.hidden ? "더 보기" : "접기");
+});
 const transcriptSelect = document.querySelector("#transcript-language");
 const transcriptRefreshButton = document.querySelector("#transcript-refresh");
 const transcriptFollow = document.querySelector("#transcript-follow");
@@ -126,6 +152,8 @@ let transcriptRequestScope = null;
 let transcriptEtag = "";
 let transcriptEtagScope = null;
 let cachedTranscript = null;
+let userSelectedTranscriptLanguage = false;
+let userSelectedAudioChannel = false;
 let transcriptBackoffUntil = 0;
 let transcriptBackoffScope = null;
 let transientTranscriptFailureCount = 0;
@@ -184,14 +212,14 @@ function broadcastPresentation() {
     ? "방송 종료 또는 연결 문제 · 진행자에게 방송 상태를 확인하세요"
     : "방송 상태 확인 지연 · 연결과 방송 상태를 확인하세요", kind: "warning" };
   const buffered = audioContext && nextPlayTime - audioContext.currentTime > 0.02;
-  if (broadcastPhase === "PREPARING") return { text: "방송 준비 중 · 송출기 준비가 끝나면 재생하세요", kind: "idle" };
-  if (broadcastPhase === "PAUSED") return { text: buffered ? "방송 일시정지 · 받은 음성은 계속 재생됩니다" : "방송 일시정지 · 송출기 재개 대기", kind: "idle" };
+  if (broadcastPhase === "PREPARING") return { text: "방송 준비 중 · 진행자가 준비를 마치면 듣기 시작을 누르세요", kind: "idle" };
+  if (broadcastPhase === "PAUSED") return { text: buffered ? "방송 일시정지 · 받은 음성은 계속 재생됩니다" : "방송 일시정지 · 진행자가 다시 시작하기를 기다리고 있어요", kind: "idle" };
   if (broadcastPhase === "COMPLETED") return { text: buffered ? "방송 완료 · 받은 음성 재생 중 · 저장 구간은 돌려보기에서 확인하세요" : "방송 완료 · 실시간 음성이 끝났습니다 · 저장 구간은 돌려보기에서 확인하세요", kind: "idle" };
-  if (broadcastPhase === "FAILED") return { text: "방송 오류 · 송출기에서 상태를 확인하고 다시 시작하세요", kind: "error" };
+  if (broadcastPhase === "FAILED") return { text: "방송 오류 · 진행자에게 상태를 확인하고 다시 시작해 달라고 하세요", kind: "error" };
   if (broadcastPhase === "IDLE") return { text: "방송 종료 · 새 방송을 기다리세요", kind: "idle" };
-  if (liveAudioEnabled === false) return { text: buffered ? "음성 송출 일시정지 · 받은 음성은 계속 재생됩니다" : "음성 송출 일시정지 · 송출기 재개 대기", kind: "idle" };
+  if (liveAudioEnabled === false) return { text: buffered ? "음성 방송 일시정지 · 받은 음성은 계속 재생됩니다" : "음성 방송 일시정지 · 진행자가 다시 시작하기를 기다리고 있어요", kind: "idle" };
   const selected = selectedChannelReadiness();
-  if (selected?.audioReadiness === "SUBTITLES_ONLY") return { text: "선택한 언어는 자막만 제공됩니다 · 통역 스크립트에서 확인하세요", kind: "idle" };
+  if (selected?.audioReadiness === "SUBTITLES_ONLY") return { text: "선택한 언어는 자막만 제공됩니다 · 지난 내용 보기에서 확인하세요", kind: "idle" };
   if (selected?.audioReadiness === "PREPARING") {
     const waiting = desiredState === "playing";
     const connected = waiting && socket?.readyState === WebSocket.OPEN;
@@ -199,8 +227,8 @@ function broadcastPresentation() {
       ? "방송 연결 중 · 선택한 언어의 음성 대기 중"
       : "선택한 언어의 음성 준비 중 · 듣기 시작을 눌러 미리 연결하세요", kind: "idle" };
   }
-  if (selected?.audioReadiness === "RECOVERING") return { text: "선택한 언어의 음성 복구 대기 · 송출기 상태를 확인하세요", kind: "warning" };
-  if (selected?.audioReadiness === "UNAVAILABLE") return { text: "선택한 언어의 음성을 사용할 수 없습니다 · 다른 채널 또는 스크립트를 직접 선택하세요", kind: "warning" };
+  if (selected?.audioReadiness === "RECOVERING") return { text: "선택한 언어의 음성 복구 대기 · 진행자에게 상태를 확인해 주세요", kind: "warning" };
+  if (selected?.audioReadiness === "UNAVAILABLE") return { text: "선택한 언어의 음성을 사용할 수 없습니다 · 다른 언어를 고르거나 자막을 확인하세요", kind: "warning" };
   return null;
 }
 
@@ -267,15 +295,21 @@ function switchTabs(nextPanel) {
   const hiddenPanel = nextPanel === "transcript" ? panelPlayer : panelTranscript;
   const activeTab = nextPanel === "transcript" ? tabTranscript : tabPlayer;
   const inactiveTab = nextPanel === "transcript" ? tabPlayer : tabTranscript;
+  const moveFocus = document.activeElement === tabPlayer || document.activeElement === tabTranscript;
 
   hiddenPanel.hidden = true;
   playingPanel.hidden = false;
   activeTab.classList.add("active");
   inactiveTab.classList.remove("active");
-  activeTab.setAttribute("aria-selected", "true");
-  inactiveTab.setAttribute("aria-selected", "false");
-  activeTab.tabIndex = 0;
-  inactiveTab.tabIndex = -1;
+  tabPlayer.hidden = nextPanel !== "transcript";
+  tabTranscript.hidden = nextPanel === "transcript";
+  tabTranscript.setAttribute("aria-expanded", String(nextPanel === "transcript"));
+  if (captionSizeButton) captionSizeButton.hidden = nextPanel === "transcript";
+  // 숨겨지는 버튼에 키보드 초점이 남지 않게 돌아갈 버튼으로 옮긴다.
+  if (moveFocus) (nextPanel === "transcript" ? tabPlayer : tabTranscript).focus();
+  if (nextPanel === "transcript" && transcriptFollow.checked) {
+    transcriptList.scrollTop = transcriptList.scrollHeight;
+  }
 }
 
 function updateTranscriptLanguageOptions(channels) {
@@ -300,7 +334,7 @@ function updateTranscriptLanguageOptions(channels) {
       originalOption.value = "source";
       originalOption.textContent = channelLabel("source");
       transcriptSelect.append(originalOption);
-      if (existing === "source") transcriptSelect.value = "source";
+      if (userSelectedTranscriptLanguage && existing === "source") transcriptSelect.value = "source";
     }
     transcriptSelect.disabled = channel.id === "source";
     return;
@@ -328,9 +362,13 @@ function updateTranscriptLanguageOptions(channels) {
   allOption.textContent = uiText("전체 번역");
   if (translationLanguages.length > 0) transcriptSelect.append(allOption);
 
-  if (translationLanguages.some((language) => language === existing) || existing === "source" ||
+  const navLang = typeof navigator !== "undefined" && navigator.language ? navigator.language.split("-")[0].toLowerCase() : null;
+  const browserMatch = navLang === "jp" ? "ja" : navLang;
+  if (translationLanguages.some((language) => language === existing) || (userSelectedTranscriptLanguage && existing === "source") ||
       (existing === "all" && translationLanguages.length > 0)) {
     transcriptSelect.value = existing;
+  } else if (!userSelectedTranscriptLanguage && browserMatch && translationLanguages.includes(browserMatch)) {
+    transcriptSelect.value = browserMatch;
   } else {
     transcriptSelect.value = translationLanguages.length > 0 ? translationLanguages[0] : "source";
   }
@@ -418,7 +456,28 @@ function renderTranscripts(responseText) {
   const caption = document.querySelector("#current-caption");
   const latest = listenerHudCaption(lines, channelSelect.value);
   if (caption && document.querySelector("#listening-mode")?.value !== "replay" && document.querySelector("#transcript-scope")?.value !== "archive") {
-    caption.textContent = [latest.source, latest.translation].filter(value => typeof value === "string" && value.trim()).join("\n");
+    caption.replaceChildren();
+    if (latest.source) {
+      const srcP = document.createElement("p");
+      srcP.className = "caption-source";
+      srcP.textContent = latest.source;
+      caption.append(srcP);
+    }
+    if (latest.translation) {
+      const trP = document.createElement("p");
+      trP.className = "caption-translation";
+      trP.textContent = `${humanReferenceCaption(channelSelect.value) ? uiText("참고 자막") + " · " : ""}${latest.translation}`;
+      caption.append(trP);
+    }
+    if (latest.notice) {
+      const notice = document.createElement("p");
+      notice.className = "transcript-state";
+      notice.textContent = latest.notice;
+      caption.append(notice);
+    }
+    if (!latest.source && !latest.translation) {
+      caption.textContent = "";
+    }
   }
   const fragment = document.createDocumentFragment();
   for (const line of listenerCaptionDisplayGroups(lines)) {
@@ -461,7 +520,7 @@ function renderTranscripts(responseText) {
             firstAudioMs,
             speechMs && `${uiText("합성")} ${speechMs}`,
           ].filter(Boolean).join(" · ") : "";
-          translated.textContent = `${channelLabel(key)}: ${translations[key]}${latency ? ` (${latency})` : ""}`;
+          translated.textContent = `${channelLabel(key)}${humanReferenceCaption(key) ? " · " + uiText("참고 자막") : ""}: ${translations[key]}${latency ? ` (${latency})` : ""}`;
           translationBlock.append(translated);
         }
       }
@@ -488,11 +547,19 @@ function renderTranscripts(responseText) {
           firstAudioMs,
           speechMs && `${uiText("합성")} ${speechMs}`,
         ].filter(Boolean).join(" · ") : "";
-        translated.textContent = `${channelLabel(selectedLanguage)}: ${translatedText}${latency ? ` (${latency})` : ""}`;
+        translated.textContent = `${channelLabel(selectedLanguage)}${humanReferenceCaption(selectedLanguage) ? " · " + uiText("참고 자막") : ""}: ${translatedText}${latency ? ` (${latency})` : ""}`;
       } else {
         translated.textContent = nativeMissingCaptionLabel(line, selectedLanguage) || `${channelLabel(selectedLanguage)}: ${uiText("아직 번역이 없습니다.")}`;
       }
       row.append(translated);
+    }
+
+    const deliveryNotice = captionDeliveryNotice(line, selectedLanguage);
+    if (deliveryNotice) {
+      const notice = document.createElement("p");
+      notice.className = "transcript-state";
+      notice.textContent = deliveryNotice;
+      row.append(notice);
     }
 
     if (line.displaySegments?.length > 1) {
@@ -645,17 +712,21 @@ function loadTranscripts(forceRefresh = false) {
         return;
       }
       if (!isSameTranscriptScope(currentTranscriptScope(), scope) || document.querySelector("#transcript-scope")?.value === "archive") return;
-      if (renderTranscripts(payload) && payload.length <= MAX_CACHED_TRANSCRIPT_CHARS) {
-        cachedTranscript = { payload, scope };
-        transcriptEtag = response.headers?.get("ETag") || "";
-        transcriptEtagScope = scope;
+      if (renderTranscripts(payload)) {
+        if (payload.length <= MAX_CACHED_TRANSCRIPT_CHARS) {
+          cachedTranscript = { payload, scope };
+          transcriptEtag = response.headers?.get("ETag") || "";
+          transcriptEtagScope = scope;
+        } else {
+          cachedTranscript = null;
+          transcriptEtag = "";
+          transcriptEtagScope = null;
+        }
         renderedTranscriptScope = scope;
         transcriptBackoffUntil = 0;
         transcriptBackoffScope = null;
         transientTranscriptFailureCount = 0;
         setTranscriptStale(false);
-      } else {
-        clearTranscriptSnapshot();
       }
     } catch (error) {
       if (!isSameTranscriptScope(currentTranscriptScope(), scope) || document.querySelector("#transcript-scope")?.value === "archive") return;
@@ -715,11 +786,18 @@ function setupTabEvents() {
   tabTranscript.addEventListener("click", () => {
     switchTabs("transcript");
     startTranscriptPolling();
-    loadTranscripts(true);
+    loadTranscripts(true).then(() => {
+      if (transcriptFollow.checked) transcriptList.scrollTop = transcriptList.scrollHeight;
+    });
+    if (transcriptFollow.checked) transcriptList.scrollTop = transcriptList.scrollHeight;
     transcriptRefreshButton.disabled = listenerNeedsLink();
   });
   transcriptRefreshButton.addEventListener("click", () => loadTranscripts(true));
-  transcriptSelect.addEventListener("change", () => { listenerHud?.update(); loadTranscripts(true); });
+  transcriptSelect.addEventListener("change", () => {
+    userSelectedTranscriptLanguage = true;
+    listenerHud?.update();
+    loadTranscripts(true);
+  });
   transcriptFollow.addEventListener("change", () => {
     if (transcriptFollow.checked) transcriptList.scrollTop = transcriptList.scrollHeight;
   });
@@ -727,9 +805,9 @@ function setupTabEvents() {
     tab.addEventListener("keydown", (event) => {
       if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
       event.preventDefault();
-      const nextPanel = tab === tabPlayer ? "transcript" : "player";
+      const nextPanel = panelTranscript.hidden ? "transcript" : "player";
       switchTabs(nextPanel);
-      (nextPanel === "transcript" ? tabTranscript : tabPlayer).focus();
+      (nextPanel === "transcript" ? tabPlayer : tabTranscript).focus();
       startTranscriptPolling();
     });
   }
@@ -865,6 +943,7 @@ async function refreshChannels(isRefresh) {
   for (const channel of channels) channelReadiness.set(channel.id, {
     audioReadiness: readinessStates.includes(channel.audioReadiness) ? channel.audioReadiness : null,
     transcriptReadiness: readinessStates.includes(channel.transcriptReadiness) ? channel.transcriptReadiness : null,
+    interpreterState: channel.interpreterState,
     nextAction: actions.includes(channel.nextAction) ? channel.nextAction : "NONE",
   });
   const selectedAudioChannel = channelSelect.value;
@@ -899,18 +978,32 @@ async function refreshChannels(isRefresh) {
   updateTranscriptLanguageOptions(channels);
   if (pinnedChannelId) {
     const channel = channels.find((candidate) => candidate.id === pinnedChannelId);
-    channelSelect.value = channel.id;
+    if (!userSelectedAudioChannel) {
+      channelSelect.value = channel.id;
+    } else if (selectedAudioChannel && channels.some(c => c.id === selectedAudioChannel)) {
+      channelSelect.value = selectedAudioChannel;
+    } else {
+      channelSelect.value = channel.id;
+    }
     pinnedChannelName.textContent = `${channelLabel(channel.id)} · ${channel.languageTag}`;
     pinnedChannelBanner.hidden = false;
-    pageDescription.textContent = uiText("가이드가 송출 중인 언어를 고르고 재생을 누르세요.");
+    pageDescription.textContent = uiText("언어를 고르고 듣기 시작을 누르세요.");
     document.title = `${channelLabel(channel.id)} · ${uiText("MCastTalk")}`;
+  } else if (!userSelectedAudioChannel && !selectedAudioChannel) {
+    const navLang = typeof navigator !== "undefined" && navigator.language ? navigator.language.split("-")[0].toLowerCase() : null;
+    const browserMatch = navLang === "jp" ? "ja" : navLang;
+    if (browserMatch && channels.some(c => c.id === browserMatch)) {
+      channelSelect.value = browserMatch;
+    }
   }
+  updateInterpreterNotice();
+  renderCachedTranscript(currentTranscriptScope());
   updateLivePlaybackControls();
   if (!isRefresh || previousStatusRefreshFailed || broadcastPresentation() || desiredState !== "playing" || previousPhase !== broadcastPhase ||
       previousLiveAudioEnabled !== liveAudioEnabled ||
       previousReadiness !== selectedChannelReadiness()?.audioReadiness) {
     if (!isReplayMode()) setStatus(desiredState === "playing" ? "방송 연결됨 · 선택한 언어의 음성 대기 중" :
-      channels.length ? "재생을 눌러 청취하세요" : "송출 채널 대기 중");
+      channels.length ? "재생을 눌러 청취하세요" : "방송할 언어를 기다리고 있어요");
   }
   setDiagnostics();
   listenerHud?.update();
@@ -954,6 +1047,22 @@ playButton.addEventListener("click", () => {
   return startPlayback();
 });
 pauseButton.addEventListener("click", () => { globalThis.GuideCastReplay?.pause(); stopPlayback("paused"); });
+// First-screen pause: while audio is playing the start button is disabled, so show a pause button in its
+// place instead of leaving the only way to stop inside "More options". It mirrors #pause, adding no new state.
+const pauseMainButton = document.querySelector("#pause-main");
+if (pauseMainButton) {
+  const syncMainPlayback = () => {
+    pauseMainButton.hidden = pauseButton.disabled;
+    playButton.hidden = playButton.disabled && !pauseButton.disabled;
+  };
+  pauseMainButton.addEventListener("click", () => pauseButton.click());
+  if (typeof MutationObserver === "function") {
+    const observer = new MutationObserver(syncMainPlayback);
+    observer.observe(pauseButton, { attributes: true, attributeFilter: ["disabled"] });
+    observer.observe(playButton, { attributes: true, attributeFilter: ["disabled"] });
+  }
+  syncMainPlayback();
+}
 stopButton.addEventListener("click", () => { globalThis.GuideCastReplay?.stop(); stopPlayback("stopped"); });
 playbackRateSelect.addEventListener("change", () => {
   const requested = Number(playbackRateSelect.value);
@@ -969,6 +1078,8 @@ liveEdgeButton.addEventListener("click", () => {
   if (document.querySelector("#listening-mode")?.value === "replay") { globalThis.GuideCastReplay?.returnLive(); } else jumpToLiveEdge();
 });
 channelSelect.addEventListener("change", () => {
+  updateInterpreterNotice();
+  userSelectedAudioChannel = true;
   globalThis.GuideCastReplay?.channelChanged();
   updateLivePlaybackControls();
   if (desiredState === "playing" && document.querySelector("#listening-mode")?.value !== "replay") startPlayback();
@@ -1568,7 +1679,7 @@ function listenerCaptionDisplayGroups(lines) {
     consumed.add(key);
     const merged = { ...group[0], liveSegmentLanguage: null, displaySegments: group,
       isFinal: group.every(segment => segment.isFinal === true) };
-    for (const field of ["translations", "translationLatencyMillis", "firstAudioLatencyMillis", "synthesisLatencyMillis"]) {
+    for (const field of ["translations", "translationErrors", "speechNotices", "translationLatencyMillis", "firstAudioLatencyMillis", "synthesisLatencyMillis"]) {
       merged[field] = Object.assign({}, ...group.map(segment => segment[field] || {}));
     }
     const captureTimes = group.map(segment => segment.capturedAtElapsedRealtimeNanos).filter(Number.isFinite);
@@ -1604,6 +1715,22 @@ function captionLanguageValue(values, language) {
   if (Object.prototype.hasOwnProperty.call(values, language)) return values[language];
   const keys = Object.keys(values).filter(key => captionLanguageEquals(key, language));
   return keys.length === 1 ? values[keys[0]] : undefined;
+}
+
+function captionDeliveryNotice(row, language) {
+  if (!row || language === "source") return "";
+  const messages = [];
+  for (const values of [row.translationErrors, row.speechNotices]) {
+    if (!values || typeof values !== "object") continue;
+    for (const [tag, message] of Object.entries(values)) {
+      if (typeof message !== "string" || !message.trim() ||
+          (language !== "all" && !captionLanguageEquals(tag, language))) continue;
+      const displayMessage = values === row.speechNotices && message === "음성 1문장 건너뜀 · 자막을 확인해 주세요."
+        ? "음성 한 문장을 건너뛰었어요. 자막을 확인하세요." : message;
+      messages.push(language === "all" ? channelLabel(tag) + ": " + uiText(displayMessage) : uiText(displayMessage));
+    }
+  }
+  return messages.join("\n");
 }
 
 function captionContainsLanguage(row, language) {
@@ -1659,9 +1786,10 @@ function listenerHudCaption(lines, language) {
   for (let index = rows.length - 1; index >= 0; index--) {
     const row = rows[index];
     if (language === "source" ? text(row.sourceText).trim() : language === "all" ?
-      Object.values(row.translations || {}).some(value => text(value).trim()) || nativeMissingCaptionLabel(row, language) :
+      Object.values(row.translations || {}).some(value => text(value).trim()) || nativeMissingCaptionLabel(row, language) || captionDeliveryNotice(row, language) :
       captionLanguageEquals(row.liveSegmentLanguage, language) || row.displaySegments?.some(segment => captionLanguageEquals(segment.liveSegmentLanguage, language)) ||
       captionLanguageValue(row.translations, language) !== undefined ||
+      captionDeliveryNotice(row, language) ||
       (!row.liveSegmentLanguage && nativeMissingCaptionLabel(row, language))) {
       selected = row;
       break;
@@ -1679,8 +1807,10 @@ function listenerHudCaption(lines, language) {
     .map(([id, value]) => `${channelLabel(id)}\n${value}`).join("\n\n"),
     nativeMissingCaptionLabel(selected, language)].filter(Boolean).join("\n\n") :
     language === "source" ? "" : text(captionLanguageValue(selected?.translations, language));
-  return { source: text(selected?.sourceText), translation: translation.trim() ? translation : nativeMissingCaptionLabel(selected, language),
-    notice: selected?.displaySegments?.length > 1 ? uiText("가까운 인식 구간을 함께 표시 · 발화 정렬 미확인") : "" };
+  return { source: text(selected?.sourceText), translation: translation.trim() ? translation :
+    text(captionLanguageValue(selected?.translationErrors, language)) || nativeMissingCaptionLabel(selected, language),
+    notice: [selected?.displaySegments?.length > 1 ? uiText("가까운 인식 구간을 함께 표시 · 발화 정렬 미확인") : "",
+      captionDeliveryNotice(selected, language)].filter(Boolean).join(" · ") };
 }
 
 function listenerHudStoredCaptions(lines, language) {
@@ -1755,7 +1885,7 @@ function createListenerHud() {
     setText(translationText, selected.translation.trim() ? selected.translation : recorded || archive ? emptySaved : uiText("선택한 언어의 번역을 기다리고 있습니다."));
     sourceText.classList.toggle("is-empty", !selected.source.trim());
     translationText.classList.toggle("is-empty", !selected.translation.trim());
-    setText(translationLabel, `${uiText("번역")} · ${captionLanguage === "all" ? uiText("전체 번역") : channelLabel(captionLanguage) || ""}`);
+    setText(translationLabel, `${uiText(humanReferenceCaption(captionLanguage) ? "참고 자막" : "번역")} · ${captionLanguage === "all" ? uiText("전체 번역") : channelLabel(captionLanguage) || ""}`);
     if (archiveControls) archiveControls.hidden = !(recorded || archive);
     if (archivePrevious) archivePrevious.disabled = !saved?.hasPrevious || saved?.pending;
     if (archiveNext) archiveNext.disabled = !saved?.hasNext || saved?.pending;

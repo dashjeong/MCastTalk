@@ -113,6 +113,21 @@ abstract class MoonshineTtsInferenceService : Service() {
             requests.cancel(clientId, requestId)
         }
 
+        override fun synthesizeStreamingAtRate(
+            clientId: String,
+            requestId: Long,
+            text: String,
+            languageTag: String,
+            rate: Float,
+            callback: IGuideCastMoonshineTtsCallback?,
+        ) {
+            if (callback == null) return
+            dispatch(clientId, requestId, languageTag, callback, ResultType.STREAM) { progress, pcm ->
+                runtime.synthesizeStreaming(text, languageTag, progress, pcm, rate)
+                null
+            }
+        }
+
         override fun shutdown() {
             // Never kill this process directly. Samsung's app-stability monitor counts an
             // explicit SIGKILL from a private component as an app failure and can show the

@@ -10,7 +10,11 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.FlowCollector
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.distinctUntilChanged
 
 enum class TranslationRegister { AUTO, FORMAL, CONVERSATIONAL }
 enum class CloudReviewProvider { OPENAI, GOOGLE }
@@ -19,6 +23,7 @@ data class DeveloperLabOptions(
     val expressiveTtsEnabled: Boolean = false,
     val paraphraseEnabled: Boolean = false,
     val translationRegister: TranslationRegister = TranslationRegister.FORMAL,
+    val overrideGeneralTone: Boolean = false,
     val cloudReviewEnabled: Boolean = false,
     val autoLearnEnabled: Boolean = false,
     val provider: CloudReviewProvider = CloudReviewProvider.OPENAI,
@@ -41,16 +46,28 @@ fun defaultReviewModel(provider: CloudReviewProvider): String = when (provider) 
 class DeveloperLabSettings internal constructor(
     private val preferences: DeveloperLabPreferenceStore,
     private val vault: DeveloperApiKeyVault,
+    private val generalOptions: StateFlow<TranslationApiOptions> = MutableStateFlow(TranslationApiOptions()),
 ) {
     constructor(context: Context) : this(AndroidDeveloperLabPreferences(context.applicationContext),
-        AndroidDeveloperApiKeyVault(context.applicationContext))
+        AndroidDeveloperApiKeyVault(context.applicationContext),
+        (context.applicationContext as GuideCastApplication).translationApiSettings.state)
 
     private val lock = Any()
     private val mutableState = MutableStateFlow(preferences.read().let {
         it.copy(hasApiKey = vault.read(it.provider) != null,
             hasComparisonKeys = CloudReviewProvider.entries.all { provider -> vault.read(provider) != null })
     })
-    val state = mutableState.asStateFlow()
+    // 보호된 방송 입력 경로도 일반 말투를 즉시 읽는다. 저장된 연구용 선택은 별도로 보존한다.
+    @OptIn(kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi::class)
+    val state: StateFlow<DeveloperLabOptions> = object : StateFlow<DeveloperLabOptions> {
+        override val value: DeveloperLabOptions get() = resolveGeneralTone(mutableState.value, generalOptions.value)
+        override val replayCache: List<DeveloperLabOptions> get() = listOf(value)
+        @OptIn(kotlinx.coroutines.InternalCoroutinesApi::class)
+        override suspend fun collect(collector: FlowCollector<DeveloperLabOptions>): Nothing {
+            combine(mutableState, generalOptions, ::resolveGeneralTone).distinctUntilChanged().collect(collector)
+            error("설정 관찰이 종료되었습니다.")
+        }
+    }
 
     fun setExpressiveTtsEnabled(value: Boolean) = update { it.copy(expressiveTtsEnabled = value) }
     fun setComparisonEnabled(value: Boolean) = update { it.copy(comparisonEnabled = value,
@@ -65,7 +82,12 @@ class DeveloperLabSettings internal constructor(
     }
     internal fun invalidateAuthorization() = update { it.copy(authorizationRevision = it.authorizationRevision + 1) }
     fun setParaphraseEnabled(value: Boolean) = update { it.copy(paraphraseEnabled = value) }
-    fun setTranslationRegister(value: TranslationRegister) = update { it.copy(translationRegister = value) }
+    fun setTranslationRegister(value: TranslationRegister) = update {
+        it.copy(translationRegister = value, overrideGeneralTone = true, authorizationRevision = it.authorizationRevision + 1)
+    }
+    fun setOverrideGeneralTone(value: Boolean) = update {
+        it.copy(overrideGeneralTone = value, authorizationRevision = it.authorizationRevision + 1)
+    }
     fun setCloudReviewEnabled(value: Boolean) = update { it.copy(cloudReviewEnabled = value, authorizationRevision = it.authorizationRevision + 1) }
     fun setAutoLearnEnabled(value: Boolean) = update { it.copy(autoLearnEnabled = value, teacherLearningEnabled = it.teacherLearningEnabled && value,
         authorizationRevision = it.authorizationRevision + 1) }
@@ -100,11 +122,11 @@ class DeveloperLabSettings internal constructor(
     internal fun apiKey(provider: CloudReviewProvider): String? = vault.read(provider)
 
     /** Import is configuration, never renewed permission to send speech-derived text externally. */
-    fun portableOptions() = state.value.copy(hasApiKey = false, cloudReviewEnabled = false, autoLearnEnabled = false,
+    fun portableOptions() = mutableState.value.copy(hasApiKey = false, cloudReviewEnabled = false, autoLearnEnabled = false,
         comparisonEnabled = false, hasComparisonKeys = false,
         teacherLearningEnabled = false, authorizationRevision = 0)
     fun importOptions(value: DeveloperLabOptions) = update {
-        value.copy(modelId = value.modelId.takeIf(::validReviewModel) ?: defaultReviewModel(value.provider),
+        value.copy(overrideGeneralTone = false, modelId = value.modelId.takeIf(::validReviewModel) ?: defaultReviewModel(value.provider),
             cloudReviewEnabled = false, autoLearnEnabled = false, teacherLearningEnabled = false,
             comparisonEnabled = false, hasComparisonKeys = CloudReviewProvider.entries.all { vault.read(it) != null },
             authorizationRevision = it.authorizationRevision + 1, hasApiKey = vault.read(value.provider) != null)
@@ -115,6 +137,9 @@ class DeveloperLabSettings internal constructor(
         mutableState.value = next
     }
 }
+
+internal fun resolveGeneralTone(options: DeveloperLabOptions, general: TranslationApiOptions): DeveloperLabOptions =
+    if (options.overrideGeneralTone) options else options.copy(translationRegister = TranslationRegister.valueOf(general.tone.name))
 
 internal fun validReviewModel(value: String) = value.matches(Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,79}"))
 internal interface DeveloperLabPreferenceStore {
@@ -135,6 +160,7 @@ private class AndroidDeveloperLabPreferences(context: Context) : DeveloperLabPre
         return DeveloperLabOptions(
             expressiveTtsEnabled = prefs.getBoolean("expression", false),
             paraphraseEnabled = prefs.getBoolean("paraphrase", false),
+            overrideGeneralTone = prefs.getBoolean("override_general_tone", false),
             translationRegister = runCatching { TranslationRegister.valueOf(prefs.getString("register", null).orEmpty()) }
                 .getOrDefault(TranslationRegister.FORMAL),
             cloudReviewEnabled = prefs.getBoolean("cloud_review", false),
@@ -149,6 +175,7 @@ private class AndroidDeveloperLabPreferences(context: Context) : DeveloperLabPre
     override fun write(options: DeveloperLabOptions) {
         prefs.edit().putBoolean("expression", options.expressiveTtsEnabled)
             .putBoolean("paraphrase", options.paraphraseEnabled).putString("register", options.translationRegister.name)
+            .putBoolean("override_general_tone", options.overrideGeneralTone)
             .putBoolean("cloud_review", options.cloudReviewEnabled).putBoolean("auto_learn", options.autoLearnEnabled)
             .putBoolean("selective_teacher", options.teacherLearningEnabled)
             .putBoolean("cross_review", options.comparisonEnabled).putString("secondary_model", options.secondaryModelId)
