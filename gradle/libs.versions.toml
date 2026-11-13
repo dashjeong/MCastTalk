@@ -14,7 +14,7 @@ moonshine-voice = "0.1.5-mcasttalk1"
 junit = "4.13.2"
 androidx-test-runner = "1.6.2"
 androidx-test-junit = "1.2.1"
-androidx-test-uiautomator = "2.3.0"
+androidx-test-uiautomator = "2.4.0"
 
 [libraries]
 androidx-core-ktx = { module = "androidx.core:core-ktx", version.ref = "androidx-core" }
