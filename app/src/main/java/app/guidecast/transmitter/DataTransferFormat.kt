@@ -33,7 +33,7 @@ internal object DataTransferFormat {
     fun manifest(kind: DataTransferKind, count: Long, sha256: String) = JSONObject().apply {
         put("schema", SCHEMA); put("major", 1); put("minor", 3); put("kind", kind.name)
         put("createdAt", System.currentTimeMillis()); put("records", count); put("sha256", sha256)
-        put("referenceDictionary", "public-20260905")
+        put("referenceDictionary", "public-20261125")
     }
 
     fun validateManifest(row: JSONObject, kind: DataTransferKind) {

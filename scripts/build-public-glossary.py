@@ -21,19 +21,24 @@ import xlrd
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SOURCES = {
-    "en": "public-terms-en.xls",
-    "zh": "public-terms-zh.xls",
-    "ja": "public-terms-ja.xls",
+    "en": ("public-terms-en.xls", "7934420800424adce52f0d9038638ce6715a0ed0b9ce41212a496de794513db0"),
+    "zh": ("public-terms-zh.xls", "69f81d18bea7e1c8343ee49cebec5624d66d3230774ef65e15ff4082adc465d2"),
+    "ja": ("public-terms-ja.xls", "2732be88512343e32a481374594d41b2d57b1545ce6d513edcbfca4386df5cfa"),
 }
 
 def main():
     directory = pathlib.Path(sys.argv[1])
-    report = {"source": "국립국어원 공공용어 번역 통합 데이터", "languages": {}}
+    report = {"source": "국립국어원 공공용어 번역 통합 데이터", "revision": "public-20261125",
+              "sourceUrl": "https://www.korean.go.kr/front/pubWord/pubWordDataList.do?cateLarge=ALL&flag=1&langGubun=ALL&originGubun=ALL",
+              "languages": {}}
     with tempfile.TemporaryDirectory(prefix="guidecast-glossary-") as tmp:
         db = sqlite3.connect(str(pathlib.Path(tmp) / "glossary.db"))
         db.execute("CREATE TABLE terms (src TEXT NOT NULL, lang TEXT NOT NULL, term TEXT NOT NULL, value TEXT NOT NULL, replacement TEXT NOT NULL DEFAULT '', category TEXT NOT NULL, origin TEXT NOT NULL, enabled INTEGER NOT NULL, prefix TEXT NOT NULL, alternatives TEXT NOT NULL, PRIMARY KEY(src,lang,term))")
-        for lang, filename in SOURCES.items():
+        for lang, (filename, expected_sha) in SOURCES.items():
             path = directory / filename
+            source_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+            if source_sha != expected_sha:
+                raise ValueError(f"검토한 국립국어원 원본과 해시가 다릅니다: {filename}")
             sheet = xlrd.open_workbook(str(path)).sheet_by_index(0)
             assert sheet.row_values(1) == ["출처", "한글 명칭", "번역어", "분류"]
             grouped = collections.defaultdict(list)
@@ -55,7 +60,7 @@ def main():
                     json.dumps(variants, ensure_ascii=False, separators=(",", ":")),
                 ))
             report["languages"][lang] = {
-                "file": filename, "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                "file": filename, "sha256": source_sha,
                 "rows": sheet.nrows - 2, "uniqueTerms": len(grouped), "ambiguousTerms": ambiguous,
                 "maxLengths": [max(len(str(sheet.cell_value(r, c))) for r in range(2, sheet.nrows)) for c in range(4)],
                 "origins": dict(collections.Counter(sheet.cell_value(r, 0) for r in range(2, sheet.nrows))),
@@ -72,7 +77,7 @@ def main():
         report["databaseBytes"] = len(data)
         report["assetBytes"] = asset.stat().st_size
         report["databaseSha256"] = hashlib.sha256(data).hexdigest()
-        (asset.parent / "provenance.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
+        (asset.parent / "provenance.json").write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         print(json.dumps(report, ensure_ascii=False, indent=2))
 
 if __name__ == "__main__":

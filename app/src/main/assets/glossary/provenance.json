@@ -1,5 +1,7 @@
 {
   "source": "국립국어원 공공용어 번역 통합 데이터",
+  "revision": "public-20261125",
+  "sourceUrl": "https://www.korean.go.kr/front/pubWord/pubWordDataList.do?cateLarge=ALL&flag=1&langGubun=ALL&originGubun=ALL",
   "languages": {
     "en": {
       "file": "public-terms-en.xls",
@@ -40,7 +42,7 @@
     },
     "ja": {
       "file": "public-terms-ja.xls",
-      "sha256": "61671201c49d478838c9d17931a8f0543da9f8a7ccdf7f1b3335a4eef860c41e",
+      "sha256": "2732be88512343e32a481374594d41b2d57b1545ce6d513edcbfca4386df5cfa",
       "rows": 24565,
       "uniqueTerms": 24361,
       "ambiguousTerms": 142,
@@ -57,6 +59,6 @@
     }
   },
   "databaseBytes": 29405184,
-  "assetBytes": 4771982,
-  "databaseSha256": "5f39f27faf0c68b305d06e67c09eb929398e0242dd0278eb8430c49070d2ccb3"
+  "assetBytes": 4771993,
+  "databaseSha256": "b407d00bd908aa88586166bacb642da0aee8167a3cf1689760f77e550d0cac74"
 }

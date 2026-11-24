@@ -9,6 +9,8 @@ import app.guidecast.core.translation.GlossaryTerm
 import app.guidecast.core.translation.GlossaryTerms
 import java.io.File
 import java.security.MessageDigest
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -21,6 +23,21 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+
+internal fun matchesGlossaryReference(file: File, bytes: Long, expectedSha: String, checkCancellation: () -> Unit): Boolean {
+    if (!file.isFile || file.length() != bytes) return false
+    val digest = MessageDigest.getInstance("SHA-256")
+    file.inputStream().use { input ->
+        val buffer = ByteArray(32 * 1024)
+        while (true) {
+            checkCancellation()
+            val count = input.read(buffer)
+            if (count < 0) break
+            digest.update(buffer, 0, count)
+        }
+    }
+    return digest.digest().joinToString("") { "%02x".format(it) } == expectedSha
+}
 
 data class GlossaryRow(val term: GlossaryTerm, val alternatives: String, val edited: Boolean)
 
@@ -36,8 +53,8 @@ class TranslationGlossaryRepository(private val context: Context) {
         database?.let { return it }
         val directory = File(context.filesDir, "glossary").apply { mkdirs() }
         val base = File(directory, "public-20260905.db")
-        if (!base.isFile || base.length() != BASE_BYTES) {
-            val temporary = File(directory, "public-20260905.tmp")
+        if (!matchesGlossaryReference(base, BASE_BYTES, BASE_SHA, checkCancellation)) {
+            val temporary = File.createTempFile("public-", ".tmp", directory)
             try {
                 val digest = MessageDigest.getInstance("SHA-256")
                 // AAPT expands .gz assets and removes that suffix in the APK. AssetManager
@@ -63,7 +80,8 @@ class TranslationGlossaryRepository(private val context: Context) {
                 check(digest.digest().joinToString("") { "%02x".format(it) } == BASE_SHA) {
                     "기본 사전 무결성 확인 실패"
                 }
-                check(temporary.renameTo(base)) { "기본 사전 저장 실패" }
+                Files.move(temporary.toPath(), base.toPath(), StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING)
             } finally { temporary.delete() }
         }
         checkCancellation()
@@ -266,7 +284,7 @@ class TranslationGlossaryRepository(private val context: Context) {
     private fun Cursor.string(name: String) = getString(getColumnIndexOrThrow(name))
     companion object {
         private const val BASE_BYTES = 29_405_184L
-        private const val BASE_SHA = "5f39f27faf0c68b305d06e67c09eb929398e0242dd0278eb8430c49070d2ccb3"
+        private const val BASE_SHA = "b407d00bd908aa88586166bacb642da0aee8167a3cf1689760f77e550d0cac74"
         fun language(tag: String): String = when (val normalized = tag.lowercase(Locale.ROOT).trim().replace('_', '-')) {
             "ko-kr" -> "ko"
             "en-us" -> "en"

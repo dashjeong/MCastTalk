@@ -398,7 +398,7 @@ val verifyPackagedThirdPartyLicenseAssets by tasks.registering {
                 }
             }
             check(digest.digest().joinToString("") { "%02x".format(it) } ==
-                "5f39f27faf0c68b305d06e67c09eb929398e0242dd0278eb8430c49070d2ccb3") {
+                "b407d00bd908aa88586166bacb642da0aee8167a3cf1689760f77e550d0cac74") {
                 "Packaged glossary SHA-256 changed"
             }
             val actual = zip.entries().asSequence()
