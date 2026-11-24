@@ -58,11 +58,13 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import app.guidecast.core.translation.TranslationResultAttribution
 
 internal enum class MenuBroadcastOrigin { NOTES, FILES, HISTORY }
 internal enum class MenuBroadcastPhase { IDLE, STARTING, LIVE, PAUSED, COMPLETED, FAILED }
 internal data class MenuBroadcastCaption(val startMs: Long, val endMs: Long,
-    val original: String, val translations: Map<String, String>, val isFinal: Boolean = true) {
+    val original: String, val translations: Map<String, String>, val isFinal: Boolean = true,
+    val translationProviders: Map<String, String> = emptyMap()) {
     init {
         require(startMs >= 0 && endMs >= startMs)
         require(original.length <= 65_536 && translations.size <= 7)
@@ -742,12 +744,14 @@ internal class MenuBroadcastController(private val app: GuideCastApplication) {
             transcript = GuideCastTranscriptSnapshot(transcript.revision + 1, projected.map { item ->
                 GuideCastTranscriptLine(item.publicationSequence, item.stored.original, item.stored.final,
                     item.stored.monotonicNanos, item.translations, emptyMap(), emptyMap(), emptyMap(),
+                    translationProviders = item.stored.translationProviders.filterKeys { it in item.translations },
                     liveSegmentLanguage = item.liveSegmentLanguage, liveOutputState = item.liveOutputState,
                     displayGroupSequence = item.displayGroupSequence)
             })
         }
         update(generation) { it.copy(captions = projected.map { item ->
-            MenuBroadcastCaption(0, 0, item.stored.original, item.translations, item.stored.final)
+            MenuBroadcastCaption(0, 0, item.stored.original, item.translations, item.stored.final,
+                item.stored.translationProviders.filterKeys { it in item.translations })
         }) }
     }
 
@@ -761,14 +765,16 @@ internal class MenuBroadcastController(private val app: GuideCastApplication) {
             val next = captionSequences.getOrPut(key) { revision }
             while (captionSequences.size > 1_000) captionSequences.remove(captionSequences.keys.first())
             val row = GuideCastTranscriptLine(next, line.original, line.isFinal,
-                SystemClock.elapsedRealtimeNanos(), line.translations, emptyMap(), emptyMap(), emptyMap())
+                SystemClock.elapsedRealtimeNanos(), line.translations, emptyMap(), emptyMap(), emptyMap(),
+                translationProviders = line.translationProviders)
             transcript = GuideCastTranscriptSnapshot(revision,
                 (transcript.lines.filterNot { it.sequence == next } + row).sortedBy { it.sequence }.takeLast(1_000))
             next
         }
         update(generation) { it.copy(captions = (it.captions.filterNot { row -> row.startMs == line.startMs && row.original == line.original } + line).takeLast(1_000)) }
         if (record) app.recordings.capture(session.generation, listOf(TranslationTranscriptLine(sequence,
-            line.original, SystemClock.elapsedRealtimeNanos(), line.isFinal, translations = line.translations)))
+            line.original, SystemClock.elapsedRealtimeNanos(), line.isFinal, translations = line.translations,
+            translationProviders = line.translationProviders)))
     }
 
     private suspend fun translatePreparedNote(line: MenuBroadcastCaption, plan: Plan.Note,
@@ -808,7 +814,8 @@ internal class MenuBroadcastController(private val app: GuideCastApplication) {
                 update(generation) { it.copy(warningMessage = "준비된 로컬 번역을 사용할 수 없습니다. 원음과 자막은 계속 방송합니다.") }; null
             }
         } }.awaitAll().filterNotNull().toMap()
-        line.copy(translations = line.translations + results)
+        val providers = if (plan.useGemma) emptyMap() else results.keys.associateWith { TranslationResultAttribution.ML_KIT }
+        line.copy(translations = line.translations + results, translationProviders = (line.translationProviders - results.keys) + providers)
     }
 
     private suspend fun translateOnlineNote(line: MenuBroadcastCaption, plan: Plan.Note,
@@ -842,16 +849,20 @@ internal class MenuBroadcastController(private val app: GuideCastApplication) {
         val translated = withContext(context) {
             missing.map { target -> async {
                 check(allowed())
-                val value = if (engine is ContextualTextTranslationEngine)
-                    engine.translateWithContext(line.original, null, plan.source, target)
-                else engine.translate(line.original, plan.source, target)
+                val attribution = TranslationResultAttribution()
+                val value = withContext(attribution) {
+                    if (engine is ContextualTextTranslationEngine) engine.translateWithContext(line.original, null, plan.source, target)
+                    else engine.translate(line.original, plan.source, target)
+                }
                 check(allowed() && value.isNotBlank())
-                target to value
-            } }.awaitAll().toMap()
+                Triple(target, value, attribution.providerFor(value))
+            } }.awaitAll()
         }
         check(allowed())
         // The shared service validates source meaning and every batch language before release.
-        line.copy(translations = line.translations + translated)
+        val texts = translated.associate { it.first to it.second }
+        val providers = translated.mapNotNull { (tag, _, provider) -> provider?.let { tag to it } }.toMap()
+        line.copy(translations = line.translations + texts, translationProviders = (line.translationProviders - texts.keys) + providers)
     }
 
     private fun recordSpeechFailure(languageTag: String, phase: MenuSpeechFailurePhase, error: Throwable? = null) {

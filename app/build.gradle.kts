@@ -138,8 +138,8 @@ android {
         applicationId = "app.guidecast.transmitter"
         minSdk = 30
         targetSdk = 36
-        versionCode = 88
-        versionName = "0.2.56"
+        versionCode = 89
+        versionName = "0.2.57"
         buildConfigField("boolean", "LOCAL_INTERPRETATION_ENABLED", "false")
 
         // Supported production devices use ARM64. Keeping only the required ABI

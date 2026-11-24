@@ -25,6 +25,7 @@ data class FileLibraryEntry(
     val qualityNotes: List<String> = emptyList(),
     val translationModes: Map<String, FileTranslationEngine> = emptyMap(),
     val requiresRelink: Boolean = false,
+    val googleContributions: Map<String, Map<Int, FileGoogleContribution>> = emptyMap(),
 )
 
 /** List queries read metadata only; audio is never copied into the database. */
@@ -32,11 +33,11 @@ internal class FileTranscriptLibrary(context: Context, databaseName: String = "f
     private val maximumFiles: Int = FileTranscriptBudget.MAX_LIBRARY_FILES,
     private val maximumEncodedChars: Long = FileTranscriptBudget.MAX_ENCODED_CHARS,
 ) : Closeable {
-    private val helper = object : SQLiteOpenHelper(context.applicationContext, databaseName, null, 2) {
+    private val helper = object : SQLiteOpenHelper(context.applicationContext, databaseName, null, 3) {
         override fun onCreate(db: SQLiteDatabase) {
             db.execSQL("CREATE TABLE files (id TEXT PRIMARY KEY, name TEXT NOT NULL, uri TEXT NOT NULL, duration INTEGER NOT NULL, language TEXT, created INTEGER NOT NULL, notes TEXT NOT NULL, requires_relink INTEGER NOT NULL DEFAULT 0)")
             db.execSQL("CREATE TABLE segments (file_id TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE, ordinal INTEGER NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(file_id, ordinal))")
-            db.execSQL("CREATE TABLE translations (file_id TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE, language TEXT NOT NULL, ordinal INTEGER NOT NULL, payload TEXT NOT NULL, engine TEXT NOT NULL, PRIMARY KEY(file_id, language, ordinal))")
+            db.execSQL("CREATE TABLE translations (file_id TEXT NOT NULL REFERENCES files(id) ON DELETE CASCADE, language TEXT NOT NULL, ordinal INTEGER NOT NULL, payload TEXT NOT NULL, engine TEXT NOT NULL, provider TEXT, PRIMARY KEY(file_id, language, ordinal))")
         }
         override fun onConfigure(db: SQLiteDatabase) { db.setForeignKeyConstraintsEnabled(true) }
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -49,6 +50,7 @@ internal class FileTranscriptLibrary(context: Context, databaseName: String = "f
                 }
                 if (!hasEngine) db.execSQL("ALTER TABLE translations ADD COLUMN engine TEXT NOT NULL DEFAULT 'MLKIT'")
             }
+            if (oldVersion < 3) db.execSQL("ALTER TABLE translations ADD COLUMN provider TEXT")
         }
     }
 
@@ -78,7 +80,8 @@ internal class FileTranscriptLibrary(context: Context, databaseName: String = "f
             } }
         }
         val modes = mutableMapOf<String, FileTranslationEngine>()
-        val translations = helper.readableDatabase.query("translations", arrayOf("language", "payload", "engine"), "file_id=?", arrayOf(id), null, null, "language ASC, ordinal ASC").use { cursor ->
+        val providers = mutableMapOf<String, MutableMap<Int, FileGoogleContribution>>()
+        val translations = helper.readableDatabase.query("translations", arrayOf("language", "payload", "engine", "ordinal", "provider"), "file_id=?", arrayOf(id), null, null, "language ASC, ordinal ASC").use { cursor ->
             val values = linkedMapOf<String, MutableList<String>>()
             while (cursor.moveToNext()) {
                 val text = cursor.getString(1)
@@ -86,11 +89,14 @@ internal class FileTranscriptLibrary(context: Context, databaseName: String = "f
                 require(charsLoaded <= FileTranscriptBudget.MAX_CONTENT_CHARS) { FileTranscriptBudget.TOO_LARGE }
                 values.getOrPut(cursor.getString(0)) { mutableListOf() }.add(text)
                 modes[cursor.getString(0)] = FileTranslationEngine.valueOf(cursor.getString(2))
+                FileGoogleContribution.fromStored(cursor.getString(4))?.let { origin ->
+                    providers.getOrPut(cursor.getString(0)) { mutableMapOf() }[cursor.getInt(3)] = origin
+                }
             }
             values
         }
         FileTranscriptBudget.validate(segments, translations)
-        return metadata.copy(segments = segments, translations = translations, translationModes = modes)
+        return metadata.copy(segments = segments, translations = translations, translationModes = modes, googleContributions = providers)
     }
 
     /** One transaction prevents an interrupted conversion from replacing a usable script. */
@@ -134,6 +140,7 @@ internal class FileTranscriptLibrary(context: Context, databaseName: String = "f
                     db.insertOrThrow("translations", null, ContentValues().apply {
                         put("file_id", entry.id); put("language", language); put("ordinal", index); put("payload", line)
                         put("engine", (entry.translationModes[language] ?: FileTranslationEngine.MLKIT).name)
+                        put("provider", entry.googleContributions[language]?.get(index)?.name)
                     })
                 }
             }
@@ -176,10 +183,11 @@ internal class FileTranscriptLibrary(context: Context, databaseName: String = "f
                 put("type", "segment"); put("file", c.getString(0)); put("ordinal", c.getInt(1)); put("value", JSONObject(c.getString(2)))
             })
         }
-        db.rawQuery("SELECT file_id,language,ordinal,payload,engine FROM translations ORDER BY file_id,language,ordinal", null).use { c ->
+        db.rawQuery("SELECT file_id,language,ordinal,payload,engine,provider FROM translations ORDER BY file_id,language,ordinal", null).use { c ->
             while (c.moveToNext()) emit(JSONObject().apply {
                 put("type", "translation"); put("file", c.getString(0)); put("language", c.getString(1))
                 put("ordinal", c.getInt(2)); put("text", c.getString(3)); put("engine", c.getString(4))
+                if (!c.isNull(5)) put("provider", c.getString(5))
             })
         }
     }
@@ -220,6 +228,7 @@ internal class FileTranscriptLibrary(context: Context, databaseName: String = "f
                 if (isNew(row.getString("file"))) db.insertOrThrow("translations", null, ContentValues().apply {
                     put("file_id", row.getString("file")); put("language", row.getString("language")); put("ordinal", row.getInt("ordinal"))
                     put("payload", row.getString("text")); put("engine", row.optString("engine", FileTranslationEngine.MLKIT.name))
+                    put("provider", FileGoogleContribution.fromStored(row.optString("provider"))?.name)
                 })
             }
             db.execSQL("DELETE FROM imported_files")

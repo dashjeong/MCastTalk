@@ -146,6 +146,7 @@ internal fun exportRecordedBroadcast(repository: BroadcastRecordingRepository, s
                     if (rows.isEmpty()) break
                     rows.forEach { row -> out.write((org.json.JSONObject().put("part", row.part).put("sequence", row.sequence)
                         .put("original", row.original).put("translations", org.json.JSONObject(row.translations))
+                        .put("translationProviders", org.json.JSONObject(row.translationProviders))
                         .put("final", row.final).put("monotonicNanos", row.monotonicNanos).put("alignment", row.alignment)
                         .put("outputState", row.outputState ?: org.json.JSONObject.NULL).put("endReason", row.endReason ?: org.json.JSONObject.NULL)
                         .toString() + "\n").toByteArray()) }

@@ -392,8 +392,7 @@ class BroadcastTranscriptArchive(
             val file = backupFile(day)
             file.parentFile?.mkdirs()
             SQLiteDatabase.openOrCreateDatabase(file, null).use { backup ->
-                if (scalarLong(backup, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='$TABLE_SESSIONS'") == 0L)
-                    ArchiveDatabase.createContentTables(backup)
+                prepareBackup(backup)
                 db.beginTransaction()
                 backup.beginTransaction()
                 try {
@@ -418,6 +417,7 @@ class BroadcastTranscriptArchive(
                         row.line.translations.forEach { (language, text) ->
                             backup.insertWithOnConflict(TABLE_TRANSLATIONS, null, ContentValues().apply {
                                 put(COL_SESSION_ID, key.sessionId); put(COL_SEQUENCE, key.sequence); put(COL_LANGUAGE, language); put(COL_TRANSLATED_TEXT, text)
+                                row.line.translationProviders[language]?.let { put(COL_PROVIDER, it) }
                                 row.line.translationLatencyMillis[language]?.let { put(COL_TRANSLATE_MS, it) }
                                 row.line.firstAudioLatencyMillis[language]?.let { put(COL_FIRST_AUDIO_MS, it) }
                                 row.line.synthesisLatencyMillis[language]?.let { put(COL_SYNTHESIS_MS, it) }
@@ -592,6 +592,7 @@ class BroadcastTranscriptArchive(
                     put(COL_SEQUENCE, key.sequence)
                     put(COL_LANGUAGE, languageTag)
                     put(COL_TRANSLATED_TEXT, translatedText)
+                    line.translationProviders[languageTag]?.let { put(COL_PROVIDER, it) }
                     line.translationLatencyMillis[languageTag]?.let { put(COL_TRANSLATE_MS, it) }
                     line.firstAudioLatencyMillis[languageTag]?.let { put(COL_FIRST_AUDIO_MS, it) }
                     line.synthesisLatencyMillis[languageTag]?.let { put(COL_SYNTHESIS_MS, it) }
@@ -706,16 +707,29 @@ class BroadcastTranscriptArchive(
         return true
     }
 
+    private fun hasProviderColumn(db: SQLiteDatabase): Boolean =
+        db.rawQuery("PRAGMA table_info($TABLE_TRANSLATIONS)", null).use { cursor ->
+            val name = cursor.getColumnIndexOrThrow("name")
+            generateSequence { if (cursor.moveToNext()) cursor.getString(name) else null }.any { it == COL_PROVIDER }
+        }
+
+    private fun prepareBackup(db: SQLiteDatabase) = inTransaction(db) {
+        check(db.version in 0..2) { "Unsupported backup schema" }
+        if (db.version < 2) {
+            if (scalarLong(db, "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='$TABLE_SESSIONS'") == 0L)
+                ArchiveDatabase.createContentTables(db)
+            else if (!hasProviderColumn(db))
+                db.execSQL("ALTER TABLE $TABLE_TRANSLATIONS ADD COLUMN $COL_PROVIDER TEXT")
+            db.version = 2
+        }
+    }
+
     private fun backupBatch(db: SQLiteDatabase, day: String, expectedCount: Long) {
         val file = backupFile(day)
         check(backupDirectory.isDirectory || backupDirectory.mkdirs()) { "Backup directory unavailable" }
         SQLiteDatabase.openOrCreateDatabase(file, null).use { backup ->
             backup.setForeignKeyConstraintsEnabled(true)
-            if (backup.version == 0) inTransaction(backup) {
-                ArchiveDatabase.createContentTables(backup)
-                backup.version = 1
-            }
-            check(backup.version == 1) { "Unsupported backup schema" }
+            prepareBackup(backup)
         }
         db.execSQL("ATTACH DATABASE ? AS daily_backup", arrayOf(file.path))
         try {
@@ -810,11 +824,12 @@ class BroadcastTranscriptArchive(
         orderBy: String,
     ): List<ArchivedTranscriptLine> {
         val entries = linkedMapOf<TranscriptArchiveKey, MutableArchivedLine>()
+        val providerColumn = if (db.isReadOnly && !hasProviderColumn(db)) "NULL" else "t.$COL_PROVIDER"
         db.rawQuery(
             "SELECT s.$COL_SESSION_ID,s.$COL_STARTED_AT,s.$COL_SOURCE_LANGUAGE," +
                 "l.$COL_SEQUENCE,l.$COL_SOURCE_TEXT,l.$COL_CAPTURED_AT," +
                 "t.$COL_LANGUAGE,t.$COL_TRANSLATED_TEXT,t.$COL_TRANSLATE_MS," +
-                "t.$COL_FIRST_AUDIO_MS,t.$COL_SYNTHESIS_MS " +
+                "t.$COL_FIRST_AUDIO_MS,t.$COL_SYNTHESIS_MS,$providerColumn " +
                 "FROM ($selectedLines) l " +
                 "JOIN $TABLE_SESSIONS s ON s.$COL_SESSION_ID=l.$COL_SESSION_ID " +
                 "LEFT JOIN $TABLE_TRANSLATIONS t ON t.$COL_SESSION_ID=l.$COL_SESSION_ID " +
@@ -840,6 +855,7 @@ class BroadcastTranscriptArchive(
                     mutable.translations[language] = cursor.getString(7)
                     if (!cursor.isNull(8)) mutable.translationMillis[language] = cursor.getLong(8)
                     if (!cursor.isNull(9)) mutable.firstAudioMillis[language] = cursor.getLong(9)
+                    if (!cursor.isNull(11)) mutable.providers[language] = cursor.getString(11)
                     if (!cursor.isNull(10)) mutable.synthesisMillis[language] = cursor.getLong(10)
                 }
             }
@@ -872,6 +888,7 @@ class BroadcastTranscriptArchive(
         val sourceText: String,
         val capturedAtElapsedRealtimeNanos: Long,
         val translations: MutableMap<String, String> = linkedMapOf(),
+        val providers: MutableMap<String, String> = linkedMapOf(),
         val translationMillis: MutableMap<String, Long> = linkedMapOf(),
         val firstAudioMillis: MutableMap<String, Long> = linkedMapOf(),
         val synthesisMillis: MutableMap<String, Long> = linkedMapOf(),
@@ -886,6 +903,7 @@ class BroadcastTranscriptArchive(
                 capturedAtElapsedRealtimeNanos = capturedAtElapsedRealtimeNanos,
                 isFinal = true,
                 translations = translations.toMap(),
+                translationProviders = providers.toMap(),
                 translationLatencyMillis = translationMillis.toMap(),
                 firstAudioLatencyMillis = firstAudioMillis.toMap(),
                 synthesisLatencyMillis = synthesisMillis.toMap(),
@@ -908,6 +926,7 @@ class BroadcastTranscriptArchive(
 
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
             if (oldVersion < 2) createCatalog(db)
+            if (oldVersion < 3) db.execSQL("ALTER TABLE $TABLE_TRANSLATIONS ADD COLUMN $COL_PROVIDER TEXT")
         }
 
         private fun createCatalog(db: SQLiteDatabase) {
@@ -973,6 +992,7 @@ class BroadcastTranscriptArchive(
                     "$COL_TRANSLATE_MS INTEGER," +
                     "$COL_FIRST_AUDIO_MS INTEGER," +
                     "$COL_SYNTHESIS_MS INTEGER," +
+                    "$COL_PROVIDER TEXT," +
                     "PRIMARY KEY($COL_SESSION_ID,$COL_SEQUENCE,$COL_LANGUAGE)," +
                     "FOREIGN KEY($COL_SESSION_ID,$COL_SEQUENCE) REFERENCES $TABLE_LINES(" +
                     "$COL_SESSION_ID,$COL_SEQUENCE) ON DELETE CASCADE)",
@@ -983,7 +1003,7 @@ class BroadcastTranscriptArchive(
 
     private companion object {
         const val DATABASE_NAME = "broadcast-transcripts.db"
-        const val DATABASE_VERSION = 2
+        const val DATABASE_VERSION = 3
         const val TABLE_SESSIONS = "sessions"
         const val TABLE_LINES = "transcript_lines"
         const val TABLE_TRANSLATIONS = "translations"
@@ -997,6 +1017,7 @@ class BroadcastTranscriptArchive(
         const val COL_RECORDED_AT = "recorded_at_epoch_ms"
         const val COL_LANGUAGE = "language_tag"
         const val COL_TRANSLATED_TEXT = "translated_text"
+        const val COL_PROVIDER = "translation_provider"
         const val COL_TRANSLATE_MS = "translate_ms"
         const val COL_FIRST_AUDIO_MS = "first_audio_ms"
         const val COL_SYNTHESIS_MS = "synthesis_ms"

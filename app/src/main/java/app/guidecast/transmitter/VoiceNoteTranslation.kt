@@ -20,7 +20,7 @@ internal suspend fun translateVoiceNote(
     require(target in VOICE_NOTE_LANGUAGES)
     val replacingLanguage = target != note.targetLanguage
     var updated = if (!replacingLanguage) note else note.copy(targetLanguage = target,
-        lines = note.lines.map { it.copy(translation = "") })
+        lines = note.lines.map { it.copy(translation = "", googleContribution = null) })
     val pending = updated.lines.indices.filter { updated.lines[it].translation.isBlank() }
     if (pending.isEmpty()) return updated
     // A language replacement is a transaction: keep the existing translations until
@@ -33,8 +33,9 @@ internal suspend fun translateVoiceNote(
             currentCoroutineContext().ensureActive()
             require(index in pending.indices && text.isNotBlank() && text.length <= 65_536)
             val ordinal = pending[index]
+            val origin = currentCoroutineContext()[FileLineOrigin]?.contribution
             updated = updated.copy(lines = updated.lines.mapIndexed { i, line ->
-                if (i == ordinal) line.copy(translation = text) else line
+                if (i == ordinal) line.copy(translation = text, googleContribution = origin) else line
             })
             dirty = true
             if (!replacingLanguage && ++sinceSave >= 8) { save(updated); dirty = false; sinceSave = 0 }

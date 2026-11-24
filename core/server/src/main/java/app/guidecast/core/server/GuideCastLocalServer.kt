@@ -107,6 +107,7 @@ data class GuideCastTranscriptLine(
     val displayGroupSequence: Long? = null,
     val translationErrors: Map<String, String> = emptyMap(),
     val speechNotices: Map<String, String> = emptyMap(),
+    val translationProviders: Map<String, String> = emptyMap(),
 )
 
 /**
@@ -1328,6 +1329,7 @@ private class PublishedBroadcastSnapshots(
         val frozen = (versioned?.lines ?: transcriptProvider()).map { line ->
             line.copy(
                 translations = line.translations.toMap(),
+                translationProviders = line.translationProviders.toMap(),
                 translationLatencyMillis = line.translationLatencyMillis.toMap(),
                 firstAudioLatencyMillis = line.firstAudioLatencyMillis.toMap(),
                 synthesisLatencyMillis = line.synthesisLatencyMillis.toMap(),
@@ -1677,6 +1679,7 @@ internal fun List<GuideCastTranscriptLine>.toTranscriptsJson(
 }
 
 private fun GuideCastTranscriptLine.forChannel(channelId: String): GuideCastTranscriptLine = copy(
+    translationProviders = translationProviders.filterKeys { it.equals(channelId, ignoreCase = true) },
     translations = translations.filterKeys { it.equals(channelId, ignoreCase = true) },
     translationLatencyMillis = translationLatencyMillis.filterKeys { it.equals(channelId, ignoreCase = true) },
     firstAudioLatencyMillis = firstAudioLatencyMillis.filterKeys { it.equals(channelId, ignoreCase = true) },
@@ -1691,6 +1694,7 @@ private fun toTranscriptJson(line: GuideCastTranscriptLine): String = buildStrin
     append("\"sourceText\":\"").append(line.sourceText.jsonEscaped()).append('\"').append(',')
     append("\"isFinal\":").append(line.isFinal).append(',')
     append("\"capturedAtElapsedRealtimeNanos\":").append(line.capturedAtElapsedRealtimeNanos).append(',')
+    append("\"translationProviders\":").append(line.translationProviders.toJsonObject()).append(',')
     append("\"translations\":").append(line.translations.toJsonObject()).append(',')
     append("\"translationErrors\":").append(line.translationErrors.toJsonObject()).append(',')
     append("\"speechNotices\":").append(line.speechNotices.toJsonObject()).append(',')
@@ -1763,7 +1767,7 @@ internal data class ListenerAssets(
             html = context.assets.readBytes("listener/index.html"),
             javascript = context.assets.readBytes("listener/i18n.js") + "\n".toByteArray() +
                 context.assets.readBytes("listener/player.js") + "\n".toByteArray() + context.assets.readBytes("listener/replay.js"),
-            css = context.assets.readBytes("listener/player.css"),
+            css = context.assets.readBytes("listener/player.css") + "\n".toByteArray() + context.assets.readBytes("translation-credit.css"),
         )
 
         private fun android.content.res.AssetManager.readBytes(path: String): ByteArray =
@@ -1782,7 +1786,7 @@ internal data class SpeakerAssets(
         fun load(context: Context) = SpeakerAssets(
             html = context.assets.readBytes("speaker/speaker.html"),
             javascript = context.assets.readBytes("speaker/speaker.js"),
-            css = context.assets.readBytes("speaker/speaker.css"),
+            css = context.assets.readBytes("speaker/speaker.css") + "\n".toByteArray() + context.assets.readBytes("translation-credit.css"),
             setupTrustHtml = runCatching { context.assets.readBytes("speaker/setup-trust.html") }.getOrNull(),
             setupTrustJavascript = runCatching {
                 context.assets.readBytes("speaker/setup-trust.js")

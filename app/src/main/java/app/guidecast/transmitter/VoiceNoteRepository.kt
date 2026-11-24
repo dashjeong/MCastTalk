@@ -100,6 +100,7 @@ internal class VoiceNoteRepository(private val root: File) {
             put("lines", JSONArray().apply { note.lines.forEach { line -> put(JSONObject().apply {
                 put("start", line.startMs); put("end", line.endMs); put("original", line.original)
                 put("language", line.language ?: JSONObject.NULL); put("translation", line.translation); put("speaker", line.speaker)
+                put("provider", line.googleContribution?.name)
                 put("edited", line.edited)
                 put("timingEstimated", line.timingEstimated)
             }) } })
@@ -127,7 +128,7 @@ internal class VoiceNoteRepository(private val root: File) {
                 val row = rows.getJSONObject(index)
                 VoiceNoteLine(row.getLong("start"), row.getLong("end"), row.getString("original"),
                     row.optionalString("language"), row.optString("translation"), row.optString("speaker"), row.optBoolean("edited"),
-                    row.optBoolean("timingEstimated", true))
+                    row.optBoolean("timingEstimated", true), FileGoogleContribution.fromStored(row.optString("provider")))
             }, value.optionalString("notice"))
     }
     /** Read only summaries into the library screen. Interrupted audio can be recovered explicitly. */

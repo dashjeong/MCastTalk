@@ -2,10 +2,30 @@ package app.guidecast.core.translation
 
 import app.guidecast.core.stream.PcmAudioFrame
 import java.text.Normalizer
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
+
+/** 이 문장과 언어의 실제 ML Kit 반환값만 결과 표시까지 추적한다. */
+class TranslationResultAttribution : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<TranslationResultAttribution> {
+        const val ML_KIT = "ML_KIT"
+    }
+
+    @Volatile private var mlKitResult: String? = null
+
+    fun recordMlKit(result: String?) { mlKitResult = result }
+
+    fun providerFor(result: String): String? =
+        if (result.isNotBlank() && result == mlKitResult) ML_KIT else null
+
+    fun recordScriptConversion(original: String, converted: String) {
+        if (providerFor(original) != null) recordMlKit(converted)
+    }
+}
 
 data class RecognizedUtterance(
     val sequence: Long,
@@ -302,6 +322,14 @@ interface TranslationPipelineObserver {
         translatedText: String,
         elapsedMillis: Long,
     ) = Unit
+
+    fun onTranslationCompletedWithProvider(
+        utterance: RecognizedUtterance,
+        target: TranslationTarget,
+        translatedText: String,
+        elapsedMillis: Long,
+        provider: String?,
+    ) = onTranslationCompleted(utterance, target, translatedText, elapsedMillis)
 
     fun onSynthesisCompleted(
         utterance: RecognizedUtterance,

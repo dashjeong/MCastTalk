@@ -9,6 +9,8 @@ internal fun voiceNoteBroadcastCaptions(note: VoiceNote): List<MenuBroadcastCapt
             original = line.original,
             translations = if (line.translation.isBlank()) emptyMap()
                 else mapOf(note.targetLanguage to line.translation),
+            translationProviders = line.googleContribution?.takeIf { line.translation.isNotBlank() }
+                ?.let { mapOf(note.targetLanguage to it.name) }.orEmpty(),
         )
     }
 
@@ -21,6 +23,10 @@ internal fun fileBroadcastCaptions(entry: FileLibraryEntry): List<MenuBroadcastC
             original = segment.text,
             translations = entry.translations.mapNotNull { (language, lines) ->
                 lines.getOrNull(index)?.takeIf { it.isNotBlank() }?.let { language to it }
+            }.toMap(),
+            translationProviders = entry.googleContributions.mapNotNull { (language, origins) ->
+                origins[index]?.takeIf { !entry.translations[language]?.getOrNull(index).isNullOrBlank() }
+                    ?.let { language to it.name }
             }.toMap(),
         )
     }

@@ -3736,6 +3736,7 @@ private fun TranslationTestPanel(
                     SelectionContainer { Text(line.sourceText, fontWeight = FontWeight.SemiBold) }
                     if (line.isFinal) SpeechCorrectionAction(line, models.selectedSourceLanguageTag)
                     val translated = testLanguage?.let(line.translations::get)
+                    if (!translated.isNullOrBlank() && testLanguage?.let(line.translationProviders::get) == "ML_KIT") GoogleTranslationAttribution()
                     Text(testLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                     SelectionContainer {
                         Text(

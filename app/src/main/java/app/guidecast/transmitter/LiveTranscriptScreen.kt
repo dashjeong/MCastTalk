@@ -134,6 +134,7 @@ internal fun LiveTranscriptScreen(
                                     Text("번역 · ${language.uppercase(Locale.ROOT)}",
                                         style = MaterialTheme.typography.labelMedium,
                                         color = MaterialTheme.colorScheme.primary)
+                                    TranslationProviderAttribution(line.translationProviders[language])
                                     SelectionContainer {
                                         Text(translation,
                                             style = if (largeText) MaterialTheme.typography.headlineSmall

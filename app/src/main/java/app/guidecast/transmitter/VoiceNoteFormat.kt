@@ -15,14 +15,16 @@ internal data class VoiceNoteLine(
     val speaker: String = "",
     val edited: Boolean = false,
     val timingEstimated: Boolean = true,
+    val googleContribution: FileGoogleContribution? = null,
 )
 
 /** Correcting recognition must never leave an old machine translation attached to new text. */
 internal fun VoiceNoteLine.corrected(original: String, translation: String, translationEdited: Boolean): VoiceNoteLine {
     require(original.isNotBlank() && original.length <= 65_536 && translation.length <= 65_536)
     val source = original.trim()
-    return copy(original = source,
-        translation = if (source != this.original && !translationEdited) "" else translation.trim(), edited = true)
+    val editedTranslation = if (source != this.original && !translationEdited) "" else translation.trim()
+    return copy(original = source, translation = editedTranslation, edited = true,
+        googleContribution = googleContribution.takeIf { editedTranslation == this.translation && editedTranslation.isNotBlank() })
 }
 
 internal fun voiceNoteMatchingLines(lines: List<VoiceNoteLine>, query: String): List<Int> {

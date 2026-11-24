@@ -6,6 +6,8 @@ Android에서 음성을 통번역하고, 접속 가능한 네트워크의 청취
 
 Windows x64 데스크톱은 [0.2.49-desktop 사전 공개판](https://github.com/dashjeong/MCastTalk/releases/tag/v0.2.49-desktop)으로 별도 제공됩니다. 설치 조건과 소스·실행파일 안내는 해당 릴리스를 확인하세요.
 
+기기 내 기본 번역에는 Google Translate가 사용됩니다. 입력 문장과 번역 결과는 기기에서 처리하며 ML Kit는 성능·이용 지표를 Google에 전송합니다. [Google 번역 기술](https://cloud.google.com/translate) · [ML Kit 개인정보 안내](https://developers.google.com/ml-kit/terms)
+
 ## 설치와 사용
 
 Android 11(API 30) 이상 ARM64 기기에서 사용합니다. APK와 같은 릴리스의 `SHA256SUMS`를 확인한 뒤 설치하세요. 기존 Alpha 앱은 같은 앱 ID·서명의 APK로 업데이트합니다. Debug 앱은 별도 설치되며 데이터가 자동으로 이동하지 않습니다. 설치 충돌이 나면 삭제 전에 필요한 데이터를 내보내세요.

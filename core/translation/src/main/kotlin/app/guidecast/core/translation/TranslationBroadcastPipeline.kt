@@ -313,7 +313,8 @@ class TranslationBroadcastPipeline(
                                 utterance.sourceLanguageTag, it.languageTag, utterance.sequence).pairs }
                             val memory = activeSessionMemory.buildContext(utterance.sourceLanguageTag, target.languageTag, utterance.sequence)
                             val sessionMemoryContext = TranslationSessionMemoryContext(memory.memory, memory.pairs, memories)
-                            val translationContext = sharedBatch + TranslationRequestIdentity(requestScope, utterance.sequence) +
+                            val attribution = TranslationResultAttribution()
+                            val translationContext = attribution + sharedBatch + TranslationRequestIdentity(requestScope, utterance.sequence) +
                                 TranslationDeliveryContext(deliveryTickets, ticket) + TranslationGlossaryContext(GlossaryTerms.hints(terms), terms) +
                                 InterpretationBriefingContext(interpretationBriefing()) +
                                 (utterance.translationStyle?.let(::TranslationStyleContext) ?: kotlin.coroutines.EmptyCoroutineContext) +
@@ -345,6 +346,7 @@ class TranslationBroadcastPipeline(
                                             ?.let { (it - currentElapsedRealtimeNanos()) / 1_000_000L }
                                             ?: targetTimeoutMillis
                                         check(remainingMillis > 0L) { TRANSLATION_TIMEOUT_MESSAGE }
+                                        attribution.recordMlKit(null)
                                         withTimeout(minOf(targetTimeoutMillis, remainingMillis)) { translateOnce() }
                                     }
                             }
@@ -372,11 +374,12 @@ class TranslationBroadcastPipeline(
                             }
                             val translationElapsedMillis =
                                 translationMark.elapsedNow().inWholeMilliseconds
-                            observer.onTranslationCompleted(
+                            observer.onTranslationCompletedWithProvider(
                                 utterance = utterance,
                                 target = target,
                                 translatedText = translated,
                                 elapsedMillis = translationElapsedMillis,
+                                provider = attribution.providerFor(rawTranslation),
                             )
                             mutableHealth.updateChannel(target.channelId) {
                                 val recovered = it.lastTranslationError != null

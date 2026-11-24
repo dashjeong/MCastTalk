@@ -3,16 +3,17 @@
 globalThis.GuideCastI18n = (() => {
   const locales = ["en", "ja", "zh", "zh-tw", "vi", "nl", "es", "ar"];
   const rows = {
-    "글자 크게": ["Larger text","文字を大きく","放大文字","放大文字","Larger text","Larger text","Larger text","Larger text"],
-    "지난 내용 보기": ["Earlier captions","前の字幕を見る","查看之前的字幕","查看先前字幕","Earlier captions","Earlier captions","Earlier captions","Earlier captions"],
-    "AI가 통역한 내용입니다. 원문과 다를 수 있어요.": ["Translated by AI. It may differ from the original.","AIによる通訳です。原文と異なる場合があります。","这是AI口译的内容，可能与原文不同。","這是AI口譯的內容，可能與原文不同。","Translated by AI. It may differ from the original.","Translated by AI. It may differ from the original.","Translated by AI. It may differ from the original.","Translated by AI. It may differ from the original."],
-    "음성 한 문장을 건너뛰었어요. 자막을 확인하세요.": ["One sentence of audio was skipped. Please read the captions.","音声を一文スキップしました。字幕をご確認ください。","已跳过一句音频，请查看字幕。","已略過一句音訊，請查看字幕。","One sentence of audio was skipped. Please read the captions.","One sentence of audio was skipped. Please read the captions.","One sentence of audio was skipped. Please read the captions.","One sentence of audio was skipped. Please read the captions."],
-    "로그인 없이 들을 수 있어요.": ["No sign-in needed.","ログインなしで聴けます。","无需登录即可收听。","無須登入即可收聽。","No sign-in needed.","No sign-in needed.","No sign-in needed.","No sign-in needed."],
-    "더 보기": ["More options","その他の設定","更多选项","更多選項","More options","More options","More options","More options"],
-    "접기": ["Fewer options","閉じる","收起","收合","Fewer options","Fewer options","Fewer options","Fewer options"],
-    "큰 자막 닫기": ["Close large captions","大きな字幕を閉じる","关闭大字幕","關閉大字幕","Close large captions","Close large captions","Close large captions","Close large captions"],
-    "입장 번호": ["Entry code","入場番号","入场码","入場碼","Entry code","Entry code","Entry code","Entry code"],
-    "언어를 고르고 듣기 시작을 누르세요.": ["Choose a language and tap Start listening.","言語を選び、聴き始めるボタンを押してください。","选择语言，然后点击开始收听。","選擇語言，然後點選開始收聽。","Choose a language and tap Start listening.","Choose a language and tap Start listening.","Choose a language and tap Start listening.","Choose a language and tap Start listening."],
+    "일부 구간 번역": ["Translation of some passages", "一部の区間を翻訳", "部分段落翻译", "部分段落翻譯", "Bản dịch một số đoạn", "Vertaling van enkele passages", "Traducción de algunos pasajes", "ترجمة بعض المقاطع"],
+    "글자 크게": ["Larger text","文字を大きく","放大文字","放大文字","Chữ lớn hơn","Grotere tekst","Agrandar texto","تكبير النص"],
+    "지난 내용 보기": ["Earlier captions","前の字幕を見る","查看之前的字幕","查看先前字幕","Xem phụ đề trước","Eerdere ondertitels","Ver subtítulos anteriores","عرض الترجمة السابقة"],
+    "AI가 통역한 내용입니다. 원문과 다를 수 있어요.": ["Translated by AI. It may differ from the original.","AIによる通訳です。原文と異なる場合があります。","这是AI口译的内容，可能与原文不同。","這是AI口譯的內容，可能與原文不同。","Bản dịch do AI tạo có thể khác với bản gốc.","Deze AI-vertaling kan afwijken van het origineel.","La traducción de la IA puede diferir del original.","قد تختلف ترجمة الذكاء الاصطناعي عن النص الأصلي."],
+    "음성 한 문장을 건너뛰었어요. 자막을 확인하세요.": ["One sentence of audio was skipped. Please read the captions.","音声を一文スキップしました。字幕をご確認ください。","已跳过一句音频，请查看字幕。","已略過一句音訊，請查看字幕。","Đã bỏ qua âm thanh của một câu. Hãy xem phụ đề.","Eén zin is overgeslagen. Lees de ondertitels.","Se ha omitido una frase de audio. Consulta los subtítulos.","تم تخطي جملة صوتية. يُرجى قراءة الترجمة النصية."],
+    "로그인 없이 들을 수 있어요.": ["No sign-in needed.","ログインなしで聴けます。","无需登录即可收听。","無須登入即可收聽。","Bạn có thể nghe mà không cần đăng nhập.","Luister zonder in te loggen.","Puedes escuchar sin iniciar sesión.","يمكنك الاستماع دون تسجيل الدخول."],
+    "더 보기": ["More options","その他の設定","更多选项","更多選項","Xem thêm","Meer opties","Más opciones","المزيد من الخيارات"],
+    "접기": ["Fewer options","閉じる","收起","收合","Thu gọn","Inklappen","Mostrar menos","طي الخيارات"],
+    "큰 자막 닫기": ["Close large captions","大きな字幕を閉じる","关闭大字幕","關閉大字幕","Đóng phụ đề lớn","Grote ondertitels sluiten","Cerrar subtítulos grandes","إغلاق الترجمة المكبّرة"],
+    "입장 번호": ["Entry code","入場番号","入场码","入場碼","Mã truy cập","Toegangscode","Código de acceso","رمز الدخول"],
+    "언어를 고르고 듣기 시작을 누르세요.": ["Choose a language and tap Start listening.","言語を選び、聴き始めるボタンを押してください。","选择语言，然后点击开始收听。","選擇語言，然後點選開始收聽。","Chọn ngôn ngữ rồi nhấn bắt đầu nghe.","Kies een taal en tik op de luisterknop.","Elige un idioma y pulsa el botón para empezar a escuchar.","اختر لغة ثم اضغط على زر بدء الاستماع."],
     "방송 연결됨 · 선택한 언어의 음성 대기 중": ["Connected · waiting for audio in your language","接続済み・選択した言語の音声を待っています","已连接·正在等待所选语言的音频","已連線·正在等待所選語言的音訊","Connected · waiting for audio in your language","Connected · waiting for audio in your language","Connected · waiting for audio in your language","Connected · waiting for audio in your language"],
     "연결됨 · 선택한 언어의 방송 음성 대기 중": ["Connected · waiting for audio in your language","接続済み・選択した言語の音声を待っています","已连接·正在等待所选语言的音频","已連線·正在等待所選語言的音訊","Connected · waiting for audio in your language","Connected · waiting for audio in your language","Connected · waiting for audio in your language","Connected · waiting for audio in your language"],
     "방송 연결 중 · 선택한 언어의 음성 대기 중": ["Connecting · waiting for audio in your language","接続中・選択した言語の音声を待っています","正在连接·等待所选语言的音频","正在連線·等待所選語言的音訊","Connecting · waiting for audio in your language","Connecting · waiting for audio in your language","Connecting · waiting for audio in your language","Connecting · waiting for audio in your language"],
@@ -213,17 +214,17 @@ globalThis.GuideCastI18n = (() => {
     "초": ["s", "秒", "秒", "秒", "giây", "s", "s", "ث"],
     "회": ["times", "回", "次", "次", "lần", "keer", "veces", "مرات"]
   };
+  function channelLanguage(tag) {
+    if (!tag) return "";
+    const [language, ...subtags] = String(tag).toLowerCase().split("-");
+    if (language === "jp") return "ja";
+    if (language !== "zh") return language;
+    if (subtags.includes("hans")) return "zh";
+    return subtags.some(part => ["hant", "tw", "hk", "mo"].includes(part)) ? "zh-tw" : "zh";
+  }
   function create(path) {
-    const rawTag = String(path).split("/").filter(Boolean)[0]?.toLowerCase();
-    let tag = rawTag;
-    if (!tag && typeof navigator !== "undefined" && navigator.language) {
-      const navLang = navigator.language.split("-")[0].toLowerCase();
-      if (locales.includes(navLang) || navLang === "jp") {
-        tag = navLang;
-      }
-    }
-    if (!tag) tag = "ko";
-    const locale = tag === "jp" ? "ja" : tag;
+    const rawTag = String(path).split("/").filter(Boolean)[0];
+    const locale = channelLanguage(rawTag || globalThis.navigator?.language) || "ko";
     const column = locales.indexOf(locale);
     const keys = Object.keys(rows).sort((a, b) => b.length - a.length);
     // One pass prevents translated text from being translated again (notably Japanese kanji).
@@ -247,5 +248,5 @@ globalThis.GuideCastI18n = (() => {
       node.setAttribute("aria-label", translator.text(node.getAttribute("aria-label")));
     }
   }
-  return {create, apply, rows, locales};
+  return {create, apply, channelLanguage, rows, locales};
 })();

@@ -13,7 +13,9 @@
   const sources = new Set();
   const stateText = state => ({ HUMAN: '사람 통역 중', WAITING: '읽던 문장을 마치는 중 · 잠시 기다려 주세요', AI: 'AI로 복귀', READY: '대기 · 통역을 시작해 주세요', IDLE: '대기' })[state] || '대기';
   const wsUrl = path => `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}${path}`;
-  const draftFor = line => Object.entries(line.translations || {}).find(([tag]) => tag.toLowerCase() === language.toLowerCase())?.[1] || '';
+  const channelValue = values => Object.entries(values || {}).find(([tag]) => tag.toLowerCase() === language.toLowerCase())?.[1] || '';
+
+  const draftFor = line => channelValue(line.translations);
 
   function resample(input, from, to, state) {
     if (from === to) return input;
@@ -206,6 +208,9 @@
       $('preview').textContent = preview && (!final || preview.sequence > final.sequence) ? `받는 중 · ${preview.sourceText}` : '';
       const draft = lines.filter(line => draftFor(line)).at(-1);
       $('draft').textContent = draft ? draftFor(draft) : '초안을 기다리고 있어요';
+      const provider = draft && channelValue(draft.translationProviders);
+      $('draft-credit').hidden = provider !== 'ML_KIT' && provider !== 'ML_KIT_PARTIAL';
+      $('draft-credit-scope').hidden = provider !== 'ML_KIT_PARTIAL';
       $('briefing').textContent = session.briefing || '등록된 행사 정보가 없어요';
       $('glossary').replaceChildren();
       for (const term of session.glossary || []) {

@@ -161,6 +161,10 @@ internal class BroadcastRecordingRepository(context: Context,
                             row.outputState?.let { append("통역 상태: $it · 종료 원인: ${row.endReason ?: "미확인"}\n") }
                             append("원문: ${row.original.ifBlank { "전사 없음" }}\n")
                             row.translations.forEach { (tag, text) ->
+                                when (row.translationProviders[tag]) {
+                                    "ML_KIT" -> append("[Google Translate] ")
+                                    "ML_KIT_PARTIAL" -> append("[일부 구간 Google Translate] ")
+                                }
                                 append("${java.util.Locale.forLanguageTag(tag).getDisplayLanguage(java.util.Locale.KOREAN)}: $text\n")
                             }; append('\n')
                         }.toByteArray())

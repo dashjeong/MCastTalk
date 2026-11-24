@@ -46,6 +46,9 @@ data class ClientUiState(
     val receivedFrames: Long = 0,
     val errorMessage: String? = null,
 ) {
+    val canSelectTarget: Boolean
+        get() = phase == ClientSessionPhase.IDLE || phase == ClientSessionPhase.ERROR
+
     val sessionActive: Boolean
         get() = phase == ClientSessionPhase.CONNECTING ||
             phase == ClientSessionPhase.LISTENING ||
@@ -78,8 +81,8 @@ class ClientSessionController(
     }
 
     fun selectTarget(target: ClientTargetLanguage) {
-        if (state.value.sessionActive) return
         mutableState.update {
+            if (!it.canSelectTarget) return@update it
             it.copy(
                 target = target,
                 modelReady = target in readyTargets,
@@ -96,6 +99,7 @@ class ClientSessionController(
     fun prepareSelectedModels() {
         if (modelJob?.isActive == true || state.value.sessionActive) return
         val target = state.value.target
+        mutableState.update { it.copy(phase = ClientSessionPhase.PREPARING_MODELS) }
         modelJob = scope.launch {
             runCatching { prepareModels(target) }
                 .onSuccess {
@@ -109,7 +113,10 @@ class ClientSessionController(
                         )
                     }
                 }
-                .onFailure(::reportError)
+                .onFailure { error ->
+                    if (error is CancellationException) throw error
+                    reportError(error)
+                }
         }
     }
 

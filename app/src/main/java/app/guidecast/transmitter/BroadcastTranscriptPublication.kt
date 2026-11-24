@@ -69,6 +69,7 @@ internal class BroadcastTranscriptPublication(
                 isFinal = line.isFinal,
                 capturedAtElapsedRealtimeNanos = line.capturedAtElapsedRealtimeNanos,
                 translations = line.translations.toMap(),
+                translationProviders = line.translationProviders.toMap(),
                 translationLatencyMillis = line.translationLatencyMillis.toMap(),
                 firstAudioLatencyMillis = line.firstAudioLatencyMillis.toMap(),
                 synthesisLatencyMillis = line.synthesisLatencyMillis.toMap(),

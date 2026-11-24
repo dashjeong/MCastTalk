@@ -356,7 +356,8 @@ internal class FileTranslationViewModel(application: Application) : AndroidViewM
                 check(inspectFile(uri).hash == hash) { "File changed" }
                 var entry = FileLibraryEntry(hash, name, uri.toString(), hash, result.durationMs,
                     result.sourceLanguageTag, reusable?.createdAtMillis ?: System.currentTimeMillis(), result.segments,
-                    translations = reusable?.translations.orEmpty(), qualityNotes = notes.distinct(), translationModes = reusable?.translationModes.orEmpty())
+                    translations = reusable?.translations.orEmpty(), qualityNotes = notes.distinct(), translationModes = reusable?.translationModes.orEmpty(),
+                    googleContributions = reusable?.googleContributions.orEmpty())
                 stage = FileConversionStage.SAVE_SOURCE
                 withContext(Dispatchers.IO) { library.save(entry) }
                 mutableUi.update { it.copy(detectedLanguageTag = result.sourceLanguageTag, languageNotice = result.warnings.joinToString(" · ").ifBlank { null }) }

@@ -90,6 +90,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.CoroutineScope
+import app.guidecast.core.translation.TranslationResultAttribution
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.CoroutineStart
@@ -4884,11 +4885,12 @@ class BroadcastService : Service() {
             if (utterance.isFinal) persistTranscriptIfAvailable(archiveSessionId, utterance.sequence)
         }
 
-        override fun onTranslationCompleted(
+        override fun onTranslationCompletedWithProvider(
             utterance: RecognizedUtterance,
             target: TranslationTarget,
             translatedText: String,
             elapsedMillis: Long,
+            provider: String?,
         ) {
             if (!isTranslationSessionCurrent(sessionId)) return
             RuntimeDiagnosticLog.record("translation_complete", "session_id=$diagnosticSessionId input_generation=${inputGeneration.get()} " +
@@ -4897,6 +4899,8 @@ class BroadcastService : Service() {
             updateTranscript(sessionId, utterance.sequence) { line ->
                 line.copy(
                     translations = line.translations + (target.languageTag to translatedText),
+                    translationProviders = if (provider == null) line.translationProviders - target.languageTag
+                        else line.translationProviders + (target.languageTag to provider),
                     translationErrors = line.translationErrors - target.languageTag,
                     translationLatencyMillis = line.translationLatencyMillis +
                         (target.languageTag to elapsedMillis),
@@ -5638,7 +5642,9 @@ private class TraditionalChineseTranslatingEngine(
         } else {
             delegate.translate(text, sourceLanguageTag, targetLanguageTag)
         }
-        return convertToTraditionalChinese(raw)
+        return convertToTraditionalChinese(raw).also { converted ->
+            currentCoroutineContext()[TranslationResultAttribution]?.recordScriptConversion(raw, converted)
+        }
     }
 
     override suspend fun translate(

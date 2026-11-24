@@ -4,6 +4,8 @@
 
 Use an ARM64 device running Android 11 or later. Compare the APK checksum with the SHA-256 published in the same release. Quality and latency depend on the language, model, device and network. Available options depend on the installed version.
 
+Google Translate powers the on-device baseline translator. ML Kit processes input and output on the device and sends usage and performance metrics to Google. [Google Cloud Translation](https://cloud.google.com/translate) · [ML Kit privacy](https://developers.google.com/ml-kit/terms)
+
 ## Choose interpretation
 
 - On-device interpretation: prepare recognition, translation and voice assets before use. Prepared local models process speech on the device.

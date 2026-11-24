@@ -11,12 +11,33 @@ import app.guidecast.core.translation.TranslationReviewContext
 import app.guidecast.core.translation.TranslationRequestIdentity
 import app.guidecast.core.translation.TranslationStyle
 import app.guidecast.core.translation.TranslationStyleContext
+import app.guidecast.core.translation.TranslationResultAttribution
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+
+enum class FileGoogleContribution(val label: String) {
+    ML_KIT("Google Translate"), ML_KIT_PARTIAL("일부 구간 · Google Translate");
+
+    companion object {
+        fun fromStored(value: String?) = entries.firstOrNull { it.name == value }
+        fun fromChunks(google: Int, total: Int): FileGoogleContribution? = when {
+            google == 0 -> null
+            google == total -> ML_KIT
+            else -> ML_KIT_PARTIAL
+        }
+    }
+}
+
+/** 구간 콜백이 DB와 음성 노트에 같은 출처를 저장하도록 전달한다. */
+internal class FileLineOrigin(val contribution: FileGoogleContribution?) : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<FileLineOrigin>
+}
 
 /** A null engine means source text was used without running translation or review. */
 internal data class FileScriptTranslation(val lines: List<String>, val notes: List<String>, val engine: FileTranslationEngine?)
@@ -157,7 +178,11 @@ internal suspend fun translateFileScript(
                     val refined = if (allowCloudReview) app.cloudTranslationReviewer.refine(source, target, chunk, localResult,
                         contextBefore = contextBefore) else localResult
                     if (refined != localResult) notes += "검수된 로컬 문장 사전 보정을 반영했습니다."
-                    return if (target.equals("zh-TW", true)) convertToTraditionalChinese(refined) else refined
+                    return if (target.equals("zh-TW", true)) {
+                        convertToTraditionalChinese(refined).also { converted ->
+                            currentCoroutineContext()[TranslationResultAttribution]?.recordScriptConversion(refined, converted)
+                        }
+                    } else refined
                 }
                 override suspend fun translate(text: String, sourceLanguageTag: String, targetLanguageTag: String): String =
                     translateWithContext(text, null, sourceLanguageTag, targetLanguageTag)
@@ -172,6 +197,7 @@ internal suspend fun translateFileScript(
                 // Long recognizer segments are translated in bounded, word-aware pieces. Source
                 // text and its word timing remain untouched in the saved transcript.
                 val chunks = fileTranslationChunks(original)
+                var googleChunks = 0
                 val translated = chunks.mapIndexed { chunkIndex, chunk ->
                     val contextBefore = fileWholeTranslationContext(
                         listOfNotNull(contexts[entry.segments[index]]) + chunks.take(chunkIndex),
@@ -180,19 +206,22 @@ internal suspend fun translateFileScript(
                     val style = if (app.uiDisplaySettings.developerInfo.value && lab.paraphraseEnabled)
                         TranslationStyleContext(TranslationStyle.valueOf(lab.translationRegister.name))
                     else TranslationStyleContext(selectedApi.tone)
-                    withContext(style + TranslationRequestIdentity(requestScope, (index.toLong() shl 32) + chunkIndex)) {
+                    val attribution = TranslationResultAttribution()
+                    withContext(attribution + style + TranslationRequestIdentity(requestScope, (index.toLong() shl 32) + chunkIndex)) {
                     val draft = withTimeout(if (mode == FileTranslationEngine.GEMMA) 55_000 else 20_000) {
                         translateFileChunkWithContext(draftEngine, chunk, contextBefore, source, target)
                     }
                     requireCurrentMenuSettings()
                     if (mode == FileTranslationEngine.API && apiService.states.value[target] != TranslationApiState.READY) allApiCompleted = false
                     check(draft.isNotBlank()) { "번역 결과가 비어 있습니다." }
+                    if (attribution.providerFor(draft) != null) googleChunks++
                     if (target.equals("zh-TW", true)) convertToTraditionalChinese(draft) else draft
                     }
                 }.joinToString(" ")
                 if (translationNumbersNeedReview(original, translated)) notes += "숫자 표현이 원문과 다른 번역이 있습니다. 원음과 대조하세요."
                 results[index] = translated
-                onLine(index, translated)
+                val contribution = FileGoogleContribution.fromChunks(googleChunks, chunks.size)
+                withContext(FileLineOrigin(contribution)) { onLine(index, translated) }
                 onProgress(++completed, results.size)
             }
         } finally { app.endPreparation(owner) }

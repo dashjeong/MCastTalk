@@ -234,6 +234,12 @@ internal fun FilePlaybackTranscriptScreen(
                                     style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
                                 SelectionContainer { Text(translated ?: if (sameLanguage) "위 원문을 그대로 사용합니다. 번역·AI 검토는 실행하지 않았습니다." else "이 문장의 번역이 없습니다.",
                                     style = if (largeText) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleMedium) }
+                                if (!translated.isNullOrBlank()) {
+                                    entry.googleContributions[state.translationLanguageTag]?.get(originalIndex)?.let { origin ->
+                                        if (origin == FileGoogleContribution.ML_KIT_PARTIAL) Text("일부 구간 번역", style = MaterialTheme.typography.labelSmall)
+                                        GoogleTranslationAttribution()
+                                    }
+                                }
                             }
                         }
                     }

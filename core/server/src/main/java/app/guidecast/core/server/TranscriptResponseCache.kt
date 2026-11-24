@@ -118,12 +118,14 @@ private fun GuideCastTranscriptLine.matchesProjection(
         return false
     }
     if (requestedChannel == null) {
-        return translations == providerLine.translations &&
+        return translationProviders == providerLine.translationProviders &&
+            translations == providerLine.translations &&
             translationLatencyMillis == providerLine.translationLatencyMillis &&
             firstAudioLatencyMillis == providerLine.firstAudioLatencyMillis &&
             synthesisLatencyMillis == providerLine.synthesisLatencyMillis
     }
-    return translations == providerLine.translations.copyEntry(requestedChannel) &&
+    return translationProviders == providerLine.translationProviders.copyEntry(requestedChannel) &&
+        translations == providerLine.translations.copyEntry(requestedChannel) &&
         translationLatencyMillis == providerLine.translationLatencyMillis.copyEntry(requestedChannel) &&
         firstAudioLatencyMillis == providerLine.firstAudioLatencyMillis.copyEntry(requestedChannel) &&
         synthesisLatencyMillis == providerLine.synthesisLatencyMillis.copyEntry(requestedChannel)
@@ -133,6 +135,7 @@ private fun GuideCastTranscriptLine.frozenProjection(
     requestedChannel: String?,
 ): GuideCastTranscriptLine = if (requestedChannel == null) {
     copy(
+        translationProviders = translationProviders.toMap(),
         translations = translations.toMap(),
         translationLatencyMillis = translationLatencyMillis.toMap(),
         firstAudioLatencyMillis = firstAudioLatencyMillis.toMap(),
@@ -140,6 +143,7 @@ private fun GuideCastTranscriptLine.frozenProjection(
     )
 } else {
     copy(
+        translationProviders = translationProviders.copyEntry(requestedChannel),
         translations = translations.copyEntry(requestedChannel),
         translationLatencyMillis = translationLatencyMillis.copyEntry(requestedChannel),
         firstAudioLatencyMillis = firstAudioLatencyMillis.copyEntry(requestedChannel),

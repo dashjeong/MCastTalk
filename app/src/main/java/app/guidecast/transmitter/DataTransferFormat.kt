@@ -97,6 +97,10 @@ internal object DataTransferFormat {
                 translations.keys().forEach { key -> language(key); require(translations.getString(key).length <= 65_536) }
                 require(row.getString("source").length.toLong() + translations.keys().asSequence().sumOf { translations.getString(it).length.toLong() }
                     <= FileTranscriptBudget.MAX_ARCHIVE_ROW_CHARS) { FileTranscriptBudget.TOO_LARGE }
+                row.optJSONObject("translationProviders")?.let { providers ->
+                    require(providers.length() <= translations.length())
+                    providers.keys().forEach { require(translations.has(it) && providers.getString(it) in setOf("ML_KIT", "ML_KIT_PARTIAL")) }
+                }
                 listOf("translationMs", "firstAudioMs", "synthesisMs").forEach { name ->
                     row.optJSONObject(name)?.let { values ->
                         require(values.length() <= FileTranscriptBudget.MAX_ARCHIVE_LANGUAGES)
@@ -182,6 +186,7 @@ internal object DataTransferFormat {
         return ArchivedTranscriptLine(TranscriptArchiveKey(row.getLong("session"), row.getLong("sequence")), row.getLong("started"), row.getString("language"),
             TranslationTranscriptLine(sequence = row.getLong("sequence"), sourceText = row.getString("source"), isFinal = true,
                 capturedAtElapsedRealtimeNanos = row.optLong("captured", 0), sourceLanguageTag = row.getString("language"),
+                translationProviders = row.optJSONObject("translationProviders")?.let { it.keys().asSequence().associateWith(it::getString) }.orEmpty(),
                 translations = translations.keys().asSequence().associateWith(translations::getString), translationLatencyMillis = millis("translationMs"),
                 firstAudioLatencyMillis = millis("firstAudioMs"), synthesisLatencyMillis = millis("synthesisMs")), row.optBoolean("backup", false))
     }

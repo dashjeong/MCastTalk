@@ -271,6 +271,7 @@ import java.util.Date
                         nativeMissingCaptionLabel(caption.alignment == "NATIVE_PAIR_UNCONFIRMED", caption.outputState,
                             caption.translations.values.any { it.isNotBlank() })?.let { Text(it) }
                         caption.translations.forEach { (language, text) ->
+                            TranslationProviderAttribution(caption.translationProviders[language])
                             Text("${recordedChannelDisplayName(language, language)} · $text")
                             TextButton(onClick = { scope.launch {
                                 choice = choices.firstOrNull { it.channel == language }

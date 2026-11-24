@@ -362,8 +362,7 @@ function updateTranscriptLanguageOptions(channels) {
   allOption.textContent = uiText("전체 번역");
   if (translationLanguages.length > 0) transcriptSelect.append(allOption);
 
-  const navLang = typeof navigator !== "undefined" && navigator.language ? navigator.language.split("-")[0].toLowerCase() : null;
-  const browserMatch = navLang === "jp" ? "ja" : navLang;
+  const browserMatch = globalThis.GuideCastI18n?.channelLanguage(globalThis.navigator?.language);
   if (translationLanguages.some((language) => language === existing) || (userSelectedTranscriptLanguage && existing === "source") ||
       (existing === "all" && translationLanguages.length > 0)) {
     transcriptSelect.value = existing;
@@ -433,6 +432,28 @@ function formatFirstAudioLatency(value) {
   return uiText(`확정 후 첫 음성 ${value}ms (${value <= 2000 ? "2초 목표 이내" : "2초 초과"})`);
 }
 
+function googleTranslationProvider(row, language) {
+  const translation = captionLanguageValue(row?.translations, language);
+  if (typeof translation !== "string" || !translation.trim()) return "";
+  const provider = captionLanguageValue(row?.translationProviders, language);
+  return provider === "ML_KIT" || provider === "ML_KIT_PARTIAL" ? provider : "";
+}
+
+function googleTranslateCredit(provider) {
+  const link = document.createElement("a");
+  link.className = "google-translate-credit";
+  link.href = "https://translate.google.com/";
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.setAttribute("aria-label", "Powered by Google Translate");
+  if (provider !== "ML_KIT_PARTIAL") return link;
+  const scope = document.createElement("span");
+  scope.className = "translation-credit-scope";
+  scope.textContent = uiText("일부 구간 번역");
+  scope.append(link);
+  return scope;
+}
+
 function renderTranscripts(responseText) {
   const previousScrollTop = transcriptList.scrollTop;
   const nearBottom = transcriptList.scrollHeight - transcriptList.scrollTop -
@@ -467,6 +488,7 @@ function renderTranscripts(responseText) {
       const trP = document.createElement("p");
       trP.className = "caption-translation";
       trP.textContent = `${humanReferenceCaption(channelSelect.value) ? uiText("참고 자막") + " · " : ""}${latest.translation}`;
+      if (latest.credits?.length) trP.append(googleTranslateCredit(latest.credits[0].provider));
       caption.append(trP);
     }
     if (latest.notice) {
@@ -521,6 +543,8 @@ function renderTranscripts(responseText) {
             speechMs && `${uiText("합성")} ${speechMs}`,
           ].filter(Boolean).join(" · ") : "";
           translated.textContent = `${channelLabel(key)}${humanReferenceCaption(key) ? " · " + uiText("참고 자막") : ""}: ${translations[key]}${latency ? ` (${latency})` : ""}`;
+          const provider = googleTranslationProvider(line, key);
+          if (provider) translated.append(googleTranslateCredit(provider));
           translationBlock.append(translated);
         }
       }
@@ -551,6 +575,8 @@ function renderTranscripts(responseText) {
       } else {
         translated.textContent = nativeMissingCaptionLabel(line, selectedLanguage) || `${channelLabel(selectedLanguage)}: ${uiText("아직 번역이 없습니다.")}`;
       }
+      const provider = googleTranslationProvider(line, selectedLanguage);
+      if (provider) translated.append(googleTranslateCredit(provider));
       row.append(translated);
     }
 
@@ -990,8 +1016,7 @@ async function refreshChannels(isRefresh) {
     pageDescription.textContent = uiText("언어를 고르고 듣기 시작을 누르세요.");
     document.title = `${channelLabel(channel.id)} · ${uiText("MCastTalk")}`;
   } else if (!userSelectedAudioChannel && !selectedAudioChannel) {
-    const navLang = typeof navigator !== "undefined" && navigator.language ? navigator.language.split("-")[0].toLowerCase() : null;
-    const browserMatch = navLang === "jp" ? "ja" : navLang;
+    const browserMatch = globalThis.GuideCastI18n?.channelLanguage(globalThis.navigator?.language);
     if (browserMatch && channels.some(c => c.id === browserMatch)) {
       channelSelect.value = browserMatch;
     }
@@ -1679,7 +1704,7 @@ function listenerCaptionDisplayGroups(lines) {
     consumed.add(key);
     const merged = { ...group[0], liveSegmentLanguage: null, displaySegments: group,
       isFinal: group.every(segment => segment.isFinal === true) };
-    for (const field of ["translations", "translationErrors", "speechNotices", "translationLatencyMillis", "firstAudioLatencyMillis", "synthesisLatencyMillis"]) {
+    for (const field of ["translations", "translationProviders", "translationErrors", "speechNotices", "translationLatencyMillis", "firstAudioLatencyMillis", "synthesisLatencyMillis"]) {
       merged[field] = Object.assign({}, ...group.map(segment => segment[field] || {}));
     }
     const captureTimes = group.map(segment => segment.capturedAtElapsedRealtimeNanos).filter(Number.isFinite);
@@ -1802,13 +1827,25 @@ function listenerHudCaption(lines, language) {
       if (text(rows[index].sourceText).trim()) { selected = rows[index]; break; }
     }
   }
-  const translation = language === "all" ? [Object.entries(selected?.translations || {})
-    .filter(([, value]) => text(value).trim())
-    .map(([id, value]) => `${channelLabel(id)}\n${value}`).join("\n\n"),
-    nativeMissingCaptionLabel(selected, language)].filter(Boolean).join("\n\n") :
-    language === "source" ? "" : text(captionLanguageValue(selected?.translations, language));
+  // Keep each badge beside its own translated text in a multi-language or archived caption.
+  const credits = [];
+  let translation = "";
+  function addTranslation(value, provider) {
+    if (!value) return;
+    translation += (translation ? "\n\n" : "") + value;
+    if (provider) credits.push({ end: translation.length, provider });
+  }
+  if (language === "all") {
+    for (const [id, value] of Object.entries(selected?.translations || {})) {
+      if (text(value).trim()) addTranslation(channelLabel(id) + "\n" + value, googleTranslationProvider(selected, id));
+    }
+    addTranslation(nativeMissingCaptionLabel(selected, language), false);
+  } else if (language !== "source") {
+    addTranslation(text(captionLanguageValue(selected?.translations, language)), googleTranslationProvider(selected, language));
+  }
   return { source: text(selected?.sourceText), translation: translation.trim() ? translation :
     text(captionLanguageValue(selected?.translationErrors, language)) || nativeMissingCaptionLabel(selected, language),
+    ...(credits.length ? { credits } : {}),
     notice: [selected?.displaySegments?.length > 1 ? uiText("가까운 인식 구간을 함께 표시 · 발화 정렬 미확인") : "",
       captionDeliveryNotice(selected, language)].filter(Boolean).join(" · ") };
 }
@@ -1816,17 +1853,26 @@ function listenerHudCaption(lines, language) {
 function listenerHudStoredCaptions(lines, language) {
   const page = Array.isArray(lines) ? lines.filter(row => row && typeof row === "object").slice(0, 100) : [];
   const rows = listenerCaptionDisplayGroups(page);
-  const sources = [], translations = [], notices = new Set();
+  const sources = [], translations = [], notices = new Set(), credits = [];
+  let translationLength = 0;
   rows.forEach((row, index) => {
     const text = listenerHudCaption([row], language);
     sources.push(`${index + 1}. ${text.source.trim() || uiText("저장된 원문이 없습니다.")}`);
-    if (language !== "source") translations.push(`${index + 1}. ${text.translation.trim() || uiText("선택한 언어의 저장된 번역이 없습니다.")}`);
+    if (language !== "source") {
+      const prefix = String(index + 1) + ". ";
+      const value = text.translation || uiText("선택한 언어의 저장된 번역이 없습니다.");
+      const offset = translationLength + (translations.length ? 2 : 0) + prefix.length;
+      for (const credit of text.credits || []) credits.push({ end: offset + credit.end, provider: credit.provider });
+      translations.push(prefix + value);
+      translationLength = offset + value.length;
+    }
     if (text.notice) notices.add(text.notice);
     else if (row.alignment === "NATIVE_PAIR_UNCONFIRMED" || row.liveSegmentLanguage) {
       notices.add(uiText("원문·통역의 대응 관계 미확인"));
     }
   });
-  return { source: sources.join("\n\n"), translation: translations.join("\n\n"), notice: Array.from(notices).join(" · ") };
+  return { source: sources.join("\n\n"), translation: translations.join("\n\n"),
+    ...(credits.length ? { credits } : {}), notice: Array.from(notices).join(" · ") };
 }
 
 function createListenerHud() {
@@ -1851,6 +1897,7 @@ function createListenerHud() {
       [hud, opener, closer, language, order, sourcePane, translationPane, captions,
         sourceText, translationText, translationLabel, status, note, main].some(node => !node)) return null;
   let opened = false, rows = [], optionSignature = "", previous = null, generation = 0;
+  let displayedTranslation = "";
   let ownsHistory = false;
   let ownsFullscreen = false;
   const historyMarker = `caption-hud-${Date.now()}`;
@@ -1882,7 +1929,20 @@ function createListenerHud() {
     const emptySaved = saved?.error ? uiText("저장 스크립트를 불러오지 못했습니다") : saved?.pending ?
       uiText("저장 스크립트를 불러오는 중입니다.") : uiText("저장된 스크립트가 없습니다.");
     setText(sourceText, selected.source.trim() ? selected.source : recorded || archive ? emptySaved : uiText("원문을 기다리고 있습니다."));
-    setText(translationText, selected.translation.trim() ? selected.translation : recorded || archive ? emptySaved : uiText("선택한 언어의 번역을 기다리고 있습니다."));
+    const translation = selected.translation.trim() ? selected.translation :
+      recorded || archive ? emptySaved : uiText("선택한 언어의 번역을 기다리고 있습니다.");
+    const signatureWithCredits = JSON.stringify([translation, selected.credits || []]);
+    if (displayedTranslation !== signatureWithCredits) {
+      displayedTranslation = signatureWithCredits;
+      translationText.replaceChildren();
+      let from = 0;
+      for (const { end, provider } of selected.credits || []) {
+        translationText.append(document.createTextNode(translation.slice(from, end)), googleTranslateCredit(provider));
+        from = end;
+      }
+      if (from) translationText.append(document.createTextNode(translation.slice(from)));
+      else translationText.textContent = translation;
+    }
     sourceText.classList.toggle("is-empty", !selected.source.trim());
     translationText.classList.toggle("is-empty", !selected.translation.trim());
     setText(translationLabel, `${uiText(humanReferenceCaption(captionLanguage) ? "참고 자막" : "번역")} · ${captionLanguage === "all" ? uiText("전체 번역") : channelLabel(captionLanguage) || ""}`);
@@ -1904,13 +1964,19 @@ function createListenerHud() {
     main.inert = previous.inert;
     if (previous.ariaHidden === null) main.removeAttribute("aria-hidden");
     else main.setAttribute("aria-hidden", previous.ariaHidden);
-    if (document.fullscreenElement === hud && typeof document.exitFullscreen === "function") {
-      try { Promise.resolve(document.exitFullscreen()).catch(() => {}); } catch (_) {}
+    const closingGeneration = generation;
+    const returnTarget = previous.focus && previous.focus !== document.body ? previous.focus : opener;
+    function restoreFocus() {
+      if (!restore || opened || generation !== closingGeneration) return;
+      const target = returnTarget.isConnected ? returnTarget : opener;
+      try { target.focus({ preventScroll: true }); } catch (_) { opener.focus(); }
     }
-    if (restore) {
-      window.scrollTo(previous.x, previous.y);
-      const target = previous.focus?.isConnected !== false ? previous.focus : opener;
-      try { (target || opener).focus({ preventScroll: true }); } catch (_) { opener.focus(); }
+    if (restore) window.scrollTo(previous.x, previous.y);
+    if (document.fullscreenElement === hud && typeof document.exitFullscreen === "function") {
+      try { Promise.resolve(document.exitFullscreen()).then(restoreFocus, restoreFocus); }
+      catch (_) { restoreFocus(); }
+    } else {
+      restoreFocus();
     }
     if (!fromHistory && ownsHistory && ownedHistory(history.state)) history.back();
     ownsHistory = false;
@@ -1973,7 +2039,8 @@ function createListenerHud() {
     if (!opened) return;
     if (event.key === "Escape") { event.preventDefault(); close(); return; }
     if (event.key !== "Tab") return;
-    const controls = [closer, language, order, archivePrevious, archiveNext]
+    const controls = [closer, language, order, archivePrevious, archiveNext,
+      ...translationText.querySelectorAll(".google-translate-credit")]
       .filter(control => control && !control.disabled && !control.hidden &&
         !(archiveControls?.hidden && (control === archivePrevious || control === archiveNext)));
     const first = controls[0], last = controls[controls.length - 1];

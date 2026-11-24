@@ -40,7 +40,12 @@ internal fun writeVoiceNoteExport(
                 .name("startMs").value(line.startMs).name("endMs").value(line.endMs)
                 .name("timingEstimated").value(line.timingEstimated).name("language").value(line.language)
                 .name("original").value(line.original).name("edited").value(line.edited)
-            if (options.translations) json.name("translation").value(line.translation)
+            if (options.translations) {
+                json.name("translation").value(line.translation)
+                if (line.translation.isNotBlank()) line.googleContribution?.let {
+                    json.name("translationProvider").value(it.name)
+                }
+            }
             if (options.speakers) json.name("speaker").value(line.speaker)
             json.endObject()
         }
@@ -62,20 +67,22 @@ internal fun writeVoiceNoteExport(
         val line = note.lines[index]
         val shown = line.copy(translation = if (options.translations) line.translation else "",
             speaker = if (options.speakers) line.speaker else "")
+        val exportedText = voiceNoteLineText(shown) + (shown.googleContribution
+            ?.takeIf { shown.translation.isNotBlank() }?.let { "\n[번역 제공 · ${it.label}]" }.orEmpty())
         when (kind) {
             "srt" -> {
                 val start = line.startMs.coerceIn(0, Long.MAX_VALUE - 1)
                 write("${ordinal + 1}\n${voiceNoteTime(start, true)} --> ${voiceNoteTime(maxOf(line.endMs, start + 1), true)}\n")
-                write(voiceNoteLineText(shown).replace("\r\n", "\n").replace('\r', '\n').replace(emptySubtitleLines, "\n") + "\n\n")
+                write(exportedText.replace("\r\n", "\n").replace('\r', '\n').replace(emptySubtitleLines, "\n") + "\n\n")
             }
             "md" -> {
                 write("## 구간 ${index + 1}${if (options.timestamps) " · ${voiceNoteTime(line.startMs)}" else ""}\n\n")
                 write("언어: ${(line.language ?: "미확인").noteMarkdown()}${if (line.edited) " · 직접 수정" else ""}\n\n")
-                write(voiceNoteLineText(shown).noteMarkdown() + "\n\n")
+                write(exportedText.noteMarkdown() + "\n\n")
             }
             else -> {
                 if (options.timestamps) write(voiceNoteTime(line.startMs) + " ")
-                write("[${line.language ?: "언어 미확인"}]\n${voiceNoteLineText(shown)}\n\n")
+                write("[${line.language ?: "언어 미확인"}]\n$exportedText\n\n")
             }
         }
     }

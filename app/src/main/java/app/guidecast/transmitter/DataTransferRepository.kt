@@ -101,6 +101,7 @@ class DataTransferRepository(private val app: GuideCastApplication) {
                                 put("type", "broadcast"); put("session", row.key.sessionId); put("sequence", row.key.sequence)
                                 put("started", row.sessionStartedAtEpochMillis); put("language", row.sourceLanguageTag); put("source", row.line.sourceText)
                                 put("captured", row.line.capturedAtElapsedRealtimeNanos); put("translations", JSONObject(row.line.translations))
+                                put("translationProviders", JSONObject(row.line.translationProviders))
                                 put("translationMs", JSONObject(row.line.translationLatencyMillis)); put("firstAudioMs", JSONObject(row.line.firstAudioLatencyMillis))
                                 put("synthesisMs", JSONObject(row.line.synthesisLatencyMillis)); put("backup", row.isDailyBackup)
                             }) }

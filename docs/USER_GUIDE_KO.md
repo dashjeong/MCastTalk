@@ -4,6 +4,8 @@
 
 Android 11 이상 ARM64 기기에 설치합니다. APK와 같은 릴리스의 SHA-256을 비교하세요. 통역 품질과 지연은 언어, 모델, 기기와 네트워크에 따라 달라집니다.
 
+기기 내 기본 번역에는 Google Translate가 사용됩니다. 입력 문장과 번역 결과는 기기에서 처리하며 ML Kit는 성능·이용 지표를 Google에 전송합니다. [Google 번역 기술](https://cloud.google.com/translate) · [ML Kit 개인정보 안내](https://developers.google.com/ml-kit/terms)
+
 ## 통역 방식 선택
 
 - 기기 내 통번역: 사용할 인식·번역 모델과 음성을 미리 준비합니다. 준비된 기기 내 모델로 음성을 처리합니다.

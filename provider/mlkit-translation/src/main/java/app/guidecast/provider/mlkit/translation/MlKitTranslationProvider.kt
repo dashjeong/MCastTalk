@@ -33,6 +33,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
+import app.guidecast.core.translation.TranslationResultAttribution
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.channels.Channel
@@ -125,7 +126,7 @@ class MlKitTranslationProvider(
                 sourceSession = sourceSession,
                 targetLanguage = normalizedTarget,
                 logicalTargetLanguage = targetLanguageTag,
-            )
+            ).also { currentCoroutineContext()[TranslationResultAttribution]?.recordMlKit(it) }
         }
     }
 

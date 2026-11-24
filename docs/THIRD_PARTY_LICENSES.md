@@ -16,7 +16,7 @@
 | JetBrains 및 Kotlin 기여자 | Kotlin stdlib·reflect `2.3.21`, Coroutines `1.11.0`, Serialization `1.11.0`, kotlinx-io `0.9.1` | Apache-2.0 | `assets/licenses/APACHE-2.0.txt` |
 | JetBrains 및 Ktor 기여자 | Ktor server core/CIO/WebSockets/body-limit 및 전이 모듈 `3.5.2` | Apache-2.0 | `assets/licenses/APACHE-2.0.txt` |
 | Lightbend·SLF4J 저작권자 | Typesafe Config `1.4.9`; SLF4J API `2.0.18` | Apache-2.0; MIT | `assets/licenses/APACHE-2.0.txt`, `SLF4J-2.0.18-LICENSE.txt` |
-| ZXing 저작권자 | `com.google.zxing:core:3.5.3` | Apache-2.0 | `assets/licenses/APACHE-2.0.txt` |
+| ZXing 저작권자 | `com.google.zxing:core:3.5.4` | Apache-2.0 | `assets/licenses/APACHE-2.0.txt` |
 | Google | LiteRT-LM Android `0.16.1` | Apache-2.0 및 포함 제3자 조건 | `assets/licenses/upstream/LICENSE`, `upstream/THIRD_PARTY_NOTICE.txt` |
 | Google | ML Kit Translate `17.0.3`, ML Kit Common `18.11.0`, Play services Base `18.5.0`, Basement `18.4.0`, Tasks `18.2.0` | [ML Kit Terms](https://developers.google.com/ml-kit/terms), [Google APIs Terms](https://developers.google.com/terms), [Android SDK License Agreement](https://developer.android.com/studio/terms.html) 및 AAR 제3자 조건 | `assets/licenses/upstream/third_party_licenses.txt`, `third_party_licenses.json` |
 | Useful Sensors, Inc. (Moonshine AI) | `app.guidecast.thirdparty:moonshine-voice:0.1.5-mcasttalk1` (upstream `ai.moonshine:moonshine-voice:0.1.5`) | SDK 코드는 기본적으로 MIT. 앱 전용 ARM64 수정이며 공식 upstream 배포본과 구분. 모델·TTS·G2P 데이터 조건은 아래에서 별도 구분 | `assets/licenses/MOONSHINE-0.1.5-LICENSE.txt`, `MOONSHINE-MCASTTALK-PATCH.txt`, `MOONSHINE-NOTICE.txt`, `MODEL-AND-VOICE-NOTICES.txt` |
@@ -24,6 +24,8 @@
 | The LAME Project | MP3 encoder; exact source and binary hashes in [provenance](../third_party/lame/provenance.json) | LGPL-2.0-or-later | [COPYING](../third_party/lame/COPYING), [LICENSE](../third_party/lame/LICENSE), [source archive](../third_party/lame/lame-4.0.tar.gz), [build script](../scripts/build-lame.sh); APK `assets/licenses/LAME-4.0-COPYING.txt` |
 | Xiph.Org Foundation·Jean-Marc Valin | RNNoise `0.2`, model `0b50c45` | BSD-3-Clause | `assets/licenses/RNNOISE-BSD-3-CLAUSE.txt` |
 | OpenCC 저작권자 | OpenCC 사전 데이터, revision `26753884f1984add422f3b0249ccee8613deaff6` | Apache-2.0 | `assets/licenses/OPENCC-APACHE-2.0.txt`, `OPENCC-README.txt` |
+
+기기 내 기본 번역에는 Google Translate가 사용됩니다. ML Kit는 입력과 번역 결과를 기기에서 처리하고 모델 업데이트 등을 위해 Google에 접속하며 API 성능·이용 지표를 전송합니다. [ML Kit 번역 사용 지침](https://developers.google.com/ml-kit/language/translation/translation-terms) · [번역 결과 출처 표시](https://cloud.google.com/translate/attribution) · [ML Kit 개인정보 안내](https://developers.google.com/ml-kit/terms)
 
 ML Kit AAR 고지에는 OkHttp `4.12.0`, Okio `3.6.0`, Gson `2.13.2`, Google Data
 Transport, Firebase Components/Encoders 및 지원 annotation 라이브러리의 조건도 포함됩니다.
@@ -49,9 +51,7 @@ Transport, Firebase Components/Encoders 및 지원 annotation 라이브러리의
 
 APK의 Eigen 실행 코드는 MPL-2.0 Covered Software를 포함합니다. 수령자가 정확한 대응
 소스와 수정 사항을 MPL-2.0 조건으로 취득할 수 있어야 하며, 취득 방법을 함께 알려야
-합니다. 기준 소스는 [Moonshine v0.1.5의 Eigen subset](https://github.com/moonshine-ai/moonshine/tree/v0.1.5/core/third-party/Eigen)입니다.
-공개 APK 배포 전에 실제 바이너리와 이 소스 revision·수정분이 일치하는지, 그리고 지속적인
-소스 제공 방법이 마련되었는지 별도로 확인해야 합니다.
+합니다. APK 고지에도 [빌드에 사용한 커밋의 Eigen 소스](https://github.com/moonshine-ai/moonshine/tree/234f60faa0eb388b01cdf7e60aca232af37aefda/core/third-party/Eigen)를 표시합니다. 로컬 Moonshine 패치에는 Eigen 변경이 없습니다. 소스 파일별 해시와 네이티브 바이너리 해시는 [빌드 입력 기록](../third_party/moonshine/0.1.5-mcasttalk1/source-acquisition.json)과 [배포 기록](../third_party/moonshine/0.1.5-mcasttalk1/provenance.json)에 있습니다.
 
 ## 별도 다운로드 모델·음성
 

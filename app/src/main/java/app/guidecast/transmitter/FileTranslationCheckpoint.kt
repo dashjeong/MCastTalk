@@ -19,6 +19,7 @@ internal suspend fun translateFileTargetWithCheckpoints(
         val redundantCopy = entry.translations[target] == sourceOnly.lines
         val discardLegacyCompletion = redundantCopy && entry.translations.keys.all { it == target }
         val result = entry.copy(
+            googleContributions = if (redundantCopy) entry.googleContributions - target else entry.googleContributions,
             translations = if (redundantCopy) entry.translations - target else entry.translations,
             translationModes = if (redundantCopy || target !in entry.translations) entry.translationModes - target else entry.translationModes,
             qualityNotes = (entry.qualityNotes.filterNot {
@@ -34,12 +35,14 @@ internal suspend fun translateFileTargetWithCheckpoints(
         entry.translationModes[target] == mode && it.size == entry.segments.size && it.any(String::isBlank)
     }
     val lines = (resume ?: List(entry.segments.size) { "" }).toMutableList()
+    val origins = if (resume == null) mutableMapOf() else entry.googleContributions[target].orEmpty().toMutableMap()
     val mayCheckpoint = previous == null || resume != null
     val pending = lines.indices.filter { lines[it].isBlank() }
     val failurePrefix = "$target 번역을 완료하지 못했습니다."
     fun snapshot(engine: FileTranslationEngine, notes: List<String>) = entry.copy(
         translations = entry.translations + (target to lines.toList()),
         translationModes = entry.translationModes + (target to engine),
+        googleContributions = entry.googleContributions + (target to origins.toMap()),
         qualityNotes = (entry.qualityNotes.filterNot { it.startsWith(failurePrefix) } + notes).distinct(),
     )
     var dirty = false
@@ -51,10 +54,12 @@ internal suspend fun translateFileTargetWithCheckpoints(
     }
     try {
         val result = translate(entry.copy(segments = pending.map { entry.segments[it] },
-            translations = emptyMap(), translationModes = emptyMap())) { index, text ->
+            translations = emptyMap(), translationModes = emptyMap(), googleContributions = emptyMap())) { index, text ->
             currentCoroutineContext().ensureActive()
             require(index in pending.indices && text.isNotBlank())
             lines[pending[index]] = text
+            val origin = currentCoroutineContext()[FileLineOrigin]?.contribution
+            if (origin == null) origins.remove(pending[index]) else origins[pending[index]] = origin
             dirty = true
             if (mayCheckpoint && ++sinceSave >= 8) checkpoint()
         }

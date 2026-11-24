@@ -9,7 +9,8 @@ internal data class RecordedCaption(val part: Long, val sequence: Long, val orig
     val nativeMetadataVersion: Int? = null, val nativeAudioSessionId: Long? = null,
     val liveSegmentLanguage: String? = null, val sourceLanguageTag: String? = null,
     val liveSourceFinal: Boolean? = null, val liveSourceFailed: Boolean = false,
-    val liveSourceExpired: Boolean = false)
+    val liveSourceExpired: Boolean = false,
+    val translationProviders: Map<String, String> = emptyMap())
 
 internal fun recordedCaptionStorageJson(part: Long, line: TranslationTranscriptLine): JSONObject =
     recordedCaptionStorageJson(RecordedCaption(part, line.sequence, line.sourceText, line.translations,
@@ -19,10 +20,12 @@ internal fun recordedCaptionStorageJson(part: Long, line: TranslationTranscriptL
             line.sourceLanguageTag != null) 1 else null,
         nativeAudioSessionId = line.nativeAudioSessionId, liveSegmentLanguage = line.liveSegmentLanguage,
         sourceLanguageTag = line.sourceLanguageTag, liveSourceFinal = line.liveSourceFinal,
-        liveSourceFailed = line.liveSourceFailed, liveSourceExpired = line.liveSourceExpired))
+        liveSourceFailed = line.liveSourceFailed, liveSourceExpired = line.liveSourceExpired,
+        translationProviders = line.translationProviders))
 
 internal fun recordedCaptionStorageJson(row: RecordedCaption): JSONObject = JSONObject()
     .put("part", row.part).put("sequence", row.sequence).put("original", row.original)
+    .put("translationProviders", JSONObject(row.translationProviders))
     .put("translations", JSONObject(row.translations)).put("final", row.final)
     .put("monotonicNanos", row.monotonicNanos).put("alignment", row.alignment)
     .put("outputState", row.outputState ?: JSONObject.NULL).put("endReason", row.endReason ?: JSONObject.NULL)
@@ -43,7 +46,12 @@ internal fun readRecordedCaption(row: JSONObject): RecordedCaption {
         row.optionalCaptionLong("nativeMetadataVersion")?.takeIf { it == 1L }?.toInt(),
         row.optionalCaptionLong("nativeAudioSessionId"), row.optionalCaptionString("liveSegmentLanguage"),
         row.optionalCaptionString("sourceLanguageTag"), row.opt("liveSourceFinal") as? Boolean,
-        row.opt("liveSourceFailed") as? Boolean ?: false, row.opt("liveSourceExpired") as? Boolean ?: false)
+        row.opt("liveSourceFailed") as? Boolean ?: false, row.opt("liveSourceExpired") as? Boolean ?: false,
+        translationProviders = row.optJSONObject("translationProviders")?.let { providers ->
+            targets.keys().asSequence().mapNotNull { tag ->
+                providers.optString(tag).takeIf { it == "ML_KIT" || it == "ML_KIT_PARTIAL" }?.let { tag to it }
+            }.toMap()
+        }.orEmpty())
 }
 
 private fun JSONObject.optionalCaptionString(name: String): String? =
@@ -83,6 +91,7 @@ internal fun recordedReplayCaptionJson(rows: List<RecordedCaption>, allowedLangu
             (row.liveSegmentLanguage?.let { it in allowedLanguageTags } ?: (row.translations.isEmpty() || visible.isNotEmpty()))
         JSONObject().put("part", row.part).put("sequence", row.sequence).put("sourceText", row.original)
             .put("isFinal", row.final).put("translations", JSONObject(visible))
+            .put("translationProviders", JSONObject(row.translationProviders.filterKeys { it in visible }))
             .put("capturedAtElapsedRealtimeNanos", row.monotonicNanos).put("alignment", row.alignment)
             .put("outputState", if (statusVisible) row.outputState?.takeIf { value -> LiveOutputState.entries.any { it.name == value } } ?: JSONObject.NULL else JSONObject.NULL)
             .put("endReason", if (statusVisible) row.endReason?.takeIf { value -> NativeAudioEndReason.entries.any { it.name == value } } ?: JSONObject.NULL else JSONObject.NULL)

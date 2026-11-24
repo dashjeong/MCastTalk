@@ -10,6 +10,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -40,6 +41,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -49,6 +51,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.res.painterResource
+import app.guidecast.provider.mlkit.translation.R as MlKitResources
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
@@ -118,6 +123,7 @@ private fun ClientScreen(
     onPauseResume: () -> Unit,
     onStop: () -> Unit,
 ) {
+    val uriHandler = LocalUriHandler.current
     val busy = state.phase == ClientSessionPhase.PREPARING_MODELS ||
         state.phase == ClientSessionPhase.CONNECTING
     Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFFF4F7FB)) {
@@ -197,7 +203,7 @@ private fun ClientScreen(
                             FilterChip(
                                 selected = state.target == target,
                                 onClick = { onTargetChange(target) },
-                                enabled = !state.sessionActive,
+                                enabled = state.canSelectTarget,
                                 label = { Text(target.displayName) },
                             )
                         }
@@ -223,10 +229,15 @@ private fun ClientScreen(
                         Text(if (state.modelReady) "언어팩 다시 점검" else "언어팩 준비")
                     }
                     Text(
-                        text = "최초 준비에는 인터넷이 필요합니다. 준비 완료 뒤에는 같은 언어를 오프라인에서 사용합니다.",
+                        text = "처음에는 인터넷으로 언어팩을 내려받으며 모바일 데이터가 사용될 수 있습니다. Google Translate가 이 기기에서 번역합니다. 원문과 번역문은 Google에 보내지 않지만 ML Kit의 성능 및 사용 통계가 Google로 전송될 수 있습니다.",
                         style = MaterialTheme.typography.bodySmall,
                         color = Color(0xFF6B768C),
                     )
+                    Text("Google은 번역의 정확성, 신뢰성 및 상품성·특정 목적 적합성·권리 비침해에 대한 보증을 제공하지 않습니다.",
+                        style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = { uriHandler.openUri("https://docs.cloud.google.com/translate/attribution#disclaimer") }) {
+                        Text("Google Translate 이용 안내와 면책 고지")
+                    }
                 }
             }
 
@@ -245,7 +256,7 @@ private fun ClientScreen(
                         enabled = !state.sessionActive && !busy && state.address.isNotBlank(),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1267E8)),
                     ) {
-                        Text("통역 시작")
+                        Text("Google Translate로 통역 시작")
                     }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -361,6 +372,13 @@ private fun TranscriptCard(state: ClientUiState) {
                 color = Color.White,
                 style = MaterialTheme.typography.bodyLarge,
             )
+            if (state.translatedTranscript.isNotBlank()) {
+                Image(
+                    painter = painterResource(MlKitResources.drawable.powered_by_google_translate),
+                    contentDescription = "Powered by Google Translate",
+                    modifier = Modifier.height(22.dp).background(Color.White),
+                )
+            }
         }
     }
 }

@@ -1,4 +1,4 @@
-DMZ 평화걷기 안내 방송 — third-party notices
+MCastTalk — third-party notices
 ================================================
 
 This APK uses third-party software and supports separately downloaded model
@@ -33,6 +33,27 @@ License families packaged for offline review
 - Upstream version/provenance readmes for the pinned Moonshine 0.1.5 runtime
   and the exact TTS language data used by GuideCast
 - Open Chinese Convert (OpenCC): OPENCC-APACHE-2.0.txt, OPENCC-README.txt
+
+Corresponding source and attribution
+------------------------------------
+The MPL-2.0 source for the Eigen subset compiled into Moonshine is available at
+https://github.com/moonshine-ai/moonshine/tree/234f60faa0eb388b01cdf7e60aca232af37aefda/core/third-party/Eigen
+The local Moonshine patch does not change Eigen. Its patch and input hashes
+are in third_party/moonshine/0.1.5-mcasttalk1 in the product source.
+
+The embedded community-1 PLDA/config data is by pyannote.ai, CC BY 4.0.
+https://huggingface.co/pyannote/speaker-diarization-community-1
+https://creativecommons.org/licenses/by/4.0/
+Moonshine embedded the PLDA/config data in cpp-annote. See
+MOONSHINE-CPP-ANNOTE-README.txt for upstream changes.
+
+The MP3 encoder uses LAME under LGPL-2.0-or-later. See LAME-4.0-NOTICE.txt.
+The source archive accompanying this release includes the full LAME source,
+JNI client and build script. Release downloads: https://github.com/dashjeong/MCastTalk/releases
+
+Google Translate attribution and disclaimer
+https://cloud.google.com/translate/attribution
+THIS SERVICE MAY CONTAIN TRANSLATIONS POWERED BY GOOGLE. GOOGLE DISCLAIMS ALL WARRANTIES RELATED TO THE TRANSLATIONS, EXPRESS OR IMPLIED, INCLUDING ANY WARRANTIES OF ACCURACY, RELIABILITY, AND ANY IMPLIED WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
 
 Some proprietary service terms, including Google ML Kit Terms and the Google
 APIs Terms they incorporate, are linked to their official current pages and

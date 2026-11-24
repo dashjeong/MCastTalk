@@ -220,6 +220,9 @@ internal fun LiveTranscriptHud(
                             }
                             Text("번역 · ${relayCaptionLanguageLabel(tag)} · $statusLabel",
                                 color = HudTranslation, style = MaterialTheme.typography.labelLarge)
+                            if (!translated.isNullOrBlank()) {
+                                TranslationProviderAttribution(group.segments.lastOrNull { it.translations[tag] == translated }?.translationProviders?.get(tag))
+                            }
                             Text(textContent,
                                 color = if (translated.isNullOrBlank() && translationError == null && !isDropped) Color.LightGray else HudTranslation,
                                 fontSize = size.sp, lineHeight = (size * 1.4f).sp)

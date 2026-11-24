@@ -2,6 +2,7 @@
 
 앱에는 국립국어원 공공용어에서 변환한 영어·중국어·일본어 고정 용어 데이터가 포함됩니다. 통합 제공처는 국립국어원이며 행별 원출처에는 국립국어원, 서울특별시, 한국관광공사, 외교부와 행정안전부가 포함됩니다.
 
+- [공공데이터포털의 해당 자료와 이용허락범위](https://www.data.go.kr/data/15123639/fileData.do) · [공공누리 제1유형 출처표시](https://www.kogl.or.kr/info/licenseType1.do)
 - [자료 조회·다운로드](https://www.korean.go.kr/front/pubWord/pubWordDataList.do?cateLarge=ALL&flag=1&langGubun=ALL&originGubun=ALL)
 - [자료 소개](https://www.korean.go.kr/front/pubWord/pubWordDataIntro.do?mn_id=164)
 - [제공처 저작권 정책](https://www.korean.go.kr/front/nuri/pageView.do?mkn=3&page_id=P000189)

@@ -219,6 +219,7 @@ data class TranslationTranscriptLine(
     val liveSourceExpired: Boolean = false,
     val translationErrors: Map<String, String> = emptyMap(),
     val speechNotices: Map<String, String> = emptyMap(),
+    val translationProviders: Map<String, String> = emptyMap(),
 ) {
     val sourceStatusLabel: String get() = when {
         liveSourceExpired -> "원문 자막 대기 만료 · 사용량 미확인"

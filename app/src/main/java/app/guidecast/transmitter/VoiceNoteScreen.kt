@@ -514,6 +514,7 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit,
                                             Text("${voiceNoteTime(line.startMs)} · ${line.language ?: "언어 미확인"}", style = MaterialTheme.typography.labelMedium)
                                             if (playingLine) Text("재생 중인 구간", style = MaterialTheme.typography.labelMedium)
                                             SelectionContainer { Text(voiceNoteLineText(line), style = MaterialTheme.typography.bodyLarge) }
+                                            VoiceNoteGoogleAttribution(line)
                                             if (line.edited) Text("직접 수정한 문장", style = MaterialTheme.typography.labelSmall)
                                             if (line.translation.isBlank()) Text("번역 대기 · 원문은 저장됨", style = MaterialTheme.typography.labelSmall)
                                             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -555,6 +556,7 @@ internal fun VoiceNoteRoute(model: VoiceNoteViewModel, onBack: () -> Unit,
                                                     modifier = Modifier.fillMaxWidth()
                                                 )
                                             }
+                                            VoiceNoteGoogleAttribution(line)
                                         }
                                     }
                                 }
@@ -725,5 +727,13 @@ private fun VoiceNoteLanguagePicker(label: String, selected: String?, enabled: B
     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         if (automatic) FilterChip(selected == null, onClick = { onSelect(null) }, enabled = enabled, label = { Text("자동 전환") })
         VOICE_NOTE_LANGUAGES.forEach { (tag, name) -> FilterChip(selected == tag, onClick = { onSelect(tag) }, enabled = enabled, label = { Text(name) }) }
+    }
+}
+
+@Composable
+private fun VoiceNoteGoogleAttribution(line: VoiceNoteLine) {
+    if (line.translation.isNotBlank() && line.googleContribution != null) {
+        if (line.googleContribution == FileGoogleContribution.ML_KIT_PARTIAL) Text("일부 구간 번역", style = MaterialTheme.typography.labelSmall)
+        GoogleTranslationAttribution()
     }
 }
